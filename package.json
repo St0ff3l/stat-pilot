@@ -1,0 +1,43 @@
+{
+  "name": "sz-gov-scope",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "electron/main.mjs",
+  "scripts": {
+    "dev": "concurrently \"vite --host 127.0.0.1\" \"electron .\"",
+    "dev:web": "vite --host 127.0.0.1",
+    "dev:electron": "electron .",
+    "build": "tsc -b && vite build",
+    "hermes:bootstrap": "bash scripts/bootstrap-hermes.sh",
+    "hermes:bootstrap:quick": "HERMES_NON_INTERACTIVE=1 bash scripts/bootstrap-hermes.sh",
+    "hermes:bootstrap:skip-setup": "HERMES_SKIP_SETUP=1 bash scripts/bootstrap-hermes.sh",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "start": "electron ."
+  },
+  "dependencies": {
+    "cheerio": "^1.1.2",
+    "express": "^5.1.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/express": "^5.0.5",
+    "@types/node": "^24.12.3",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "concurrently": "^9.2.1",
+    "eslint": "^10.3.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "electron": "^36.4.0",
+    "globals": "^17.6.0",
+    "tsx": "^4.20.6",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.59.2",
+    "vite": "^8.0.12"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "articles": [
+    {
+      "id": "seed-shenzhen-policy-001",
+      "title": "深圳市工业和信息化局发布智能制造专项申报提醒",
+      "url": "https://example.gov.cn/news/seed-shenzhen-policy-001",
+      "sourceName": "深圳市工业和信息化局",
+      "sourceUrl": "https://example.gov.cn/news",
+      "publishedAt": "2026-06-09T08:00:00.000Z",
+      "fetchedAt": "2026-06-09T08:10:00.000Z",
+      "summary": "示例资讯，用于验证展示页、分析按钮和本地存储链路。",
+      "content": "深圳市工业和信息化局发布通知，提醒符合条件的企业关注智能制造专项资金申报安排，按时准备材料并完成线上填报。",
+      "tags": [
+        "示例",
+        "工信",
+        "专项申报"
+      ],
+      "analysis": {
+        "skillName": "gov_digest",
+        "output": "Using **gov_digest** to produce a concise operator-facing brief from the provided article.\n\n深圳市工业和信息化局提醒符合条件企业关注智能制造专项资金申报安排，及时准备材料并完成线上填报。\n\n- **发布部门：** 深圳市工业和信息化局  \n- **目标对象：** 符合条件的企业  \n- **关键信息：** 发布了关于智能制造专项资金申报的提醒通知  \n- **企业动作：** 关注申报安排，按时准备材料，完成线上填报  \n- **时间节点：** 文中未说明具体日期或截止时间  \n\n**标签：** #智能制造 #专项资金 #申报提醒 #工信局",
+        "createdAt": "2026-06-09T04:47:32.260Z"
+      }
+    }
+  ]
+}
