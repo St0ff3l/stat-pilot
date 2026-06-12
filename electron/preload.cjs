@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("hermesDesktop", {
   newThread: () => ipcRenderer.invoke("hermes:newThread"),
   selectThread: (threadId) => ipcRenderer.invoke("hermes:selectThread", threadId),
   sendMessage: (payload) => ipcRenderer.invoke("hermes:sendMessage", payload),
+  switchSessionModel: (model) => ipcRenderer.invoke("hermes:switchSessionModel", model),
   archiveThread: (threadId) => ipcRenderer.invoke("hermes:archiveThread", threadId),
   updateSettings: (settings) => ipcRenderer.invoke("hermes:updateSettings", settings),
   repairRuntime: () => ipcRenderer.invoke("hermes:repairRuntime"),

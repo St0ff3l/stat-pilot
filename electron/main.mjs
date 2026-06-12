@@ -100,6 +100,92 @@ function toSafeString(value) {
   return typeof value === "string" ? value : "";
 }
 
+async function syncRegisteredSkills(settings) {
+  try {
+    const isOfficialMode = settings.runtimeMode === "official";
+    const hermesHome = isOfficialMode ? getOfficialHermesHomeDir() : getRuntimeHomeDir();
+    const skillsDir = path.join(hermesHome, "skills");
+
+    // Ensure skills folder exists
+    await fs.mkdir(skillsDir, { recursive: true });
+
+    // 1. Find all existing entries in skillsDir
+    const entries = await fs.readdir(skillsDir);
+    const registered = settings.registeredSkills || [];
+    const registeredNames = new Set(registered.map(s => s.name));
+
+    // 2. Remove any symlinks that are not in currently registered skills
+    for (const entry of entries) {
+      const entryPath = path.join(skillsDir, entry);
+      try {
+        const stat = await fs.lstat(entryPath);
+        if (stat.isSymbolicLink()) {
+          if (!registeredNames.has(entry)) {
+            await fs.unlink(entryPath);
+          }
+        }
+      } catch (err) {
+        console.error(`Failed to inspect/remove skill entry ${entry}:`, err);
+      }
+    }
+
+    // 3. Create or update symlinks for registered skills
+    for (const skill of registered) {
+      if (!skill.path) continue;
+      const skillFolder = path.dirname(skill.path);
+      const targetPath = path.join(skillsDir, skill.name);
+
+      // Check if skill folder exists
+      if (!(await pathExists(skillFolder))) {
+        console.warn(`Skill folder ${skillFolder} does not exist, skipping sync.`);
+        continue;
+      }
+
+      // Check if target already exists (could be a symlink, directory, or file)
+      let exists = false;
+      let isSymlink = false;
+      try {
+        const stat = await fs.lstat(targetPath);
+        exists = true;
+        isSymlink = stat.isSymbolicLink();
+      } catch {
+        // targetPath does not exist
+      }
+
+      if (exists) {
+        if (isSymlink) {
+          // Check if symlink target is correct
+          try {
+            const currentTarget = await fs.readlink(targetPath);
+            if (path.resolve(currentTarget) === path.resolve(skillFolder)) {
+              // Target is already correct, no need to recreate
+              continue;
+            }
+          } catch {
+            // failed to read symlink target, recreate it
+          }
+          await fs.unlink(targetPath);
+        } else {
+          // It exists but is a real file or directory (e.g. a built-in skill has the same name).
+          // We shouldn't overwrite a built-in directory! Let's log a warning.
+          console.warn(`Cannot symlink skill ${skill.name} to ${targetPath} because a real file/folder already exists there.`);
+          continue;
+        }
+      }
+
+      // Create symlink
+      try {
+        await fs.symlink(skillFolder, targetPath, "dir");
+        console.log(`Created symlink for skill ${skill.name} -> ${skillFolder}`);
+      } catch (err) {
+        console.error(`Failed to create symlink for skill ${skill.name}:`, err);
+      }
+    }
+  } catch (err) {
+    console.error("Failed to sync registered skills:", err);
+  }
+}
+
 function mapStoredSession(session, settings) {
   const timestamp = Number(session?.started_at ?? 0);
   const modelProvider = settings.runtimeMode === "official" ? "nous/free" : settings.apiProvider;
@@ -124,6 +210,16 @@ function mapGatewayMessages(messages) {
       text: toSafeString(message.text),
       turnId: null,
     }));
+}
+
+function isOfficialSessionModelStale(model) {
+  if (state.settings.runtimeMode !== "official") {
+    return false;
+  }
+
+  const activeModel = toSafeString(model).trim();
+  const expectedModel = toSafeString(state.official.defaultModel).trim();
+  return Boolean(activeModel && expectedModel && activeModel !== expectedModel);
 }
 
 async function pathExists(targetPath) {
@@ -176,6 +272,7 @@ async function inspectOfficialHermesConfig() {
   const homeDir = getOfficialHermesHomeDir();
   const configPath = path.join(homeDir, "config.yaml");
   const authPath = path.join(homeDir, "auth.json");
+  const nousRecommendedPath = path.join(homeDir, "cache", "nous_recommended_cache.json");
   const [configExists, authExists, configText, authText] = await Promise.all([
     pathExists(configPath),
     pathExists(authPath),
@@ -214,6 +311,34 @@ async function inspectOfficialHermesConfig() {
     }
   }
 
+  let freeRecommendedModels = [];
+  let paidRecommendedModels = [];
+  try {
+    const recommendedText = await readTextIfExists(nousRecommendedPath);
+    if (recommendedText) {
+      const payload = JSON.parse(recommendedText);
+      const firstEntry = Object.values(payload ?? {})[0];
+      const data = firstEntry?.data ?? {};
+      freeRecommendedModels = (data.freeRecommendedModels ?? [])
+        .map((entry) => toSafeString(entry?.modelName).trim())
+        .filter(Boolean);
+      paidRecommendedModels = (data.paidRecommendedModels ?? [])
+        .map((entry) => toSafeString(entry?.modelName).trim())
+        .filter(Boolean);
+    }
+  } catch {
+    // ignore malformed recommended cache
+  }
+
+  const availableModels = Array.from(
+    new Set(
+      (subscriptionLabel === "Free"
+        ? freeRecommendedModels
+        : [...paidRecommendedModels, ...freeRecommendedModels]
+      ).filter(Boolean)
+    )
+  );
+
   return {
     available: configExists || authExists,
     homeDir,
@@ -224,7 +349,78 @@ async function inspectOfficialHermesConfig() {
     isLoggedIn,
     subscriptionLabel,
     rateLimitSource,
+    availableModels,
+    freeRecommendedModels,
+    paidRecommendedModels,
+    userCode: (typeof state !== "undefined" && state?.official?.userCode) || null,
   };
+}
+
+async function updateOfficialHermesDefaultModel(nextModel) {
+  const model = toSafeString(nextModel).trim();
+  if (!model) {
+    return;
+  }
+
+  const homeDir = getOfficialHermesHomeDir();
+  const configPath = path.join(homeDir, "config.yaml");
+  const existing = (await readTextIfExists(configPath)) ?? "";
+
+  let nextConfig = existing;
+  if (/(^|\n)model:\n([\s\S]*?)(\n[^\s]|\n$)/.test(existing)) {
+    nextConfig = existing.replace(
+      /((^|\n)model:\n[\s\S]*?^\s+default:\s*)(.+)$/m,
+      `$1${model}`
+    );
+  } else {
+    nextConfig = `model:\n  provider: nous\n  base_url: https://inference-api.nousresearch.com/v1\n  default: ${model}\n\n${existing}`;
+  }
+
+  await fs.mkdir(homeDir, { recursive: true });
+  await fs.writeFile(configPath, nextConfig, "utf8");
+}
+
+function pickOfficialFallbackModel(officialState) {
+  if (officialState.subscriptionLabel !== "Free") {
+    return null;
+  }
+
+  const configuredModel = toSafeString(officialState.defaultModel).trim();
+  const freeModels = (officialState.freeRecommendedModels ?? []).filter(Boolean);
+  if (freeModels.length === 0 || freeModels.includes(configuredModel)) {
+    return null;
+  }
+
+  return freeModels[0];
+}
+
+async function reconcileOfficialModeSettings(settings, officialState) {
+  let nextSettings = normalizeSettings(settings);
+  let nextOfficial = officialState;
+  let changed = false;
+  let autoSwitchedModel = null;
+
+  if (nextSettings.runtimeMode !== "official") {
+    return { settings: nextSettings, official: nextOfficial, changed, autoSwitchedModel };
+  }
+
+  const fallbackModel = pickOfficialFallbackModel(nextOfficial);
+  if (fallbackModel) {
+    await updateOfficialHermesDefaultModel(fallbackModel);
+    nextOfficial = await inspectOfficialHermesConfig();
+    changed = true;
+    autoSwitchedModel = nextOfficial.defaultModel;
+  }
+
+  if (nextSettings.model !== nextOfficial.defaultModel) {
+    nextSettings = normalizeSettings({
+      ...nextSettings,
+      model: nextOfficial.defaultModel,
+    });
+    changed = true;
+  }
+
+  return { settings: nextSettings, official: nextOfficial, changed, autoSwitchedModel };
 }
 
 async function updateLegacyHermesWrapper(runtimeBin) {
@@ -340,6 +536,7 @@ async function lockRuntimeToElectron(runtimeBin) {
 
 function buildHermesEnv(settings, launchConfig = null, sessionToken = "") {
   const env = { ...process.env };
+  env.PYTHONUNBUFFERED = "1";
   const provider = toSafeString(settings.apiProvider).trim() || "deepseek";
   const isOfficialMode = settings.runtimeMode === "official";
 
@@ -737,6 +934,7 @@ class HermesGatewayBridge {
     const env = buildHermesEnv(this.settings, launchConfig, token);
 
     await fs.mkdir(env.HERMES_HOME, { recursive: true });
+    await syncRegisteredSkills(this.settings);
 
     this.proc = spawn(launchConfig.command, args, {
       cwd: this.settings.cwd || process.cwd(),
@@ -829,6 +1027,29 @@ class HermesGatewayBridge {
     });
   }
 
+  async execSlash(sessionId, command) {
+    return this.request("slash.exec", {
+      session_id: sessionId,
+      command,
+    });
+  }
+
+  async getSessionStatus(sessionId) {
+    return this.request("session.status", {
+      session_id: sessionId,
+    });
+  }
+
+  async switchSessionModel(sessionId, model, persistGlobal = true) {
+    const modelId = toSafeString(model).trim();
+    if (!modelId) {
+      throw new Error("Model is required.");
+    }
+
+    const command = persistGlobal ? `model ${modelId} --global` : `model ${modelId}`;
+    return this.execSlash(sessionId, command);
+  }
+
   async closeSession(sessionId) {
     if (!sessionId) {
       return;
@@ -861,6 +1082,9 @@ let activeGatewaySessionId = null;
 let state = {
   status: "Starting Hermes runtime...",
   error: null,
+  currentRuntimeModel: null,
+  lastUsageModel: null,
+  reasoningTrace: null,
   settings: { ...defaultSettings },
   runtime: buildRuntimeInfo(false),
   official: {
@@ -873,6 +1097,10 @@ let state = {
     isLoggedIn: false,
     subscriptionLabel: "Unknown",
     rateLimitSource: "",
+    availableModels: [],
+    freeRecommendedModels: [],
+    paidRecommendedModels: [],
+    userCode: null,
   },
   threads: [],
   activeThreadId: null,
@@ -948,6 +1176,7 @@ async function loadActiveThread(threadId) {
         },
         state.settings
       );
+    state.currentRuntimeModel = toSafeString(result.info?.model).trim() || null;
     state.messages = mapGatewayMessages(result.messages);
     state.activeDraft = null;
     state.status = "Ready.";
@@ -968,6 +1197,9 @@ async function startNewConversation() {
   activeGatewaySessionId = null;
   state.activeThreadId = null;
   state.activeThread = null;
+  state.currentRuntimeModel = null;
+  state.lastUsageModel = null;
+  state.reasoningTrace = null;
   state.messages = [];
   state.activeDraft = null;
   state.error = null;
@@ -984,12 +1216,85 @@ async function syncMessagesFromGateway() {
   state.messages = mapGatewayMessages(history.messages);
 }
 
+async function waitForSessionCompletion(sessionId) {
+  if (!bridge) {
+    throw new Error("Hermes bridge is not ready.");
+  }
+
+  await new Promise((resolve, reject) => {
+    const unsubscribe = bridge.onNotification((message) => {
+      if (message.session_id !== sessionId) {
+        return;
+      }
+
+      if (message.type === "message.complete") {
+        unsubscribe();
+        resolve();
+        return;
+      }
+
+      if (message.type === "error") {
+        unsubscribe();
+        reject(new Error(message.payload?.message ?? "Failed to complete turn."));
+      }
+    });
+  });
+}
+
+function extractModelFromSessionStatus(output) {
+  const text = toSafeString(output);
+  const match = text.match(/^\s*Model:\s+(.+?)(?:\s+\(|$)/m);
+  return match?.[1]?.trim() || null;
+}
+
+async function waitForSessionModel(sessionId, targetModel, timeoutMs = 65000, pollMs = 1250) {
+  if (!bridge) {
+    throw new Error("Hermes bridge is not ready.");
+  }
+
+  const wanted = toSafeString(targetModel).trim();
+  const startedAt = Date.now();
+  let lastObservedModel = null;
+
+  while (Date.now() - startedAt <= timeoutMs) {
+    const statusResult = await bridge.getSessionStatus(sessionId);
+    const liveModel = extractModelFromSessionStatus(statusResult?.output);
+    if (liveModel) {
+      lastObservedModel = liveModel;
+    }
+
+    if (liveModel && liveModel === wanted) {
+      return {
+        matched: true,
+        liveModel,
+        elapsedMs: Date.now() - startedAt,
+      };
+    }
+
+    await sleep(pollMs);
+  }
+
+  return {
+    matched: false,
+    liveModel: lastObservedModel,
+    elapsedMs: Date.now() - startedAt,
+  };
+}
+
 async function initializeBridge() {
-  const settings = await loadSettings();
+  let settings = await loadSettings();
   state.settings = settings;
   state.skills = settings.registeredSkills || [];
   state.runtime = await ensureEmbeddedRuntimeInstalled();
   state.official = await inspectOfficialHermesConfig();
+  const reconciled = await reconcileOfficialModeSettings(settings, state.official);
+  settings = reconciled.settings;
+  state.settings = settings;
+  state.skills = settings.registeredSkills || [];
+  state.official = reconciled.official;
+  if (reconciled.changed) {
+    await saveSettings(settings);
+  }
   bridge = new HermesGatewayBridge(settings);
 
   bridge.onNotification((message) => {
@@ -1013,8 +1318,34 @@ async function initializeBridge() {
       return;
     }
 
+    if (message.type === "reasoning.delta" && state.activeDraft) {
+      const delta = toSafeString(message.payload?.text);
+      state.reasoningTrace = `${state.reasoningTrace ?? ""}${delta}`;
+      state.activeDraft = {
+        ...state.activeDraft,
+        reasoning: `${state.activeDraft.reasoning ?? ""}${delta}`,
+      };
+      broadcastState();
+      return;
+    }
+
     if (message.type === "message.complete" && state.activeDraft) {
       state.activeDraft.text = toSafeString(message.payload?.text);
+      const usageModel = toSafeString(message.payload?.usage?.model).trim();
+      if (usageModel) {
+        state.lastUsageModel = usageModel;
+        if (!state.currentRuntimeModel) {
+          state.currentRuntimeModel = usageModel;
+        }
+      }
+      const reasoning = toSafeString(message.payload?.reasoning).trim();
+      if (reasoning) {
+        state.reasoningTrace = reasoning;
+        state.activeDraft = {
+          ...state.activeDraft,
+          reasoning,
+        };
+      }
       broadcastState();
       return;
     }
@@ -1026,6 +1357,7 @@ async function initializeBridge() {
         status: message.payload?.lazy ? "starting" : "idle",
         cwd: toSafeString(message.payload?.cwd) || state.activeThread.cwd,
       };
+      state.currentRuntimeModel = toSafeString(message.payload?.model).trim() || state.currentRuntimeModel;
       broadcastState();
       return;
     }
@@ -1033,14 +1365,12 @@ async function initializeBridge() {
 
   try {
     await bridge.start();
-    state.status = "Ready.";
+    state.status = reconciled.autoSwitchedModel
+      ? `Ready. 已自动切换到免费模型 ${reconciled.autoSwitchedModel}.`
+      : "Ready.";
     state.error = null;
     await refreshThreads();
-    if (state.threads.length > 0) {
-      await loadActiveThread(state.threads[0].id);
-    } else {
-      await startNewConversation();
-    }
+    await startNewConversation();
   } catch (error) {
     state.error = error instanceof Error ? error.message : "Failed to start Hermes backend.";
     state.status = state.error;
@@ -1156,9 +1486,17 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
   state.busy = true;
   state.error = null;
   state.status = "Running...";
+  state.reasoningTrace = null;
   broadcastState();
 
   try {
+    if (activeGatewaySessionId && isOfficialSessionModelStale(state.currentRuntimeModel)) {
+      await bridge.closeSession(activeGatewaySessionId);
+      await startNewConversation();
+      state.status = `检测到当前历史会话仍绑定付费模型 ${state.currentRuntimeModel}，已切到新会话并使用免费模型 ${state.official.defaultModel}。`;
+      broadcastState();
+    }
+
     if (!activeGatewaySessionId) {
       console.log("[hermes-send] creating session");
       const session = await bridge.createSession();
@@ -1174,6 +1512,7 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
         createdAt: Date.now() / 1000,
         cwd: state.settings.cwd,
       };
+      state.currentRuntimeModel = null;
     }
 
     state.messages = [
@@ -1189,40 +1528,111 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
       id: randomUUID(),
       threadId: state.activeThreadId ?? activeGatewaySessionId,
       text: "",
+      reasoning: "",
     };
     broadcastState();
 
     console.log("[hermes-send] submitting prompt", activeGatewaySessionId, text);
     await bridge.sendPrompt(activeGatewaySessionId, text);
 
-    await new Promise((resolve, reject) => {
-      const unsubscribe = bridge.onNotification((message) => {
-        if (message.session_id !== activeGatewaySessionId) {
-          return;
-        }
+    await waitForSessionCompletion(activeGatewaySessionId);
+    console.log("[hermes-send] message complete");
 
-        if (message.type === "message.complete") {
-          console.log("[hermes-send] message complete");
-          unsubscribe();
-          resolve();
-          return;
-        }
-
-        if (message.type === "error") {
-          console.error("[hermes-send] message error", message.payload);
-          unsubscribe();
-          reject(new Error(message.payload?.message ?? "Failed to complete turn."));
-        }
-      });
-    });
-
+    const completedAssistantText = toSafeString(state.activeDraft?.text).trim();
     await syncMessagesFromGateway();
+    if (completedAssistantText) {
+      const lastAssistant = [...state.messages].reverse().find((message) => message.role === "assistant");
+      if (!lastAssistant || toSafeString(lastAssistant.text).trim() !== completedAssistantText) {
+        state.messages = [
+          ...state.messages,
+          {
+            id: randomUUID(),
+            role: "assistant",
+            text: completedAssistantText,
+            turnId: null,
+          },
+        ];
+      }
+    }
     state.activeDraft = null;
     await refreshThreads();
     state.status = "Ready.";
   } catch (error) {
     console.error("[hermes-send] failed", error);
     state.error = error instanceof Error ? error.message : "Failed to send message.";
+    state.status = state.error;
+  } finally {
+    state.busy = false;
+    broadcastState();
+  }
+
+  return state;
+});
+
+ipcMain.handle("hermes:switchSessionModel", async (_event, model) => {
+  if (!bridge) {
+    throw new Error("Hermes bridge is not ready.");
+  }
+
+  const nextModel = toSafeString(model).trim();
+  if (!nextModel) {
+    throw new Error("Model is required.");
+  }
+
+  if (!activeGatewaySessionId) {
+    const merged = normalizeSettings({
+      ...state.settings,
+      model: nextModel,
+    });
+    if (merged.runtimeMode === "official") {
+      await updateOfficialHermesDefaultModel(merged.model);
+      state.official = await inspectOfficialHermesConfig();
+      merged.model = state.official.defaultModel;
+    }
+    state.settings = merged;
+    await saveSettings(state.settings);
+    broadcastState();
+    return state;
+  }
+
+  state.busy = true;
+  state.error = null;
+  state.status = `正在当前对话内切换模型到 ${nextModel}...`;
+  broadcastState();
+
+  try {
+    const result = await bridge.switchSessionModel(activeGatewaySessionId, nextModel, false);
+    if (state.settings.runtimeMode === "official") {
+      await updateOfficialHermesDefaultModel(nextModel);
+    }
+
+    state.official = await inspectOfficialHermesConfig();
+    state.settings = normalizeSettings({
+      ...state.settings,
+      model: state.official.defaultModel,
+    });
+    await saveSettings(state.settings);
+
+    state.lastUsageModel = null;
+    const waitResult = await waitForSessionModel(activeGatewaySessionId, nextModel);
+    const liveModel = waitResult.liveModel;
+    if (liveModel) {
+      state.currentRuntimeModel = liveModel;
+    }
+    await refreshThreads();
+    if (!waitResult.matched) {
+      state.status = liveModel
+        ? `默认模型已改成 ${state.official.defaultModel}，等待 ${Math.round(waitResult.elapsedMs / 1000)}s 后当前对话实际仍是 ${liveModel}。`
+        : `默认模型已改成 ${state.official.defaultModel}，但在 ${Math.round(waitResult.elapsedMs / 1000)}s 内还没确认到当前对话完成切换。`;
+      state.error = null;
+    } else {
+      state.status = result?.warning
+        ? `Ready. 当前对话已切换到 ${liveModel ?? state.official.defaultModel}，${result.warning}`
+        : `Ready. 当前对话已切换到 ${liveModel ?? state.official.defaultModel}.`;
+      state.error = null;
+    }
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : "Failed to switch session model.";
     state.status = state.error;
   } finally {
     state.busy = false;
@@ -1254,28 +1664,165 @@ ipcMain.handle("hermes:archiveThread", async (_event, threadId) => {
   return state;
 });
 
+function stripAnsi(str) {
+  const ansiRegex = /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-OR-TZcf-ntqry=><~]/g;
+  return str.replace(ansiRegex, "");
+}
+
+async function runOfficialHermesLogin(settings) {
+  const launchConfig = resolveBackendLaunch();
+  const args = [
+    ...launchConfig.argsPrefix,
+    "auth",
+    "add",
+    "nous",
+    "--type",
+    "oauth"
+  ];
+  const env = buildHermesEnv(settings, launchConfig, "");
+  env.HERMES_HOME = getOfficialHermesHomeDir();
+
+  await fs.mkdir(env.HERMES_HOME, { recursive: true });
+
+  const loginProc = spawn(launchConfig.command, args, {
+    cwd: settings.cwd || process.cwd(),
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  let stdoutBuffer = "";
+
+  loginProc.stdout.on("data", (chunk) => {
+    try {
+      const rawText = chunk.toString();
+      stdoutBuffer += rawText;
+      console.log("[hermes-login:stdout]", rawText.trim());
+
+      if (!state.official.userCode) {
+        const cleanBuffer = stripAnsi(stdoutBuffer);
+        const match = cleanBuffer.match(/enter code:\s*([A-Z0-9-]+)/i) || cleanBuffer.match(/user_code=([A-Z0-9-]+)/i);
+        if (match) {
+          state.official.userCode = match[1];
+          broadcastState();
+        }
+      }
+    } catch (err) {
+      console.error("[hermes-login:stdout-error]", err);
+    }
+  });
+
+  loginProc.stderr.on("data", (chunk) => {
+    const text = chunk.toString().trim();
+    if (text) {
+      console.error("[hermes-login:stderr]", text);
+    }
+  });
+
+  return new Promise((resolve) => {
+    let resolved = false;
+    loginProc.on("close", (code) => {
+      console.log("[hermes-login] exited with code:", code);
+      state.official.userCode = null;
+      broadcastState();
+      if (!resolved) {
+        resolved = true;
+        resolve(code === 0);
+      }
+    });
+
+    loginProc.on("error", (err) => {
+      console.error("[hermes-login] error:", err);
+      state.official.userCode = null;
+      broadcastState();
+      if (!resolved) {
+        resolved = true;
+        resolve(false);
+      }
+    });
+
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        state.official.userCode = null;
+        broadcastState();
+        try {
+          loginProc.kill();
+        } catch {}
+        resolve(false);
+      }
+    }, 180000);
+  });
+}
+
 ipcMain.handle("hermes:updateSettings", async (_event, nextSettings) => {
-  const merged = normalizeSettings({ ...state.settings, ...nextSettings });
+  const { logoutOfficial, loginOfficial, ...cleanSettings } = nextSettings || {};
+  if (logoutOfficial) {
+    const homeDir = getOfficialHermesHomeDir();
+    const authPath = path.join(homeDir, "auth.json");
+    const sharedAuthPath = path.join(homeDir, "shared", "nous_auth.json");
+    try {
+      if (await pathExists(authPath)) {
+        const text = await fs.readFile(authPath, "utf8");
+        const auth = JSON.parse(text);
+        let changed = false;
+        if (auth.providers && auth.providers.nous) {
+          delete auth.providers.nous;
+          changed = true;
+        }
+        if (auth.credential_pool && auth.credential_pool.nous) {
+          delete auth.credential_pool.nous;
+          changed = true;
+        }
+        if (changed) {
+          await fs.writeFile(authPath, JSON.stringify(auth, null, 2), "utf8");
+        }
+      }
+    } catch (e) {
+      console.error("Failed to update auth.json on logout:", e);
+    }
+
+    try {
+      await fs.unlink(sharedAuthPath);
+    } catch (e) {
+      // Ignore if file doesn't exist or cannot be deleted
+    }
+  }
+
+  if (loginOfficial) {
+    await runOfficialHermesLogin(state.settings);
+  }
+
+  let merged = normalizeSettings({ ...state.settings, ...cleanSettings });
+
+  if (merged.runtimeMode === "official") {
+    await updateOfficialHermesDefaultModel(merged.model);
+  }
+
+  state.official = await inspectOfficialHermesConfig();
+  const reconciled = await reconcileOfficialModeSettings(merged, state.official);
+  merged = reconciled.settings;
   state.settings = merged;
   state.skills = merged.registeredSkills || [];
-  state.official = await inspectOfficialHermesConfig();
+  state.official = reconciled.official;
   await saveSettings(merged);
 
   if (bridge) {
     activeGatewaySessionId = null;
     state.activeThreadId = null;
     state.activeThread = null;
+    state.currentRuntimeModel = null;
+    state.reasoningTrace = null;
     state.messages = [];
     state.activeDraft = null;
 
     try {
       await bridge.updateSettings(merged);
       state.error = null;
-      state.status = "Ready.";
+      state.status = reconciled.autoSwitchedModel
+        ? `Ready. 已自动切换到免费模型 ${reconciled.autoSwitchedModel}.`
+        : "Ready.";
       await refreshThreads();
-      if (state.threads.length > 0) {
-        await loadActiveThread(state.threads[0].id);
-      }
+      await startNewConversation();
     } catch (error) {
       state.error = error instanceof Error ? error.message : "Failed to restart Hermes backend.";
       state.status = state.error;
@@ -1294,16 +1841,28 @@ ipcMain.handle("hermes:repairRuntime", async () => {
   try {
     state.runtime = await ensureEmbeddedRuntimeInstalled();
     state.official = await inspectOfficialHermesConfig();
+    const reconciled = await reconcileOfficialModeSettings(state.settings, state.official);
+    state.settings = reconciled.settings;
+    state.skills = state.settings.registeredSkills || [];
+    state.official = reconciled.official;
+    if (reconciled.changed) {
+      await saveSettings(state.settings);
+    }
 
     if (bridge) {
       activeGatewaySessionId = null;
       state.activeThreadId = null;
       state.activeThread = null;
+      state.currentRuntimeModel = null;
+      state.reasoningTrace = null;
       state.messages = [];
       state.activeDraft = null;
       await bridge.restart();
       await refreshThreads();
-      state.status = "Ready.";
+      state.status = reconciled.autoSwitchedModel
+        ? `Ready. 已自动切换到免费模型 ${reconciled.autoSwitchedModel}.`
+        : "Ready.";
+      await startNewConversation();
     }
   } catch (error) {
     state.error = error instanceof Error ? error.message : "Failed to install Hermes runtime.";
@@ -1332,6 +1891,8 @@ ipcMain.handle("hermes:uninstallRuntime", async () => {
     activeGatewaySessionId = null;
     state.activeThreadId = null;
     state.activeThread = null;
+    state.currentRuntimeModel = null;
+    state.reasoningTrace = null;
     state.threads = [];
     state.messages = [];
     state.activeDraft = null;
@@ -1405,6 +1966,7 @@ ipcMain.handle("hermes:registerSkillFile", async () => {
     state.settings = merged;
     state.skills = updatedSkills;
     await saveSettings(merged);
+    await syncRegisteredSkills(merged);
   }
 
   broadcastState();
@@ -1422,6 +1984,7 @@ ipcMain.handle("hermes:unregisterSkill", async (_event, filePath) => {
   state.settings = merged;
   state.skills = updatedSkills;
   await saveSettings(merged);
+  await syncRegisteredSkills(merged);
 
   broadcastState();
   return state;

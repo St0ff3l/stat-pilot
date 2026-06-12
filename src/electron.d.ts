@@ -22,6 +22,9 @@ declare global {
   type HermesAppState = {
     status: string;
     error: string | null;
+    currentRuntimeModel: string | null;
+    lastUsageModel: string | null;
+    reasoningTrace: string | null;
     settings: {
       hermesBin: string;
       runtimeMode: "private" | "official";
@@ -31,6 +34,8 @@ declare global {
       apiKey: string;
       apiBaseUrl: string;
       registeredSkills: Array<{ name: string; description: string; path: string }>;
+      logoutOfficial?: boolean;
+      loginOfficial?: boolean;
     };
     runtime: {
       installed: boolean;
@@ -51,6 +56,10 @@ declare global {
       isLoggedIn: boolean;
       subscriptionLabel: string;
       rateLimitSource: string;
+      availableModels: string[];
+      freeRecommendedModels: string[];
+      paidRecommendedModels: string[];
+      userCode?: string | null;
     };
     threads: HermesThreadSummary[];
     activeThreadId: string | null;
@@ -60,6 +69,7 @@ declare global {
       id: string;
       threadId: string;
       text: string;
+      reasoning?: string;
     } | null;
     busy: boolean;
     skills: Array<{ name: string; description: string; path: string }>;
@@ -71,6 +81,7 @@ declare global {
       newThread: () => Promise<HermesAppState>;
       selectThread: (threadId: string) => Promise<HermesAppState>;
       sendMessage: (payload: { text: string }) => Promise<HermesAppState>;
+      switchSessionModel: (model: string) => Promise<HermesAppState>;
       archiveThread: (threadId: string) => Promise<HermesAppState>;
       updateSettings: (settings: Partial<HermesAppState["settings"]>) => Promise<HermesAppState>;
       repairRuntime: () => Promise<HermesAppState>;
