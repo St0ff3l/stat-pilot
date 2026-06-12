@@ -17,6 +17,7 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [draftSettings, setDraftSettings] = useState<HermesAppState["settings"]>({
     hermesBin: "hermes",
+    runtimeMode: "private",
     model: "deepseek-chat",
     cwd: "",
     apiProvider: "deepseek",
@@ -110,16 +111,47 @@ export default function App() {
     setState(nextState);
   }
 
+  async function repairRuntime() {
+    if (!window.hermesDesktop) {
+      return;
+    }
+    const nextState = await window.hermesDesktop.repairRuntime();
+    setState(nextState);
+  }
+
+  async function uninstallRuntime() {
+    if (!window.hermesDesktop) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "这会停止当前 Hermes 后台，并删除这个 Electron 应用私有目录里的 Hermes 运行时与会话数据。API 配置会保留。继续吗？"
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const nextState = await window.hermesDesktop.uninstallRuntime();
+    setState(nextState);
+  }
+
   const orderedThreads = [...(state?.threads ?? [])].sort((a, b) => b.updatedAt - a.updatedAt);
   const activeThread = state?.activeThread ?? null;
   const activeName = activeThread?.name || activeThread?.preview || "新对话";
   const activeMessages = state?.messages ?? [];
+  const isOfficialMode = state?.settings.runtimeMode === "official";
+  const needsProviderSetup = isOfficialMode ? !state?.official.isLoggedIn : !state?.settings.apiKey.trim();
+  const runtimeInstalled = !!state?.runtime.installed;
   const isHermesMissing = !!state?.error && (
     state.error.includes("ENOENT") || 
     state.error.includes("找不到 Hermes") || 
-    state.error.includes("exited unexpectedly") ||
-    state.error.includes("exited")
+    state.error.includes("No module named") ||
+    state.error.includes("Hermes backend exited") ||
+    state.error.includes("Could not connect to Hermes gateway") ||
+    state.error.includes("did not become ready") ||
+    state.error.includes("Bundled Hermes runtime source not found")
   );
+  const canSend = !needsProviderSetup && !isHermesMissing && !state?.busy;
 
   if (!state) {
     return (
@@ -213,7 +245,7 @@ export default function App() {
           <div className="header-actions">
             <div className="mini-pill">
               <span>Model / 模型</span>
-              <strong>{state.settings.model ?? "未设置"}</strong>
+              <strong>{isOfficialMode ? state.official.defaultModel : state.settings.model ?? "未设置"}</strong>
             </div>
             <div className="mini-pill">
               <span>Workspace / 工作区</span>
@@ -228,18 +260,69 @@ export default function App() {
               <div className="onboarding-title">
                 <h3>Hermes 运行时未就绪</h3>
               </div>
-              <p>桌面客户端目前无法检测到有效的 Hermes Agent 可执行程序。这通常是因为本地开发包尚未拉取或路径未正确加载，请尝试以下步骤：</p>
+              <p>桌面客户端目前无法启动内置 Hermes 运行时。现在这套集成已经改成“应用私有运行时”，不会再依赖你手工指定外部 `hermes` 可执行文件。</p>
               <div className="guide-steps">
                 <div className="step-item">
-                  <strong>第一步：在终端中安装/运行引导程序</strong>
-                  <p>打开终端进入当前项目路径下，执行以下指令来拉取、解压并配置本地虚拟环境：</p>
-                  <code>npm run hermes:bootstrap</code>
+                  <strong>第一步：一键修复内置运行时</strong>
+                  <p>点击下方按钮，应用会把 Hermes runtime 安装/恢复到自己的私有目录，再重新尝试启动本地后台。</p>
                 </div>
                 <div className="step-item">
-                  <strong>第二步：在设置中校对路径</strong>
-                  <p>如果你之前已经在系统上拥有已解压的 `hermes`，可以点击右上角<b>『设置』</b>，修改并保存正确的 <b>Hermes Binary</b> 文件绝对路径。</p>
+                  <strong>第二步：如果连种子运行时都不存在</strong>
+                  <p>开发环境下如果项目根目录还没有 `.runtime`，先在终端执行 <code>npm run hermes:bootstrap</code>，之后再点修复按钮即可。</p>
                 </div>
               </div>
+              {state.error ? (
+                <div className="step-item">
+                  <strong>当前错误详情</strong>
+                  <p><code>{state.error}</code></p>
+                </div>
+              ) : null}
+              <div className="onboarding-footer">
+                <button className="primary-button" onClick={() => void repairRuntime()}>修复内置运行时</button>
+              </div>
+            </div>
+          ) : needsProviderSetup ? (
+            <div className="onboarding-card">
+              <div className="onboarding-title">
+                <h3>{isOfficialMode ? "先连接 Hermes 官方账号" : "先配置你自己的模型 API"}</h3>
+              </div>
+              <p>
+                {isOfficialMode
+                  ? "当前切到了 Hermes 官方免费套餐模式。这个模式会复用你本机现有的 ~/.hermes 登录态和模型配置。"
+                  : "当前切到了自定义私有模式。先在右上角「设置」里填好 provider、model 和 API key，就可以直接开始对话。"}
+              </p>
+              <div className="guide-steps">
+                {isOfficialMode ? (
+                  <>
+                    <div className="step-item">
+                      <strong>检测结果</strong>
+                      <p>官方配置目录：<code>{state.official.homeDir}</code></p>
+                      <p>登录状态：<b>{state.official.isLoggedIn ? `已登录 (${state.official.subscriptionLabel})` : "未登录"}</b></p>
+                    </div>
+                    <div className="step-item">
+                      <strong>当前官方默认模型</strong>
+                      <p>Provider：<b>{state.official.provider}</b>，默认模型：<b>{state.official.defaultModel}</b></p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="step-item">
+                      <strong>推荐配置</strong>
+                      <p>如果你在用 DeepSeek，就把 Provider 设成 <b>deepseek</b>，模型填例如 <b>deepseek-chat</b>，再填入对应 API key。</p>
+                    </div>
+                    <div className="step-item">
+                      <strong>自定义兼容接口</strong>
+                      <p>如果你是代理服务或自建 OpenAI-compatible 接口，把 Provider 设成 <b>custom</b>，同时补上 Base URL 和 API key。</p>
+                    </div>
+                  </>
+                )}
+              </div>
+              {state.error ? (
+                <div className="step-item">
+                  <strong>当前错误详情</strong>
+                  <p><code>{state.error}</code></p>
+                </div>
+              ) : null}
               <div className="onboarding-footer">
                 <button className="primary-button" onClick={() => setSettingsOpen(true)}>打开运行设置</button>
               </div>
@@ -287,15 +370,29 @@ export default function App() {
                 void sendMessage();
               }
             }}
-            placeholder={isHermesMissing ? "运行时未就绪，消息框已禁用" : "在此输入需要处理的任务，Enter 发送，Shift+Enter 换行"}
+            placeholder={
+              isHermesMissing
+                ? "运行时未就绪，消息框已禁用"
+                : needsProviderSetup
+                  ? isOfficialMode
+                    ? "请先让本机 Hermes 官方配置完成登录，消息框暂不可用"
+                    : "请先在设置中填写 API key，消息框暂不可用"
+                  : "在此输入需要处理的任务，Enter 发送，Shift+Enter 换行"
+            }
             rows={3}
-            disabled={isHermesMissing}
+            disabled={isHermesMissing || needsProviderSetup}
           />
           <div className="composer-actions">
             <p>
-              {state.busy ? "Hermes 正在分析并调用工具..." : `当前模型：${state.settings.model ?? "未设置"}`}
+              {needsProviderSetup
+                ? isOfficialMode
+                  ? "请先完成 Hermes 官方登录配置"
+                  : "请先完成 provider / model / API key 配置"
+                : state.busy
+                  ? "Hermes 正在分析并调用工具..."
+                  : `当前模型：${isOfficialMode ? state.official.defaultModel : state.settings.model ?? "未设置"}`}
             </p>
-            <button className="primary-button" onClick={sendMessage} disabled={!draft.trim() || !!state.busy || isHermesMissing}>
+            <button className="primary-button" onClick={sendMessage} disabled={!draft.trim() || !canSend}>
               发送
             </button>
           </div>
@@ -316,23 +413,60 @@ export default function App() {
             </div>
 
             <label>
-              Hermes Binary
-              <input
-                value={draftSettings.hermesBin}
+              接入模式
+              <select
+                value={draftSettings.runtimeMode}
                 onChange={(event) =>
                   setDraftSettings((current: HermesAppState["settings"]) => ({
                     ...current,
-                    hermesBin: event.target.value,
+                    runtimeMode: event.target.value as HermesAppState["settings"]["runtimeMode"],
                   }))
                 }
-                placeholder="hermes"
-              />
+                className="settings-select"
+              >
+                <option value="private">自定义私有模式</option>
+                <option value="official">Hermes 官方免费套餐模式</option>
+              </select>
             </label>
+
+            <label>
+              内置 Runtime Binary
+              <input value={state.settings.hermesBin} disabled />
+            </label>
+
+            <div className="skills-section">
+              <div className="skills-section-header">
+                <h4>Hermes Runtime</h4>
+                <span>{runtimeInstalled ? "已安装" : "未安装"}</span>
+              </div>
+              <div className="skills-list-container">
+                <div className="skill-card">
+                  <div className="skill-info">
+                    <strong className="skill-card-header">应用私有运行时</strong>
+                    <p className="skill-card-desc">Hermes 现在固定安装在当前 Electron 应用的私有数据目录里，不再依赖外部路径。</p>
+                    <span className="skill-card-path">{state.runtime.installDir}</span>
+                    <span className="skill-card-path">{state.runtime.homeDir}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="modal-actions">
+                <button className="secondary-button" onClick={() => void repairRuntime()}>
+                  安装 / 修复运行时
+                </button>
+                <button
+                  className="secondary-button"
+                  onClick={() => void uninstallRuntime()}
+                  disabled={!runtimeInstalled || state.runtime.uninstalling}
+                >
+                  {state.runtime.uninstalling ? "卸载中..." : "一键卸载运行时"}
+                </button>
+              </div>
+            </div>
 
             <label>
               Model
               <input
-                value={draftSettings.model}
+                value={draftSettings.runtimeMode === "official" ? state.official.defaultModel : draftSettings.model}
                 onChange={(event) =>
                   setDraftSettings((current: HermesAppState["settings"]) => ({
                     ...current,
@@ -340,6 +474,7 @@ export default function App() {
                   }))
                 }
                 placeholder="gpt-5.4"
+                disabled={draftSettings.runtimeMode === "official"}
               />
             </label>
 
@@ -368,6 +503,7 @@ export default function App() {
                   }))
                 }
                 className="settings-select"
+                disabled={draftSettings.runtimeMode === "official"}
               >
                 <option value="openrouter">OpenRouter</option>
                 <option value="deepseek">DeepSeek</option>
@@ -380,18 +516,19 @@ export default function App() {
               API Key (密钥)
               <input
                 type="password"
-                value={draftSettings.apiKey}
+                value={draftSettings.runtimeMode === "official" ? "" : draftSettings.apiKey}
                 onChange={(event) =>
                   setDraftSettings((current: HermesAppState["settings"]) => ({
                     ...current,
                     apiKey: event.target.value,
                   }))
                 }
-                placeholder="sk-..."
+                placeholder={draftSettings.runtimeMode === "official" ? "官方模式下不需要手填 API key" : "sk-..."}
+                disabled={draftSettings.runtimeMode === "official"}
               />
             </label>
 
-            {draftSettings.apiProvider === "custom" && (
+            {draftSettings.runtimeMode !== "official" && draftSettings.apiProvider === "custom" && (
               <label>
                 API Base URL
                 <input
@@ -406,6 +543,25 @@ export default function App() {
                 />
               </label>
             )}
+
+            {draftSettings.runtimeMode === "official" ? (
+              <div className="skills-section">
+                <div className="skills-section-header">
+                  <h4>Hermes 官方模式</h4>
+                  <span>{state.official.isLoggedIn ? `已登录 / ${state.official.subscriptionLabel}` : "未登录"}</span>
+                </div>
+                <div className="skills-list-container">
+                  <div className="skill-card">
+                    <div className="skill-info">
+                      <strong className="skill-card-header">复用本机 ~/.hermes</strong>
+                      <p className="skill-card-desc">这个模式会直接复用你正常安装 Hermes 后的官方配置、登录态和免费套餐默认模型。</p>
+                      <span className="skill-card-path">{state.official.configPath}</span>
+                      <span className="skill-card-path">{state.official.authPath}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             <div className="skills-section">
               <div className="skills-section-header">
@@ -438,7 +594,7 @@ export default function App() {
             </div>
 
             <p className="modal-copy">
-              配置完成后将自动重新启动后台 Hermes Runtime 服务以应用最新的 API 密钥和模型设置。
+              配置完成后将自动重新启动后台 Hermes Runtime 服务。私有模式使用你自己填写的 provider/API key；官方模式复用本机 `~/.hermes` 的登录态和免费套餐默认模型。卸载运行时只会删除这个应用私有目录里的 Hermes 程序与会话数据，不会删除你的整个项目代码。
             </p>
 
             <div className="modal-actions">

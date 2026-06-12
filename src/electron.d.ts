@@ -24,12 +24,33 @@ declare global {
     error: string | null;
     settings: {
       hermesBin: string;
+      runtimeMode: "private" | "official";
       model: string;
       cwd: string;
       apiProvider: "openrouter" | "deepseek" | "openai" | "custom";
       apiKey: string;
       apiBaseUrl: string;
       registeredSkills: Array<{ name: string; description: string; path: string }>;
+    };
+    runtime: {
+      installed: boolean;
+      uninstalling: boolean;
+      rootDir: string;
+      installDir: string;
+      homeDir: string;
+      bundledSourceDir: string;
+      bundledWithApp: boolean;
+    };
+    official: {
+      available: boolean;
+      homeDir: string;
+      configPath: string;
+      authPath: string;
+      provider: string;
+      defaultModel: string;
+      isLoggedIn: boolean;
+      subscriptionLabel: string;
+      rateLimitSource: string;
     };
     threads: HermesThreadSummary[];
     activeThreadId: string | null;
@@ -52,6 +73,8 @@ declare global {
       sendMessage: (payload: { text: string }) => Promise<HermesAppState>;
       archiveThread: (threadId: string) => Promise<HermesAppState>;
       updateSettings: (settings: Partial<HermesAppState["settings"]>) => Promise<HermesAppState>;
+      repairRuntime: () => Promise<HermesAppState>;
+      uninstallRuntime: () => Promise<HermesAppState>;
       openExternal: (url: string) => Promise<void>;
       onState: (handler: (state: HermesAppState) => void) => () => void;
       registerSkillFile: () => Promise<HermesAppState>;

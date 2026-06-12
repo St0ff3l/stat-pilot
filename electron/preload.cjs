@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld("hermesDesktop", {
   sendMessage: (payload) => ipcRenderer.invoke("hermes:sendMessage", payload),
   archiveThread: (threadId) => ipcRenderer.invoke("hermes:archiveThread", threadId),
   updateSettings: (settings) => ipcRenderer.invoke("hermes:updateSettings", settings),
+  repairRuntime: () => ipcRenderer.invoke("hermes:repairRuntime"),
+  uninstallRuntime: () => ipcRenderer.invoke("hermes:uninstallRuntime"),
   openExternal: (url) => ipcRenderer.invoke("hermes:openExternal", url),
   registerSkillFile: () => ipcRenderer.invoke("hermes:registerSkillFile"),
   unregisterSkill: (path) => ipcRenderer.invoke("hermes:unregisterSkill", path),
