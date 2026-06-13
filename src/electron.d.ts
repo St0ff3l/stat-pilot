@@ -34,7 +34,17 @@ declare global {
       apiProvider: "openrouter" | "deepseek" | "openai" | "custom";
       apiKey: string;
       apiBaseUrl: string;
+      visionModel: string;
+      visionProvider: "openai" | "openrouter" | "ollama" | "custom";
+      visionApiKey: string;
+      visionBaseUrl: string;
       registeredSkills: Array<{ name: string; description: string; path: string }>;
+      firecrawlApiKey?: string;
+      exaApiKey?: string;
+      falApiKey?: string;
+      voiceToolsOpenaiKey?: string;
+      browserbaseApiKey?: string;
+      browserbaseProjectId?: string;
       logoutOfficial?: boolean;
       loginOfficial?: boolean;
     };

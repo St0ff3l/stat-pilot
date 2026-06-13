@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import "./App.css";
 
 function formatRelativeTime(value: number): string {
   const date = new Date(value * 1000);
@@ -103,6 +102,7 @@ function BusyOverlay({ title, detail, elapsedSeconds }: { title: string; detail:
 export default function App() {
   const [state, setState] = useState<HermesAppState | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [activeSettingsTab, setActiveSettingsTab] = useState<"runtime" | "chat" | "vision" | "skills" | "tools">("runtime");
   const [draft, setDraft] = useState("");
   const [isThreadLoading, setIsThreadLoading] = useState(false);
   const [dismissedFiles, setDismissedFiles] = useState<string[] | null>(null);
@@ -130,7 +130,7 @@ export default function App() {
     const handleMouseMove = (mouseMoveEvent: MouseEvent) => {
       if (!isResizingRef.current) return;
       const newWidth = mouseMoveEvent.clientX;
-      if (newWidth >= 200 && newWidth <= 500) {
+      if (newWidth >= 220 && newWidth <= 500) {
         setSidebarWidth(newWidth);
         localStorage.setItem("hermes_sidebar_width", String(newWidth));
       }
@@ -159,7 +159,17 @@ export default function App() {
     apiProvider: "deepseek",
     apiKey: "",
     apiBaseUrl: "",
+    visionModel: "",
+    visionProvider: "openai",
+    visionApiKey: "",
+    visionBaseUrl: "",
     registeredSkills: [],
+    firecrawlApiKey: "",
+    exaApiKey: "",
+    falApiKey: "",
+    voiceToolsOpenaiKey: "",
+    browserbaseApiKey: "",
+    browserbaseProjectId: "",
   });
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -483,8 +493,16 @@ export default function App() {
             <p className="eyebrow">SZ Gov Scope</p>
             <h1>Hermes Desktop</h1>
           </div>
-          <button className="ghost-button" onClick={() => setSettingsOpen(true)} aria-label="设置">
-            设置
+          <button
+            className="ghost-button-icon"
+            onClick={() => { setSettingsOpen(true); setActiveSettingsTab("runtime"); }}
+            aria-label="设置"
+            title="设置"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
           </button>
         </div>
 
@@ -535,32 +553,37 @@ export default function App() {
                   key={thread.id}
                   className={thread.id === state.activeThreadId ? "thread-item active" : "thread-item"}
                 >
+                  {/* Header row: title + delete button */}
+                  <div className="thread-row">
+                    <strong title={thread.name || thread.preview || "未命名会话"}>
+                      {thread.name || thread.preview || "未命名会话"}
+                    </strong>
+                    <button
+                      className="thread-delete-button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void deleteThread(thread.id, thread.name || thread.preview);
+                      }}
+                      aria-label="删除历史记录"
+                      title="删除历史记录"
+                    >
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  </div>
+                  {/* Clickable body: preview + meta */}
                   <button
                     className="thread-main-button"
                     onClick={() => void selectThread(thread.id)}
                     title={thread.name || thread.preview || "未命名会话"}
                   >
-                    <div className="thread-row">
-                      <strong title={thread.name || thread.preview || "未命名会话"}>
-                        {thread.name || thread.preview || "未命名会话"}
-                      </strong>
-                    </div>
                     <p>{thread.preview || "暂无情报预览"}</p>
                     <div className="thread-meta">
                       <span className="thread-pill">{thread.modelProvider}</span>
                       <span>{formatRelativeTime(thread.updatedAt)}</span>
                     </div>
-                  </button>
-                  <button
-                    className="thread-delete-button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void deleteThread(thread.id, thread.name || thread.preview);
-                    }}
-                    aria-label="删除历史记录"
-                    title="删除历史记录"
-                  >
-                    <span aria-hidden="true">×</span>
                   </button>
                 </article>
               ))
@@ -755,7 +778,7 @@ export default function App() {
                     </div>
                   ) : null}
                   <div className="onboarding-footer">
-                    <button className="primary-button" onClick={() => setSettingsOpen(true)}>打开运行设置</button>
+                    <button className="primary-button" onClick={() => { setSettingsOpen(true); setActiveSettingsTab("runtime"); }}>打开运行设置</button>
                   </div>
                 </div>
               ) : activeMessages.length === 0 && !state.activeDraft ? (
@@ -1012,342 +1035,627 @@ export default function App() {
 
       {settingsOpen ? (
         <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}>
-          <div className="settings-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-head">
-              <div>
+          <div className="settings-modal two-column" onClick={(event) => event.stopPropagation()}>
+            {/* Left Sidebar Tabs */}
+            <div className="settings-sidebar">
+              <div className="settings-sidebar-header">
                 <p className="eyebrow">Settings</p>
-                <h3>模型与运行配置</h3>
+                <h3>运行配置</h3>
               </div>
-              <button className="ghost-button" onClick={() => setSettingsOpen(false)}>
-                关闭
-              </button>
-            </div>
-
-            <label>
-              接入模式
-              <select
-                value={draftSettings.runtimeMode}
-                onChange={(event) =>
-                  setDraftSettings((current: HermesAppState["settings"]) => ({
-                    ...current,
-                    runtimeMode: event.target.value as HermesAppState["settings"]["runtimeMode"],
-                    model: event.target.value === "official" ? state.official.defaultModel : current.model,
-                  }))
-                }
-                className="settings-select"
-              >
-                <option value="private">自定义私有模式</option>
-                <option value="official">Hermes 官方模式</option>
-              </select>
-            </label>
-
-            <label>
-              内置 Runtime Binary
-              <input value={state.settings.hermesBin} disabled />
-            </label>
-
-            <div className="skills-section">
-              <div className="skills-section-header">
-                <h4>Hermes Runtime</h4>
-                <span>{runtimeInstalled ? "已安装" : "未安装"}</span>
-              </div>
-              <div className="skills-list-container">
-                <div className="skill-card">
-                  <div className="skill-info">
-                    <strong className="skill-card-header">应用私有运行时</strong>
-                    <p className="skill-card-desc">Hermes 现在固定安装在当前 Electron 应用的私有数据目录里，不再依赖外部路径。</p>
-                    <span className="skill-card-path">{state.runtime.installDir}</span>
-                    <span className="skill-card-path">{state.runtime.homeDir}</span>
-                  </div>
-                </div>
-              </div>
-              <div className="modal-actions">
-                <button className="secondary-button" onClick={() => void repairRuntime()}>
-                  安装 / 修复运行时
+              <nav className="settings-tabs">
+                <button
+                  type="button"
+                  className={`settings-tab-btn ${activeSettingsTab === "runtime" ? "active" : ""}`}
+                  onClick={() => setActiveSettingsTab("runtime")}
+                >
+                  <span className="tab-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  </span>
+                  运行与工作区
                 </button>
                 <button
-                  className="secondary-button"
-                  onClick={() => void uninstallRuntime()}
-                  disabled={!runtimeInstalled || state.runtime.uninstalling}
+                  type="button"
+                  className={`settings-tab-btn ${activeSettingsTab === "chat" ? "active" : ""}`}
+                  onClick={() => setActiveSettingsTab("chat")}
                 >
-                  {state.runtime.uninstalling ? "卸载中..." : "一键卸载运行时"}
+                  <span className="tab-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+                    </svg>
+                  </span>
+                  对话模型配置
                 </button>
-              </div>
+                <button
+                  type="button"
+                  className={`settings-tab-btn ${activeSettingsTab === "vision" ? "active" : ""}`}
+                  onClick={() => setActiveSettingsTab("vision")}
+                >
+                  <span className="tab-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  </span>
+                  视觉大模型
+                </button>
+                <button
+                  type="button"
+                  className={`settings-tab-btn ${activeSettingsTab === "skills" ? "active" : ""}`}
+                  onClick={() => setActiveSettingsTab("skills")}
+                >
+                  <span className="tab-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                    </svg>
+                  </span>
+                  技能扩展 ({state?.settings.registeredSkills.length ?? 0})
+                </button>
+                <button
+                  type="button"
+                  className={`settings-tab-btn ${activeSettingsTab === "tools" ? "active" : ""}`}
+                  onClick={() => setActiveSettingsTab("tools")}
+                >
+                  <span className="tab-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 22v-5M9 8V2M15 8V2M18 8H6A2 2 0 0 0 4 10v2a4 4 0 0 0 4 4h8a4 4 0 0 0 4-4v-2a2 2 0 0 0-2-2z" />
+                    </svg>
+                  </span>
+                  外部工具 & API
+                </button>
+              </nav>
             </div>
 
-            <label>
-              Model
-              {draftSettings.runtimeMode === "official" ? (
-                <div className="settings-model-switch">
-                  <div className="settings-model-row">
-                    <select
-                      value={draftSettings.model}
-                      onChange={(event) =>
-                        setDraftSettings((current: HermesAppState["settings"]) => ({
-                          ...current,
-                          model: event.target.value,
-                        }))
-                      }
-                      className="settings-select settings-model-select"
-                    >
-                      {(state.official.availableModels.length > 0 ? state.official.availableModels : [state.official.defaultModel]).map((modelId) => (
-                        <option key={modelId} value={modelId}>
-                          {modelId}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="inline-apply-button"
-                      onClick={() => {
-                        if (!officialModelDirty) return;
-                        void applyModelChange(draftSettings.model);
-                      }}
-                      disabled={!officialModelDirty}
-                    >
-                      应用切换
-                    </button>
-                  </div>
-                  <small className="field-hint">
-                    实际运行：<b>{displayModel}</b>
-                    {officialModelDirty ? ` | 点击应用：${state.official.defaultModel} → ${draftSettings.model}` : ""}
-                  </small>
-                </div>
-              ) : (
-                <input
-                  value={draftSettings.model}
-                  onChange={(event) =>
-                    setDraftSettings((current: HermesAppState["settings"]) => ({
-                      ...current,
-                      model: event.target.value,
-                    }))
-                  }
-                  placeholder="gpt-5.4"
-                />
-              )}
-            </label>
+            {/* Right Content Panel */}
+            <div className="settings-content">
+              <div className="settings-content-header">
+                {activeSettingsTab === "runtime" && <h3>运行状态与工作区</h3>}
+                {activeSettingsTab === "chat" && <h3>对话模型配置</h3>}
+                {activeSettingsTab === "vision" && <h3>视觉大模型 (Vision Backend)</h3>}
+                {activeSettingsTab === "skills" && <h3>技能扩展 (Custom Skills)</h3>}
+                {activeSettingsTab === "tools" && <h3>外部工具 & API 配置</h3>}
+              </div>
 
-            <label>
-              Workspace CWD
-              <input
-                value={draftSettings.cwd}
-                onChange={(event) =>
-                  setDraftSettings((current: HermesAppState["settings"]) => ({
-                    ...current,
-                    cwd: event.target.value,
-                  }))
-                }
-                placeholder="/path/to/workspace"
-              />
-            </label>
-
-            {draftSettings.runtimeMode !== "official" && (
-              <>
-                <label>
-                  API Provider (大模型提供商)
-                  <select
-                    value={draftSettings.apiProvider}
-                    onChange={(event) =>
-                      setDraftSettings((current: HermesAppState["settings"]) => ({
-                        ...current,
-                        apiProvider: event.target.value as HermesAppState["settings"]["apiProvider"],
-                      }))
-                    }
-                    className="settings-select"
-                  >
-                    <option value="openrouter">OpenRouter</option>
-                    <option value="deepseek">DeepSeek</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="custom">自定义 OpenAI 兼容 API</option>
-                  </select>
-                </label>
-
-                <label>
-                  API Key (密钥)
-                  <input
-                    type="password"
-                    value={draftSettings.apiKey}
-                    onChange={(event) =>
-                      setDraftSettings((current: HermesAppState["settings"]) => ({
-                        ...current,
-                        apiKey: event.target.value,
-                      }))
-                    }
-                    placeholder="sk-..."
-                  />
-                </label>
-              </>
-            )}
-
-            {draftSettings.runtimeMode !== "official" && draftSettings.apiProvider === "custom" && (
-              <label>
-                API Base URL
-                <input
-                  value={draftSettings.apiBaseUrl}
-                  onChange={(event) =>
-                    setDraftSettings((current: HermesAppState["settings"]) => ({
-                      ...current,
-                      apiBaseUrl: event.target.value,
-                    }))
-                  }
-                  placeholder="https://api.example.com/v1"
-                />
-              </label>
-            )}
-
-            {draftSettings.runtimeMode === "official" ? (
-              <div className="skills-section">
-                <div className="skills-section-header">
-                  <h4>Hermes 官方模式</h4>
-                  <div className="official-status-group">
-                    <span className="official-status-tag">
-                      {state.official.isLoggedIn ? `已登录 / ${state.official.subscriptionLabel}` : "未登录"}
-                    </span>
-                    {state.official.isLoggedIn && (
-                      <button 
-                        type="button"
-                        className="text-action-button danger"
-                        onClick={() => void logoutOfficialConfig()}
-                        title="从本机 ~/.hermes 清除官方登录态"
+              <div className="settings-content-body">
+                {activeSettingsTab === "runtime" && (
+                  <div className="settings-tab-pane">
+                    <label>
+                      接入模式
+                      <select
+                        value={draftSettings.runtimeMode}
+                        onChange={(event) =>
+                          setDraftSettings((current: HermesAppState["settings"]) => ({
+                            ...current,
+                            runtimeMode: event.target.value as HermesAppState["settings"]["runtimeMode"],
+                            model: event.target.value === "official" ? (state?.official.defaultModel || "") : current.model,
+                          }))
+                        }
+                        className="settings-select"
                       >
-                        退出登录
-                      </button>
-                    )}
-                    <button 
-                      type="button"
-                      className="text-action-button"
-                      onClick={() => void refreshOfficialConfig()}
-                      title="从 ~/.hermes 重新读取最新的配置和登录状态"
-                    >
-                      刷新状态
-                    </button>
+                        <option value="private">自定义私有模式</option>
+                        <option value="official">Hermes 官方模式</option>
+                      </select>
+                    </label>
+
+                    <label>
+                      Workspace CWD (工作区路径)
+                      <input
+                        value={draftSettings.cwd}
+                        onChange={(event) =>
+                          setDraftSettings((current: HermesAppState["settings"]) => ({
+                            ...current,
+                            cwd: event.target.value,
+                          }))
+                        }
+                        placeholder="/path/to/workspace"
+                      />
+                    </label>
+
+                    <label>
+                      内置 Runtime Binary
+                      <input value={state?.settings.hermesBin || ""} disabled />
+                    </label>
+
+                    <div className="skills-section">
+                      <div className="skills-section-header">
+                        <h4>Hermes Runtime</h4>
+                        <span>{runtimeInstalled ? "已安装" : "未安装"}</span>
+                      </div>
+                      <div className="skills-list-container">
+                        <div className="skill-card">
+                          <div className="skill-info">
+                            <strong className="skill-card-header">应用私有运行时</strong>
+                            <p className="skill-card-desc">Hermes 现在固定安装在当前 Electron 应用的私有数据目录里，不再依赖外部路径。</p>
+                            <span className="skill-card-path">{state?.runtime.installDir}</span>
+                            <span className="skill-card-path">{state?.runtime.homeDir}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="modal-actions-inline">
+                        <button className="secondary-button" onClick={() => void repairRuntime()}>
+                          安装 / 修复运行时
+                        </button>
+                        <button
+                          className="secondary-button"
+                          onClick={() => void uninstallRuntime()}
+                          disabled={!runtimeInstalled || (state?.runtime.uninstalling ?? false)}
+                        >
+                          {state?.runtime.uninstalling ? "卸载中..." : "一键卸载运行时"}
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                </div>
-                <div className="skills-list-container official-mode-container">
-                  <div className="skill-card">
-                    <div className="skill-info">
-                      <strong className="skill-card-header">复用本机 ~/.hermes</strong>
-                      <p className="skill-card-desc">这个模式会直接复用你正常安装 Hermes 后的官方配置、登录态和默认模型。</p>
-                      
-                      {!state.official.isLoggedIn && (
-                        isLoggingIn ? (
-                          <div className="official-login-progress">
-                            <span className="hint-title">正在进行官方账号登录：</span>
-                            {state.official.userCode ? (
-                              <div className="user-code-display-box">
-                                <p className="hint-desc">请在弹出的浏览器页面中核对以下授权码：</p>
-                                <div className="user-code-value">{state.official.userCode}</div>
-                                <p className="hint-desc" style={{ fontSize: "11px", opacity: 0.7, marginTop: "6px" }}>
-                                  网页端登录成功后，App 会自动重新读取状态并同步。
-                                </p>
-                              </div>
+                )}
+
+                {activeSettingsTab === "chat" && (
+                  <div className="settings-tab-pane">
+                    <label>
+                      Model (对话模型)
+                      {draftSettings.runtimeMode === "official" ? (
+                        <div className="settings-model-switch">
+                          <div className="settings-model-row">
+                            <select
+                              value={draftSettings.model}
+                              onChange={(event) =>
+                                setDraftSettings((current: HermesAppState["settings"]) => ({
+                                  ...current,
+                                  model: event.target.value,
+                                }))
+                              }
+                              className="settings-select settings-model-select"
+                            >
+                              {((state?.official.availableModels.length ?? 0) > 0 ? (state?.official.availableModels ?? []) : [state?.official.defaultModel ?? draftSettings.model]).map((modelId) => (
+                                <option key={modelId} value={modelId}>
+                                  {modelId}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              className="inline-apply-button"
+                              onClick={() => {
+                                if (!officialModelDirty) return;
+                                void applyModelChange(draftSettings.model);
+                              }}
+                              disabled={!officialModelDirty}
+                            >
+                              应用切换
+                            </button>
+                          </div>
+                          <small className="field-hint">
+                            实际运行：<b>{displayModel}</b>
+                            {officialModelDirty ? ` | 点击应用：${state?.official.defaultModel} → ${draftSettings.model}` : ""}
+                          </small>
+                        </div>
+                      ) : (
+                        <input
+                          value={draftSettings.model}
+                          onChange={(event) =>
+                            setDraftSettings((current: HermesAppState["settings"]) => ({
+                              ...current,
+                              model: event.target.value,
+                            }))
+                          }
+                          placeholder="deepseek-chat"
+                        />
+                      )}
+                    </label>
+
+                    {draftSettings.runtimeMode !== "official" && (
+                      <>
+                        <label>
+                          API Provider (大模型提供商)
+                          <select
+                            value={draftSettings.apiProvider}
+                            onChange={(event) =>
+                              setDraftSettings((current: HermesAppState["settings"]) => ({
+                                ...current,
+                                apiProvider: event.target.value as HermesAppState["settings"]["apiProvider"],
+                              }))
+                            }
+                            className="settings-select"
+                          >
+                            <option value="openrouter">OpenRouter</option>
+                            <option value="deepseek">DeepSeek</option>
+                            <option value="openai">OpenAI</option>
+                            <option value="custom">自定义 OpenAI 兼容 API</option>
+                          </select>
+                        </label>
+
+                        <label>
+                          API Key (密钥)
+                          <input
+                            type="password"
+                            value={draftSettings.apiKey}
+                            onChange={(event) =>
+                              setDraftSettings((current: HermesAppState["settings"]) => ({
+                                ...current,
+                                apiKey: event.target.value,
+                              }))
+                            }
+                            placeholder="sk-..."
+                          />
+                        </label>
+                      </>
+                    )}
+
+                    {draftSettings.runtimeMode !== "official" && draftSettings.apiProvider === "custom" && (
+                      <label>
+                        API Base URL
+                        <input
+                          value={draftSettings.apiBaseUrl}
+                          onChange={(event) =>
+                            setDraftSettings((current: HermesAppState["settings"]) => ({
+                              ...current,
+                              apiBaseUrl: event.target.value,
+                            }))
+                          }
+                          placeholder="https://api.example.com/v1"
+                        />
+                      </label>
+                    )}
+
+                    {draftSettings.runtimeMode === "official" && state && (
+                      <div className="skills-section">
+                        <div className="skills-section-header">
+                          <h4>Hermes 官方模式</h4>
+                          <div className="official-status-group">
+                            <span className="official-status-tag">
+                              {state.official.isLoggedIn ? `已登录 / ${state.official.subscriptionLabel}` : "未登录"}
+                            </span>
+                            {state.official.isLoggedIn && (
+                              <button 
+                                type="button"
+                                className="text-action-button danger"
+                                onClick={() => void logoutOfficialConfig()}
+                                title="从本机 ~/.hermes 清除官方登录态"
+                              >
+                                退出登录
+                              </button>
+                            )}
+                            <button 
+                              type="button"
+                              className="text-action-button"
+                              onClick={() => void refreshOfficialConfig()}
+                              title="从 ~/.hermes 重新读取最新的配置和登录状态"
+                            >
+                              刷新状态
+                            </button>
+                          </div>
+                        </div>
+                        <div className="skills-list-container official-mode-container">
+                          <div className="skill-card">
+                            <div className="skill-info">
+                              <strong className="skill-card-header">复用本机 ~/.hermes</strong>
+                              <p className="skill-card-desc">这个模式会直接复用你正常安装 Hermes 后的官方配置、登录态和默认模型。</p>
+                              
+                              {!state.official.isLoggedIn && (
+                                isLoggingIn ? (
+                                  <div className="official-login-progress">
+                                    <span className="hint-title">正在进行官方账号登录：</span>
+                                    {state.official.userCode ? (
+                                      <div className="user-code-display-box">
+                                        <p className="hint-desc">请在弹出的浏览器页面中核对以下授权码：</p>
+                                        <div className="user-code-value">{state.official.userCode}</div>
+                                        <p className="hint-desc" style={{ fontSize: "11px", opacity: 0.7, marginTop: "6px" }}>
+                                          网页端登录成功后，App 会自动重新读取状态并同步。
+                                        </p>
+                                      </div>
+                                    ) : (
+                                      <p className="hint-desc">正在请求官方授权码并唤起浏览器，请稍候...</p>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <div className="official-login-hint">
+                                    <span className="hint-title">如何登录官方账号：</span>
+                                    <p className="hint-desc">
+                                      点击下方“点击登录官方账号”按钮，即可自动唤起浏览器登录。也可以在终端手动执行以下命令：
+                                    </p>
+                                    <code className="hint-code">hermes auth add nous --type oauth</code>
+                                    <p className="hint-desc" style={{ marginTop: "4px" }}>
+                                      登录成功后，界面会自动刷新呈现已登录态。
+                                    </p>
+                                  </div>
+                                )
+                              )}
+                              
+                              {state.official.isLoggedIn && (
+                                <div className="official-account-info">
+                                  <span className="account-info-title">已同步官方账号：</span>
+                                  <span className="account-info-value" title={`用户 ID: ${state.official.rateLimitSource}`}>
+                                    {state.official.subscriptionLabel === "Paid" ? "★ Paid 会员账号" : "Free 免费账号"}
+                                  </span>
+                                </div>
+                              )}
+
+                              <span className="skill-card-path">{state.official.configPath}</span>
+                              <span className="skill-card-path">{state.official.authPath}</span>
+                              <span className="skill-card-path">当前配置默认模型：{state.official.defaultModel}</span>
+                              {state.official.subscriptionLabel === "Free" && state.official.freeRecommendedModels.length > 0 ? (
+                                <span className="skill-card-path">Free 可选：{state.official.freeRecommendedModels.join(" / ")}</span>
+                              ) : null}
+                              {state.official.subscriptionLabel === "Free" &&
+                              state.official.freeRecommendedModels.length > 0 &&
+                              !state.official.freeRecommendedModels.includes(state.official.defaultModel) ? (
+                                <p className="skill-card-desc">注意：你当前 config 默认模型不在 free 推荐列表里，建议改成上面的 free 模型之一。</p>
+                              ) : null}
+                            </div>
+                          </div>
+                          
+                          <div className="official-actions-row">
+                            {state.official.isLoggedIn ? (
+                              <button
+                                type="button"
+                                className="official-btn"
+                                onClick={() => void window.hermesDesktop.openExternal("https://portal.nousresearch.com/")}
+                                title="打开 Nous Portal 网页进行登录、退出或切换账号"
+                              >
+                                管理官方登录
+                              </button>
                             ) : (
-                              <p className="hint-desc">正在请求官方授权码并唤起浏览器，请稍候...</p>
+                              <button
+                                type="button"
+                                className="official-btn primary-style"
+                                onClick={() => void loginOfficialConfig()}
+                                disabled={state.busy || isLoggingIn}
+                                title="启动本地授权并打开浏览器完成登录"
+                              >
+                                {isLoggingIn ? "正在等待浏览器登录..." : "点击登录官方账号"}
+                              </button>
                             )}
                           </div>
-                        ) : (
-                          <div className="official-login-hint">
-                            <span className="hint-title">如何登录官方账号：</span>
-                            <p className="hint-desc">
-                              点击下方“点击登录官方账号”按钮，即可自动唤起浏览器登录。也可以在终端手动执行以下命令：
-                            </p>
-                            <code className="hint-code">hermes auth add nous --type oauth</code>
-                            <p className="hint-desc" style={{ marginTop: "4px" }}>
-                              登录成功后，界面会自动刷新呈现已登录态。
-                            </p>
-                          </div>
-                        )
-                      )}
-                      
-                      {state.official.isLoggedIn && (
-                        <div className="official-account-info">
-                          <span className="account-info-title">已同步官方账号：</span>
-                          <span className="account-info-value" title={`用户 ID: ${state.official.rateLimitSource}`}>
-                            {state.official.subscriptionLabel === "Paid" ? "★ Paid 会员账号" : "Free 免费账号"}
-                          </span>
                         </div>
-                      )}
-
-                      <span className="skill-card-path">{state.official.configPath}</span>
-                      <span className="skill-card-path">{state.official.authPath}</span>
-                      <span className="skill-card-path">当前配置默认模型：{state.official.defaultModel}</span>
-                      {state.official.subscriptionLabel === "Free" && state.official.freeRecommendedModels.length > 0 ? (
-                        <span className="skill-card-path">Free 可选：{state.official.freeRecommendedModels.join(" / ")}</span>
-                      ) : null}
-                      {state.official.subscriptionLabel === "Free" &&
-                      state.official.freeRecommendedModels.length > 0 &&
-                      !state.official.freeRecommendedModels.includes(state.official.defaultModel) ? (
-                        <p className="skill-card-desc">注意：你当前 config 默认模型不在 free 推荐列表里，建议改成上面的 free 模型之一。</p>
-                      ) : null}
-                    </div>
-                  </div>
-                  
-                  <div className="official-actions-row">
-                    {state.official.isLoggedIn ? (
-                      <button
-                        type="button"
-                        className="official-btn"
-                        onClick={() => void window.hermesDesktop.openExternal("https://portal.nousresearch.com/")}
-                        title="打开 Nous Portal 网页进行登录、退出或切换账号"
-                      >
-                        管理官方登录
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="official-btn primary-style"
-                        onClick={() => void loginOfficialConfig()}
-                        disabled={state.busy || isLoggingIn}
-                        title="启动本地授权并打开浏览器完成登录"
-                      >
-                        {isLoggingIn ? "正在等待浏览器登录..." : "点击登录官方账号"}
-                      </button>
+                      </div>
                     )}
                   </div>
-                </div>
-              </div>
-            ) : null}
+                )}
 
-            <div className="skills-section">
-              <div className="skills-section-header">
-                <h4>已注册技能 (Skills)</h4>
-                <button className="add-skill-button" onClick={registerNewSkill}>
-                  + 注册本地技能
-                </button>
-              </div>
-              <div className="skills-list-container">
-                {state.settings.registeredSkills.length === 0 ? (
-                  <p className="no-skills-copy">暂无已注册的技能，点击上方按钮注册本地 SKILL.md 文件。</p>
-                ) : (
-                  state.settings.registeredSkills.map((skill) => (
-                    <div key={skill.path} className="skill-card">
-                      <div className="skill-info">
-                        <strong className="skill-card-header">@{skill.name}</strong>
-                        <p className="skill-card-desc">{skill.description}</p>
-                        <span className="skill-card-path">{skill.path}</span>
-                      </div>
-                      <button 
-                        className="skill-action-btn"
-                        onClick={() => unregisterSkill(skill.path)}
+                {activeSettingsTab === "vision" && (
+                  <div className="settings-tab-pane">
+                    <p className="tab-pane-desc">
+                      配置专门的视觉后端，使纯文本基座模型在执行需要图表分析或自动网页浏览的工具（如 <code>browser_vision</code> / <code>vision_analyze</code>）时能够自动调用该模型。
+                    </p>
+
+                    <label>
+                      Vision Model (视觉大模型)
+                      <input
+                        value={draftSettings.visionModel}
+                        onChange={(event) =>
+                          setDraftSettings((current: HermesAppState["settings"]) => ({
+                            ...current,
+                            visionModel: event.target.value,
+                          }))
+                        }
+                        placeholder="openai/gpt-4o-mini 或 ollama:llava"
+                      />
+                      <small className="field-hint">
+                        例如：<code>openai/gpt-4o-mini</code> (云端高性价比) 或 <code>llava</code> / <code>qwen2.5-vl</code> (本地 Ollama 免费)
+                      </small>
+                    </label>
+
+                    <label>
+                      Vision API Provider (大模型提供商)
+                      <select
+                        value={draftSettings.visionProvider}
+                        onChange={(event) =>
+                          setDraftSettings((current: HermesAppState["settings"]) => ({
+                            ...current,
+                            visionProvider: event.target.value as HermesAppState["settings"]["visionProvider"],
+                          }))
+                        }
+                        className="settings-select"
                       >
-                        注销
-                      </button>
+                        <option value="openai">OpenAI</option>
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="ollama">Ollama (本地私有)</option>
+                        <option value="custom">自定义兼容接口</option>
+                      </select>
+                    </label>
+
+                    {draftSettings.visionProvider !== "ollama" && (
+                      <label>
+                        Vision API Key (视觉服务密钥)
+                        <input
+                          type="password"
+                          value={draftSettings.visionApiKey}
+                          onChange={(event) =>
+                            setDraftSettings((current: HermesAppState["settings"]) => ({
+                              ...current,
+                              visionApiKey: event.target.value,
+                            }))
+                          }
+                          placeholder="sk-..."
+                        />
+                      </label>
+                    )}
+
+                    {(draftSettings.visionProvider === "custom" || draftSettings.visionProvider === "ollama" || draftSettings.visionProvider === "openrouter") && (
+                      <label>
+                        Vision API Base URL
+                        <input
+                          value={draftSettings.visionBaseUrl}
+                          onChange={(event) =>
+                            setDraftSettings((current: HermesAppState["settings"]) => ({
+                              ...current,
+                              visionBaseUrl: event.target.value,
+                            }))
+                          }
+                          placeholder={
+                            draftSettings.visionProvider === "ollama"
+                              ? "http://localhost:11434/v1"
+                              : "https://api.example.com/v1"
+                          }
+                        />
+                      </label>
+                    )}
+                  </div>
+                )}
+
+                {activeSettingsTab === "skills" && (
+                  <div className="settings-tab-pane">
+                    <div className="skills-section">
+                      <div className="skills-section-header">
+                        <h4>已注册技能 (Skills)</h4>
+                        <button className="add-skill-button" onClick={registerNewSkill}>
+                          + 注册本地技能
+                        </button>
+                      </div>
+                      <div className="skills-list-container">
+                        {(!state?.settings.registeredSkills || state.settings.registeredSkills.length === 0) ? (
+                          <p className="no-skills-copy">暂无已注册的技能，点击上方按钮注册本地 SKILL.md 文件。</p>
+                        ) : (
+                          state.settings.registeredSkills.map((skill) => (
+                            <div key={skill.path} className="skill-card">
+                              <div className="skill-info">
+                                <strong className="skill-card-header">@{skill.name}</strong>
+                                <p className="skill-card-desc">{skill.description}</p>
+                                <span className="skill-card-path">{skill.path}</span>
+                              </div>
+                              <button 
+                                className="skill-action-btn"
+                                onClick={() => unregisterSkill(skill.path)}
+                              >
+                                注销
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
                     </div>
-                  ))
+                  </div>
+                )}
+
+                {activeSettingsTab === "tools" && (
+                  <div className="settings-tab-pane">
+                    <p className="tab-pane-desc">
+                      配置外部辅助工具的 API Key。这些密钥会被自动传递给底层的 Hermes Agent 服务，用以支持网页深度检索、图像生成和语音转文字等核心增强功能。
+                    </p>
+
+                    <h4 className="settings-section-title">网络检索与抓取 (Web Search & Crawl)</h4>
+                    <label>
+                      Firecrawl API Key
+                      <input
+                        type="password"
+                        value={draftSettings.firecrawlApiKey || ""}
+                        onChange={(event) =>
+                          setDraftSettings((current: HermesAppState["settings"]) => ({
+                            ...current,
+                            firecrawlApiKey: event.target.value,
+                          }))
+                        }
+                        placeholder="fc-..."
+                      />
+                      <small className="field-hint">
+                        用于网络深度检索、长网页内容抓取和爬虫。可以在 <a href="https://firecrawl.dev/" target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline">firecrawl.dev</a> 申请。
+                      </small>
+                    </label>
+
+                    <label>
+                      Exa API Key
+                      <input
+                        type="password"
+                        value={draftSettings.exaApiKey || ""}
+                        onChange={(event) =>
+                          setDraftSettings((current: HermesAppState["settings"]) => ({
+                            ...current,
+                            exaApiKey: event.target.value,
+                          }))
+                        }
+                        placeholder="exa-..."
+                      />
+                      <small className="field-hint">
+                        AI 原生检索和链接提取 Key。可以在 <a href="https://exa.ai/" target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline">exa.ai</a> 申请。
+                      </small>
+                    </label>
+
+                    <h4 className="settings-section-title" style={{ marginTop: "12px" }}>多媒体与语音 (Multimedia & Voice)</h4>
+                    <label>
+                      FAL.ai API Key
+                      <input
+                        type="password"
+                        value={draftSettings.falApiKey || ""}
+                        onChange={(event) =>
+                          setDraftSettings((current: HermesAppState["settings"]) => ({
+                            ...current,
+                            falApiKey: event.target.value,
+                          }))
+                        }
+                        placeholder="fal_key-..."
+                      />
+                      <small className="field-hint">
+                        用于文本生成图像等工具（如 <code>image_generate</code>）。可以在 <a href="https://fal.ai/" target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline">fal.ai</a> 申请。
+                      </small>
+                    </label>
+
+                    <label>
+                      OpenAI Voice API Key
+                      <input
+                        type="password"
+                        value={draftSettings.voiceToolsOpenaiKey || ""}
+                        onChange={(event) =>
+                          setDraftSettings((current: HermesAppState["settings"]) => ({
+                            ...current,
+                            voiceToolsOpenaiKey: event.target.value,
+                          }))
+                        }
+                        placeholder="sk-..."
+                      />
+                      <small className="field-hint">
+                        专门用于语音消息识别（Whisper）与文本生成语音（TTS）。不影响主对话模型。
+                      </small>
+                    </label>
+
+                    <h4 className="settings-section-title" style={{ marginTop: "12px" }}>云端自动化浏览器 (Cloud Headless Browser)</h4>
+                    <label>
+                      Browserbase API Key
+                      <input
+                        type="password"
+                        value={draftSettings.browserbaseApiKey || ""}
+                        onChange={(event) =>
+                          setDraftSettings((current: HermesAppState["settings"]) => ({
+                            ...current,
+                            browserbaseApiKey: event.target.value,
+                          }))
+                        }
+                        placeholder="bb-..."
+                      />
+                      <small className="field-hint">
+                        云端无头浏览器执行。可以在 <a href="https://browserbase.com/" target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline">browserbase.com</a> 申请。
+                      </small>
+                    </label>
+
+                    <label>
+                      Browserbase Project ID
+                      <input
+                        value={draftSettings.browserbaseProjectId || ""}
+                        onChange={(event) =>
+                          setDraftSettings((current: HermesAppState["settings"]) => ({
+                            ...current,
+                            browserbaseProjectId: event.target.value,
+                          }))
+                        }
+                        placeholder="Project ID"
+                      />
+                    </label>
+                  </div>
                 )}
               </div>
-            </div>
 
-            <p className="modal-copy">
-              配置完成后将自动重新启动后台 Hermes Runtime 服务。私有模式使用你自己填写的 provider/API key；官方模式复用本机 `~/.hermes` 的登录态和默认模型。卸载运行时只会删除这个应用私有目录里的 Hermes 程序与会话数据，不会删除你的整个项目代码。
-            </p>
-
-            <div className="modal-actions">
-              <button className="secondary-button" onClick={() => setSettingsOpen(false)}>
-                取消
-              </button>
-              <button className="primary-button" onClick={() => void saveSettings()}>
-                {officialModelDirty ? "保存并切换模型" : "保存并应用"}
-              </button>
+              {/* Shared Footer Actions */}
+              <div className="settings-content-footer">
+                <p className="modal-copy">
+                  配置完成后将自动重新启动后台 Hermes Runtime 服务。私有模式使用你自己填写的 provider/API key；官方模式复用本机 `~/.hermes` 的登录态和默认模型。卸载运行时只会删除这个应用私有目录里的 Hermes 程序与会话数据。
+                </p>
+                <div className="modal-actions">
+                  <button className="secondary-button" onClick={() => setSettingsOpen(false)}>
+                    取消
+                  </button>
+                  <button className="primary-button" onClick={() => void saveSettings()}>
+                    {officialModelDirty ? "保存并切换模型" : "保存并应用"}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>

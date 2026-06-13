@@ -53,7 +53,17 @@ const defaultSettings = {
   apiProvider: "deepseek",
   apiKey: "",
   apiBaseUrl: "",
+  visionModel: "",
+  visionProvider: "openai",
+  visionApiKey: "",
+  visionBaseUrl: "",
   registeredSkills: [],
+  firecrawlApiKey: "",
+  exaApiKey: "",
+  falApiKey: "",
+  voiceToolsOpenaiKey: "",
+  browserbaseApiKey: "",
+  browserbaseProjectId: "",
 };
 
 function normalizeSettings(settings) {
@@ -93,7 +103,17 @@ function normalizeSettings(settings) {
       typeof input.apiProvider === "string" ? input.apiProvider : defaultSettings.apiProvider,
     apiKey: typeof input.apiKey === "string" ? input.apiKey : defaultSettings.apiKey,
     apiBaseUrl: typeof input.apiBaseUrl === "string" ? input.apiBaseUrl : defaultSettings.apiBaseUrl,
+    visionModel: typeof input.visionModel === "string" ? input.visionModel : defaultSettings.visionModel,
+    visionProvider: typeof input.visionProvider === "string" ? input.visionProvider : defaultSettings.visionProvider,
+    visionApiKey: typeof input.visionApiKey === "string" ? input.visionApiKey : defaultSettings.visionApiKey,
+    visionBaseUrl: typeof input.visionBaseUrl === "string" ? input.visionBaseUrl : defaultSettings.visionBaseUrl,
     registeredSkills,
+    firecrawlApiKey: typeof input.firecrawlApiKey === "string" ? input.firecrawlApiKey : defaultSettings.firecrawlApiKey,
+    exaApiKey: typeof input.exaApiKey === "string" ? input.exaApiKey : defaultSettings.exaApiKey,
+    falApiKey: typeof input.falApiKey === "string" ? input.falApiKey : defaultSettings.falApiKey,
+    voiceToolsOpenaiKey: typeof input.voiceToolsOpenaiKey === "string" ? input.voiceToolsOpenaiKey : defaultSettings.voiceToolsOpenaiKey,
+    browserbaseApiKey: typeof input.browserbaseApiKey === "string" ? input.browserbaseApiKey : defaultSettings.browserbaseApiKey,
+    browserbaseProjectId: typeof input.browserbaseProjectId === "string" ? input.browserbaseProjectId : defaultSettings.browserbaseProjectId,
   };
 }
 
@@ -213,7 +233,7 @@ function mapGatewayMessages(messages) {
       id: randomUUID(),
       role: message.role,
       text: toSafeString(message.text),
-      reasoning: toSafeString(message.reasoning || message.payload?.reasoning).trim() || null,
+      reasoning: toSafeString(message.reasoning || message.reasoning_content || message.payload?.reasoning).trim() || null,
       turnId: null,
     }));
 }
@@ -598,6 +618,51 @@ function buildHermesEnv(settings, launchConfig = null, sessionToken = "") {
       env.OPENAI_BASE_URL = settings.apiBaseUrl;
       env.OPENAI_API_BASE = settings.apiBaseUrl;
     }
+
+    // Vision model configuration
+    if (settings.visionModel) {
+      const vModel = toSafeString(settings.visionModel).trim();
+      const vProvider = toSafeString(settings.visionProvider).trim() || "openai";
+
+      env.HERMES_VISION_MODEL = vModel;
+      env.VISION_MODEL = vModel;
+      env.BROWSER_VISION_MODEL = vModel;
+
+      env.HERMES_VISION_PROVIDER = vProvider;
+      env.VISION_PROVIDER = vProvider;
+
+      if (settings.visionApiKey) {
+        env.HERMES_VISION_API_KEY = settings.visionApiKey;
+        env.VISION_API_KEY = settings.visionApiKey;
+        env.BROWSER_VISION_API_KEY = settings.visionApiKey;
+      }
+
+      if (settings.visionBaseUrl) {
+        env.HERMES_VISION_BASE_URL = settings.visionBaseUrl;
+        env.VISION_BASE_URL = settings.visionBaseUrl;
+        env.BROWSER_VISION_BASE_URL = settings.visionBaseUrl;
+      }
+    }
+  }
+
+  // Tool API keys
+  if (settings.firecrawlApiKey) {
+    env.FIRECRAWL_API_KEY = settings.firecrawlApiKey;
+  }
+  if (settings.exaApiKey) {
+    env.EXA_API_KEY = settings.exaApiKey;
+  }
+  if (settings.falApiKey) {
+    env.FAL_KEY = settings.falApiKey;
+  }
+  if (settings.voiceToolsOpenaiKey) {
+    env.VOICE_TOOLS_OPENAI_KEY = settings.voiceToolsOpenaiKey;
+  }
+  if (settings.browserbaseApiKey) {
+    env.BROWSERBASE_API_KEY = settings.browserbaseApiKey;
+  }
+  if (settings.browserbaseProjectId) {
+    env.BROWSERBASE_PROJECT_ID = settings.browserbaseProjectId;
   }
 
   if (launchConfig?.pythonPath) {
@@ -1653,17 +1718,25 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
     }
 
     const completedAssistantText = toSafeString(state.activeDraft?.text).trim();
+    const completedAssistantReasoning = toSafeString(state.activeDraft?.reasoning).trim();
     await syncMessagesFromGateway();
     if (completedAssistantText) {
-      const lastAssistant = [...state.messages].reverse().find((message) => message.role === "assistant");
-      if (!lastAssistant || toSafeString(lastAssistant.text).trim() !== completedAssistantText) {
+      const lastAssistantIndex = [...state.messages].reverse().findIndex(
+        (msg) => msg.role === "assistant" && toSafeString(msg.text).trim() === completedAssistantText
+      );
+      if (lastAssistantIndex !== -1) {
+        const normalIndex = state.messages.length - 1 - lastAssistantIndex;
+        if (!state.messages[normalIndex].reasoning && completedAssistantReasoning) {
+          state.messages[normalIndex].reasoning = completedAssistantReasoning;
+        }
+      } else {
         state.messages = [
           ...state.messages,
           {
             id: randomUUID(),
             role: "assistant",
             text: completedAssistantText,
-            reasoning: toSafeString(state.activeDraft?.reasoning).trim() || null,
+            reasoning: completedAssistantReasoning || null,
             turnId: null,
           },
         ];
