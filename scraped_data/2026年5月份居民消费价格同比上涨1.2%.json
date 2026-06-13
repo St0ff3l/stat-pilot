@@ -1,0 +1,103 @@
+{
+  "metadata": {
+    "title": "2026年5月份居民消费价格同比上涨1.2%",
+    "publish_date": "2026-06-10",
+    "source": "国家统计局",
+    "statistical_period": "2026年5月"
+  },
+  "text_sections": [
+    {
+      "section_index": 1,
+      "section_heading": "概况",
+      "raw_paragraph_text": "2026年5月份，全国居民消费价格同比上涨1.2%。其中，城市上涨1.3%，农村上涨1.1%；食品价格下降1.7%，非食品价格上涨1.9%；消费品价格上涨1.6%，服务价格上涨0.8%。1—5月平均，全国居民消费价格比上年同期上涨1.0%。",
+      "section_indicators": [
+        {"indicator_name": "全国居民消费价格同比", "single_month_value": "1.2%", "single_month_yoy_growth": 1.2, "cumulative_value": "1.0%", "cumulative_yoy_growth": 1.0, "remarks": "1-5月平均"},
+        {"indicator_name": "城市CPI同比", "single_month_value": "1.3%", "single_month_yoy_growth": 1.3, "cumulative_value": "1.0%", "cumulative_yoy_growth": 1.0, "remarks": ""},
+        {"indicator_name": "农村CPI同比", "single_month_value": "1.1%", "single_month_yoy_growth": 1.1, "cumulative_value": "0.8%", "cumulative_yoy_growth": 0.8, "remarks": ""},
+        {"indicator_name": "食品价格同比", "single_month_value": "-1.7%", "single_month_yoy_growth": -1.7, "cumulative_value": "-0.4%", "cumulative_yoy_growth": -0.4, "remarks": ""},
+        {"indicator_name": "非食品价格同比", "single_month_value": "1.9%", "single_month_yoy_growth": 1.9, "cumulative_value": "1.3%", "cumulative_yoy_growth": 1.3, "remarks": ""},
+        {"indicator_name": "消费品价格同比", "single_month_value": "1.6%", "single_month_yoy_growth": 1.6, "cumulative_value": "1.1%", "cumulative_yoy_growth": 1.1, "remarks": ""},
+        {"indicator_name": "服务价格同比", "single_month_value": "0.8%", "single_month_yoy_growth": 0.8, "cumulative_value": "0.8%", "cumulative_yoy_growth": 0.8, "remarks": ""}
+      ]
+    },
+    {
+      "section_index": 2,
+      "section_heading": "环比变动",
+      "raw_paragraph_text": "5月份，全国居民消费价格环比下降0.1%。其中，城市下降0.1%，农村下降0.1%；食品价格下降0.4%，非食品价格下降0.1%；消费品价格下降0.2%，服务价格下降0.1%。",
+      "section_indicators": [
+        {"indicator_name": "全国居民消费价格环比", "single_month_value": "-0.1%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "城市CPI环比", "single_month_value": "-0.1%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "农村CPI环比", "single_month_value": "-0.1%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "食品价格环比", "single_month_value": "-0.4%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "非食品价格环比", "single_month_value": "-0.1%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "消费品价格环比", "single_month_value": "-0.2%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "服务价格环比", "single_month_value": "-0.1%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""}
+      ]
+    },
+    {
+      "section_index": 3,
+      "section_heading": "一、各类商品及服务价格同比变动情况",
+      "raw_paragraph_text": "5月份，食品烟酒及在外餐饮类价格同比下降0.9%，影响CPI（居民消费价格指数）下降约0.26个百分点。食品中，畜肉类价格下降7.4%，影响CPI下降约0.31个百分点，其中猪肉价格下降16.1%，影响CPI下降约0.31个百分点；鲜果价格下降2.2%，影响CPI下降约0.04个百分点；蛋类价格上涨6.6%，影响CPI上涨约0.03个百分点；鲜菜价格上涨1.6%，影响CPI上涨约0.02个百分点；水产品价格上涨0.6%，影响CPI上涨约0.01个百分点。其他七大类价格同比六涨一降。其中，其他用品及服务、交通通信、医疗保健价格分别上涨9.9%、5.4%和2.1%，生活用品及服务、衣着、教育文化娱乐价格分别上涨1.8%、1.4%和1.3%；居住价格下降0.2%。",
+      "section_indicators": [
+        {"indicator_name": "食品烟酒及在外餐饮同比", "single_month_value": "-0.9%", "single_month_yoy_growth": -0.9, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": "影响CPI下降约0.26个百分点"},
+        {"indicator_name": "畜肉类同比", "single_month_value": "-7.4%", "single_month_yoy_growth": -7.4, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": "影响CPI下降约0.31个百分点"},
+        {"indicator_name": "猪肉同比", "single_month_value": "-16.1%", "single_month_yoy_growth": -16.1, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": "影响CPI下降约0.31个百分点"},
+        {"indicator_name": "鲜果同比", "single_month_value": "-2.2%", "single_month_yoy_growth": -2.2, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": "影响CPI下降约0.04个百分点"},
+        {"indicator_name": "蛋类同比", "single_month_value": "6.6%", "single_month_yoy_growth": 6.6, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": "影响CPI上涨约0.03个百分点"},
+        {"indicator_name": "鲜菜同比", "single_month_value": "1.6%", "single_month_yoy_growth": 1.6, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": "影响CPI上涨约0.02个百分点"},
+        {"indicator_name": "水产品同比", "single_month_value": "0.6%", "single_month_yoy_growth": 0.6, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": "影响CPI上涨约0.01个百分点"},
+        {"indicator_name": "其他用品及服务同比", "single_month_value": "9.9%", "single_month_yoy_growth": 9.9, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "交通通信同比", "single_month_value": "5.4%", "single_month_yoy_growth": 5.4, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "医疗保健同比", "single_month_value": "2.1%", "single_month_yoy_growth": 2.1, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "生活用品及服务同比", "single_month_value": "1.8%", "single_month_yoy_growth": 1.8, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "衣着同比", "single_month_value": "1.4%", "single_month_yoy_growth": 1.4, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "教育文化娱乐同比", "single_month_value": "1.3%", "single_month_yoy_growth": 1.3, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "居住同比", "single_month_value": "-0.2%", "single_month_yoy_growth": -0.2, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""}
+      ]
+    },
+    {
+      "section_index": 4,
+      "section_heading": "二、各类商品及服务价格环比变动情况",
+      "raw_paragraph_text": "5月份，食品烟酒及在外餐饮类价格环比下降0.2%，影响CPI下降约0.06个百分点。食品中，鲜菜价格下降3.6%，影响CPI下降约0.06个百分点；畜肉类价格下降0.8%，影响CPI下降约0.03个百分点，其中猪肉价格下降1.6%，影响CPI下降约0.03个百分点；蛋类价格上涨5.0%，影响CPI上涨约0.03个百分点；鲜果价格上涨0.6%，影响CPI上涨约0.01个百分点。其他七大类价格环比一涨两平四降。其中，衣着价格上涨0.6%；教育文化娱乐、医疗保健价格均持平；生活用品及服务、其他用品及服务价格均下降0.4%，交通通信、居住价格分别下降0.3%和0.1%。",
+      "section_indicators": [
+        {"indicator_name": "食品烟酒及在外餐饮环比", "single_month_value": "-0.2%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": "影响CPI下降约0.06个百分点"},
+        {"indicator_name": "鲜菜环比", "single_month_value": "-3.6%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": "影响CPI下降约0.06个百分点"},
+        {"indicator_name": "畜肉类环比", "single_month_value": "-0.8%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": "影响CPI下降约0.03个百分点"},
+        {"indicator_name": "猪肉环比", "single_month_value": "-1.6%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": "影响CPI下降约0.03个百分点"},
+        {"indicator_name": "蛋类环比", "single_month_value": "5.0%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": "影响CPI上涨约0.03个百分点"},
+        {"indicator_name": "鲜果环比", "single_month_value": "0.6%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": "影响CPI上涨约0.01个百分点"},
+        {"indicator_name": "衣着环比", "single_month_value": "0.6%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "教育文化娱乐环比", "single_month_value": "0.0%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": "持平"},
+        {"indicator_name": "医疗保健环比", "single_month_value": "0.0%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": "持平"},
+        {"indicator_name": "生活用品及服务环比", "single_month_value": "-0.4%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "其他用品及服务环比", "single_month_value": "-0.4%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "交通通信环比", "single_month_value": "-0.3%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "居住环比", "single_month_value": "-0.1%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""}
+      ]
+    }
+  ],
+  "data_tables": [
+    {
+      "table_id": "表1",
+      "table_title": "2026年5月份居民消费价格主要数据",
+      "headers": ["　", "环比涨跌幅 (%)", "同比涨跌幅 (%)", "1—5月 同比涨跌幅(%)"],
+      "rows": [
+        ["居民消费价格", "-0.1", "1.2", "1.0"],
+        ["其中：城市", "-0.1", "1.3", "1.0"],
+        ["农村", "-0.1", "1.1", "0.8"],
+        ["其中：食品", "-0.4", "-1.7", "-0.4"],
+        ["非食品", "-0.1", "1.9", "1.3"],
+        ["其中：消费品", "-0.2", "1.6", "1.1"],
+        ["服务", "-0.1", "0.8", "0.8"],
+        ["其中：不包括食品和能源", "-0.1", "1.1", "1.2"],
+        ["按类别分", " ", " ", " "],
+        ["一、食品烟酒及在外餐饮", "-0.2", "-0.9", "0.0"],
+        ["粮 食", "-0.2", "-0.3", "-0.3"],
+        ["食 用 油", "-0.4", "-1.2", "-1.0"],
+        ["鲜 菜", "-3.6", "1.6", "4.9"]
+      ]
+    }
+  ],
+  "charts_analysis": [],
+  "comprehensive_judgment": "2026年5月CPI同比上涨1.2%，涨幅温和；环比下降0.1%。食品价格延续下行（同比-1.7%、环比-0.4%），猪肉价格大幅下降16.1%是主要拖累；非食品价格同比上涨1.9%提供支撑，但环比也下降0.1%。核心CPI（扣除食品能源）同比1.1%，环比-0.1%。整体看，通胀压力可控，食品去库存仍在进行，非食品特别是服务价格回升乏力，需关注下游需求恢复节奏。"
+}

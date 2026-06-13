@@ -1,0 +1,96 @@
+{
+  "metadata": {
+    "title": "2026年5月份工业生产者出厂价格同比上涨3.9% 环比上涨0.5%",
+    "publish_date": "2026-06-10",
+    "source": "国家统计局",
+    "statistical_period": "2026年5月"
+  },
+  "text_sections": [
+    {
+      "section_index": 1,
+      "section_heading": "概况",
+      "raw_paragraph_text": "2026年5月份，全国工业生产者出厂价格同比上涨3.9%，环比上涨0.5%。工业生产者购进价格同比上涨5.8%，环比上涨1.3%。1—5月平均，工业生产者出厂价格比上年同期上涨1.0%，工业生产者购进价格上涨1.6%。",
+      "section_indicators": [
+        {"indicator_name": "工业生产者出厂价格同比", "single_month_value": "3.9%", "single_month_yoy_growth": 3.9, "cumulative_value": "1.0%", "cumulative_yoy_growth": 1.0, "remarks": "1-5月平均"},
+        {"indicator_name": "工业生产者出厂价格环比", "single_month_value": "0.5%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "工业生产者购进价格同比", "single_month_value": "5.8%", "single_month_yoy_growth": 5.8, "cumulative_value": "1.6%", "cumulative_yoy_growth": 1.6, "remarks": "1-5月平均"},
+        {"indicator_name": "工业生产者购进价格环比", "single_month_value": "1.3%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""}
+      ]
+    },
+    {
+      "section_index": 2,
+      "section_heading": "一、工业生产者价格同比变动情况",
+      "raw_paragraph_text": "5月份，工业生产者出厂价格中，生产资料价格同比上涨5.2%，影响工业生产者出厂价格总水平上涨约4.08个百分点。其中，采掘工业价格上涨15.8%，原材料工业价格上涨9.2%，加工工业价格上涨2.3%。生活资料价格下降0.8%，影响工业生产者出厂价格总水平下降约0.18个百分点。其中，食品价格下降1.8%，衣着和一般日用品价格均下降1.0%，耐用消费品价格持平。工业生产者购进价格中，有色金属材料及电线类价格上涨22.0%，化工原料类价格上涨11.8%，燃料动力类价格上涨10.0%，纺织原料类价格上涨2.5%，黑色金属材料类价格上涨0.3%；建筑材料及非金属类价格下降5.5%，农副产品类价格下降1.6%。",
+      "section_indicators": [
+        {"indicator_name": "生产资料同比", "single_month_value": "5.2%", "single_month_yoy_growth": 5.2, "cumulative_value": "1.6%", "cumulative_yoy_growth": 1.6, "remarks": "影响PPI上涨约4.08个百分点"},
+        {"indicator_name": "采掘工业同比", "single_month_value": "15.8%", "single_month_yoy_growth": 15.8, "cumulative_value": "2.6%", "cumulative_yoy_growth": 2.6, "remarks": ""},
+        {"indicator_name": "原材料工业同比", "single_month_value": "9.2%", "single_month_yoy_growth": 9.2, "cumulative_value": "2.7%", "cumulative_yoy_growth": 2.7, "remarks": ""},
+        {"indicator_name": "加工工业同比", "single_month_value": "2.3%", "single_month_yoy_growth": 2.3, "cumulative_value": "0.9%", "cumulative_yoy_growth": 0.9, "remarks": ""},
+        {"indicator_name": "生活资料同比", "single_month_value": "-0.8%", "single_month_yoy_growth": -0.8, "cumulative_value": "-1.3%", "cumulative_yoy_growth": -1.3, "remarks": "影响PPI下降约0.18个百分点"},
+        {"indicator_name": "食品同比", "single_month_value": "-1.8%", "single_month_yoy_growth": -1.8, "cumulative_value": "-1.8%", "cumulative_yoy_growth": -1.8, "remarks": ""},
+        {"indicator_name": "衣着同比", "single_month_value": "-1.0%", "single_month_yoy_growth": -1.0, "cumulative_value": "-1.0%", "cumulative_yoy_growth": -1.0, "remarks": ""},
+        {"indicator_name": "一般日用品同比", "single_month_value": "-1.0%", "single_month_yoy_growth": -1.0, "cumulative_value": "-1.4%", "cumulative_yoy_growth": -1.4, "remarks": ""},
+        {"indicator_name": "耐用消费品同比", "single_month_value": "0.0%", "single_month_yoy_growth": 0.0, "cumulative_value": "-0.9%", "cumulative_yoy_growth": -0.9, "remarks": "持平"},
+        {"indicator_name": "有色金属材料及电线类同比", "single_month_value": "22.0%", "single_month_yoy_growth": 22.0, "cumulative_value": "20.6%", "cumulative_yoy_growth": 20.6, "remarks": ""},
+        {"indicator_name": "化工原料类同比", "single_month_value": "11.8%", "single_month_yoy_growth": 11.8, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "燃料动力类同比", "single_month_value": "10.0%", "single_month_yoy_growth": 10.0, "cumulative_value": "-1.1%", "cumulative_yoy_growth": -1.1, "remarks": ""},
+        {"indicator_name": "纺织原料类同比", "single_month_value": "2.5%", "single_month_yoy_growth": 2.5, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "黑色金属材料类同比", "single_month_value": "0.3%", "single_month_yoy_growth": 0.3, "cumulative_value": "-1.8%", "cumulative_yoy_growth": -1.8, "remarks": ""},
+        {"indicator_name": "建筑材料及非金属类同比", "single_month_value": "-5.5%", "single_month_yoy_growth": -5.5, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "农副产品类同比", "single_month_value": "-1.6%", "single_month_yoy_growth": -1.6, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""}
+      ]
+    },
+    {
+      "section_index": 3,
+      "section_heading": "二、工业生产者价格环比变动情况",
+      "raw_paragraph_text": "5月份，工业生产者出厂价格中，生产资料价格环比上涨0.7%，影响工业生产者出厂价格总水平上涨约0.53个百分点。其中，采掘工业价格上涨1.5%，原材料工业价格上涨0.9%，加工工业价格上涨0.5%。生活资料价格持平。其中，食品价格下降0.1%，衣着、一般日用品和耐用消费品价格均上涨0.1%。工业生产者购进价格中，化工原料类价格上涨4.2%，燃料动力类价格上涨2.7%，纺织原料类价格上涨1.0%，黑色金属材料类价格上涨0.6%，有色金属材料及电线类、农副产品类价格均上涨0.3%；建筑材料及非金属类价格下降0.5%。",
+      "section_indicators": [
+        {"indicator_name": "生产资料环比", "single_month_value": "0.7%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": "影响PPI上涨约0.53个百分点"},
+        {"indicator_name": "采掘工业环比", "single_month_value": "1.5%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "原材料工业环比", "single_month_value": "0.9%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "加工工业环比", "single_month_value": "0.5%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "生活资料环比", "single_month_value": "0.0%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": "持平"},
+        {"indicator_name": "食品环比", "single_month_value": "-0.1%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "衣着环比", "single_month_value": "0.1%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "一般日用品环比", "single_month_value": "0.1%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "耐用消费品环比", "single_month_value": "0.1%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "化工原料类环比", "single_month_value": "4.2%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "燃料动力类环比", "single_month_value": "2.7%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "纺织原料类环比", "single_month_value": "1.0%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "黑色金属材料类环比", "single_month_value": "0.6%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "有色金属材料及电线类环比", "single_month_value": "0.3%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "农副产品类环比", "single_month_value": "0.3%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""},
+        {"indicator_name": "建筑材料及非金属类环比", "single_month_value": "-0.5%", "single_month_yoy_growth": null, "cumulative_value": null, "cumulative_yoy_growth": null, "remarks": ""}
+      ]
+    }
+  ],
+  "data_tables": [
+    {
+      "table_id": "表1",
+      "table_title": "2026年5月工业生产者价格主要数据",
+      "headers": ["", "环比涨跌幅 (%)", "同比涨跌幅 (%)", "1—5月 同比涨跌幅 (%)"],
+      "rows": [
+        ["一、工业生产者出厂价格", "0.5", "3.9", "1.0"],
+        ["生产资料", "0.7", "5.2", "1.6"],
+        ["采掘", "1.5", "15.8", "2.6"],
+        ["原材料", "0.9", "9.2", "2.7"],
+        ["加工", "0.5", "2.3", "0.9"],
+        ["生活资料", "0.0", "-0.8", "-1.3"],
+        ["食品", "-0.1", "-1.8", "-1.8"],
+        ["衣着", "0.1", "-1.0", "-1.0"],
+        ["一般日用品", "0.1", "-1.0", "-1.4"],
+        ["耐用消费品", "0.1", "0.0", "-0.9"],
+        ["二、工业生产者购进价格", "1.3", "5.8", "1.6"],
+        ["燃料、动力类", "2.7", "10.0", "-1.1"],
+        ["黑色金属材料类", "0.6", "0.3", "-1.8"],
+        ["有色金属材料及电线类", "0.3", "22.0", "20.6"],
+        ["化工原料类", "4.2", "11.8", null],
+        ["纺织原料类", "1.0", "2.5", null],
+        ["建筑材料及非金属类", "-0.5", "-5.5", null],
+        ["农副产品类", "0.3", "-1.6", null]
+      ]
+    }
+  ],
+  "charts_analysis": [],
+  "comprehensive_judgment": "2026年5月PPI同比上涨3.9%，环比上涨0.5%，主要受生产资料价格上涨5.2%拉动（贡献4.08个百分点），特别是采掘工业(+15.8%)、原材料工业(+9.2%)涨幅显著。有色金属材料及电线类同比大涨22.0%成为购进价格上涨主因（购进价同比+5.8%）。但生活资料价格同比下降0.8%，消费品通缩特征仍存。1-5月累计PPI仅+1.0%，全年走势仍取决于大宗商品周期与下游需求复苏节奏。"
+}

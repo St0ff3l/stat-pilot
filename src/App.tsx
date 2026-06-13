@@ -74,9 +74,9 @@ function MessageBody({ role, text }: { role: HermesChatMessage["role"]; text: st
   );
 }
 
-function TraceBlock({ text }: { text: string }) {
+function TraceBlock({ text, open = false }: { text: string; open?: boolean }) {
   return (
-    <details className="trace-block" open>
+    <details className="trace-block" open={open}>
       <summary>思考过程</summary>
       <div className="message-markdown">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -104,6 +104,49 @@ export default function App() {
   const [state, setState] = useState<HermesAppState | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draft, setDraft] = useState("");
+  const [isThreadLoading, setIsThreadLoading] = useState(false);
+  const [dismissedFiles, setDismissedFiles] = useState<string[] | null>(null);
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
+  const [threadFiles, setThreadFiles] = useState<string[]>([]);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = localStorage.getItem("hermes_sidebar_width");
+    if (saved) {
+      const parsed = parseInt(saved, 10);
+      if (!isNaN(parsed) && parsed >= 200 && parsed <= 500) {
+        return parsed;
+      }
+    }
+    return 300;
+  });
+
+  const isResizingRef = useRef(false);
+
+  const startResizing = (mouseDownEvent: React.MouseEvent) => {
+    mouseDownEvent.preventDefault();
+    isResizingRef.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    
+    const handleMouseMove = (mouseMoveEvent: MouseEvent) => {
+      if (!isResizingRef.current) return;
+      const newWidth = mouseMoveEvent.clientX;
+      if (newWidth >= 200 && newWidth <= 500) {
+        setSidebarWidth(newWidth);
+        localStorage.setItem("hermes_sidebar_width", String(newWidth));
+      }
+    };
+
+    const handleMouseUp = () => {
+      isResizingRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+  };
   const [headerModelSelection, setHeaderModelSelection] = useState("");
   const [busyElapsedSeconds, setBusyElapsedSeconds] = useState(0);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -148,6 +191,39 @@ export default function App() {
     return () => unsubscribe?.();
   }, []);
 
+  // Load files when active thread changes
+  useEffect(() => {
+    if (state?.activeThreadId) {
+      const key = `hermes_files_${state.activeThreadId}`;
+      const existingStr = localStorage.getItem(key);
+      if (existingStr) {
+        try {
+          const files = JSON.parse(existingStr);
+          if (Array.isArray(files)) {
+            setThreadFiles(files);
+            return;
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+    setThreadFiles([]);
+  }, [state?.activeThreadId]);
+
+  // Append files when new ones are generated
+  useEffect(() => {
+    if (state?.activeThreadId && state?.lastGeneratedFiles && state.lastGeneratedFiles.length > 0) {
+      const key = `hermes_files_${state.activeThreadId}`;
+      setThreadFiles((prev) => {
+        const merged = Array.from(new Set([...prev, ...state.lastGeneratedFiles!]));
+        localStorage.setItem(key, JSON.stringify(merged));
+        return merged;
+      });
+      setRightSidebarOpen(true);
+    }
+  }, [state?.activeThreadId, state?.lastGeneratedFiles]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [state?.messages.length, state?.activeDraft?.text]);
@@ -173,9 +249,14 @@ export default function App() {
       return;
     }
 
-    const nextState = await window.hermesDesktop.newThread();
-    setState(nextState);
-    setDraft("");
+    setIsThreadLoading(true);
+    try {
+      const nextState = await window.hermesDesktop.newThread();
+      setState(nextState);
+      setDraft("");
+    } finally {
+      setIsThreadLoading(false);
+    }
   }
 
   async function selectThread(threadId: string) {
@@ -183,9 +264,14 @@ export default function App() {
       return;
     }
 
-    const nextState = await window.hermesDesktop.selectThread(threadId);
-    setState(nextState);
-    setDraft("");
+    setIsThreadLoading(true);
+    try {
+      const nextState = await window.hermesDesktop.selectThread(threadId);
+      setState(nextState);
+      setDraft("");
+    } finally {
+      setIsThreadLoading(false);
+    }
   }
 
   async function deleteThread(threadId: string, threadName?: string | null) {
@@ -198,8 +284,14 @@ export default function App() {
       return;
     }
 
-    const nextState = await window.hermesDesktop.archiveThread(threadId);
-    setState(nextState);
+    setIsThreadLoading(true);
+    try {
+      const nextState = await window.hermesDesktop.archiveThread(threadId);
+      setState(nextState);
+      localStorage.removeItem(`hermes_files_${threadId}`);
+    } finally {
+      setIsThreadLoading(false);
+    }
   }
 
   async function sendMessage() {
@@ -340,11 +432,21 @@ export default function App() {
     state.error.includes("Bundled Hermes runtime source not found")
   );
   const canSend = !needsProviderSetup && !isHermesMissing && !state?.busy;
+  const isInitializing = !!state && !state.error && (
+    state.status.startsWith("Starting") || 
+    state.status.startsWith("Installing")
+  );
 
   if (!state) {
     return (
-      <div className="shell">
+      <div
+        className="shell"
+        style={{
+          gridTemplateColumns: `${sidebarWidth}px 1fr`,
+        }}
+      >
         <aside className="sidebar">
+          <div className="sidebar-resizer" onMouseDown={startResizing} />
           <div className="brand">
             <div className="brand-title">
               <p className="eyebrow">SZ Gov Scope</p>
@@ -368,8 +470,14 @@ export default function App() {
   }
 
   return (
-    <div className="shell">
+    <div
+      className={`shell ${rightSidebarOpen ? "with-right-sidebar" : ""}`}
+      style={{
+        gridTemplateColumns: `${sidebarWidth}px 1fr${rightSidebarOpen ? " 300px" : ""}`,
+      }}
+    >
       <aside className="sidebar">
+        <div className="sidebar-resizer" onMouseDown={startResizing} />
         <div className="brand">
           <div className="brand-title">
             <p className="eyebrow">SZ Gov Scope</p>
@@ -387,11 +495,36 @@ export default function App() {
         <div className="sidebar-section">
           <div className="section-head">
             <span>对话历史</span>
-            <span>{orderedThreads.length}</span>
+            <span>{isInitializing ? "..." : orderedThreads.length}</span>
           </div>
 
           <div className="thread-list">
-            {orderedThreads.length === 0 ? (
+            {isInitializing ? (
+              <div className="sidebar-skeleton">
+                <div className="skeleton-item">
+                  <div className="skeleton-row">
+                    <div className="skeleton-line title" />
+                    <div className="skeleton-line time" />
+                  </div>
+                  <div className="skeleton-line preview" />
+                  <div className="skeleton-line preview short" />
+                </div>
+                <div className="skeleton-item">
+                  <div className="skeleton-row">
+                    <div className="skeleton-line title" />
+                    <div className="skeleton-line time" />
+                  </div>
+                  <div className="skeleton-line preview" />
+                </div>
+                <div className="skeleton-item">
+                  <div className="skeleton-row">
+                    <div className="skeleton-line title" />
+                    <div className="skeleton-line time" />
+                  </div>
+                  <div className="skeleton-line preview" />
+                </div>
+              </div>
+            ) : orderedThreads.length === 0 ? (
               <div className="empty-state">
                 <strong>暂无对话历史</strong>
                 <p>新建一个会话来开始与智能体进行情报工作对接。</p>
@@ -405,15 +538,17 @@ export default function App() {
                   <button
                     className="thread-main-button"
                     onClick={() => void selectThread(thread.id)}
+                    title={thread.name || thread.preview || "未命名会话"}
                   >
                     <div className="thread-row">
-                      <strong>{thread.name || thread.preview || "未命名会话"}</strong>
-                      <span>{formatRelativeTime(thread.updatedAt)}</span>
+                      <strong title={thread.name || thread.preview || "未命名会话"}>
+                        {thread.name || thread.preview || "未命名会话"}
+                      </strong>
                     </div>
                     <p>{thread.preview || "暂无情报预览"}</p>
                     <div className="thread-meta">
                       <span className="thread-pill">{thread.modelProvider}</span>
-                      <span>{thread.status}</span>
+                      <span>{formatRelativeTime(thread.updatedAt)}</span>
                     </div>
                   </button>
                   <button
@@ -443,7 +578,7 @@ export default function App() {
         <header className="chat-header">
           <div className="chat-header-title">
             <p className="eyebrow">Intel Agent Console</p>
-            <h2>{activeName}</h2>
+            <h2 title={activeName}>{activeName}</h2>
           </div>
           <div className="header-actions">
             {isOfficialMode ? (
@@ -492,118 +627,172 @@ export default function App() {
                 {state.settings.cwd ? "已配置" : "默认"}
               </span>
             </div>
+            <button
+              className={`header-toggle-sidebar-button ${rightSidebarOpen ? "active" : ""}`}
+              onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
+              title={rightSidebarOpen ? "隐藏生成文件" : "显示生成文件"}
+            >
+              <span className="pill-label" style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                <span>📁</span>
+                <span>生成文件</span>
+              </span>
+              {threadFiles.length > 0 && (
+                <span className="sidebar-count-badge">{threadFiles.length}</span>
+              )}
+            </button>
           </div>
         </header>
 
         <section className="message-scroller">
-          {isHermesMissing ? (
-            <div className="onboarding-card">
-              <div className="onboarding-title">
-                <h3>Hermes 运行时未就绪</h3>
-              </div>
-              <p>桌面客户端目前无法启动内置 Hermes 运行时。现在这套集成已经改成“应用私有运行时”，不会再依赖你手工指定外部 `hermes` 可执行文件。</p>
-              <div className="guide-steps">
-                <div className="step-item">
-                  <strong>第一步：一键修复内置运行时</strong>
-                  <p>点击下方按钮，应用会把 Hermes runtime 安装/恢复到自己的私有目录，再重新尝试启动本地后台。</p>
+          {isThreadLoading ? (
+            <div className="chat-skeleton">
+              <div className="skeleton-bubble assistant">
+                <div className="skeleton-header">
+                  <div className="skeleton-avatar" />
+                  <div className="skeleton-name" />
                 </div>
-                <div className="step-item">
-                  <strong>第二步：如果连种子运行时都不存在</strong>
-                  <p>开发环境下如果项目根目录还没有 `.runtime`，先在终端执行 <code>npm run hermes:bootstrap</code>，之后再点修复按钮即可。</p>
+                <div className="skeleton-body">
+                  <div className="skeleton-line l1" />
+                  <div className="skeleton-line l2" />
+                  <div className="skeleton-line l3" />
                 </div>
               </div>
-              {state.error ? (
-                <div className="step-item">
-                  <strong>当前错误详情</strong>
-                  <p><code>{state.error}</code></p>
+              <div className="skeleton-bubble user">
+                <div className="skeleton-header">
+                  <div className="skeleton-name" />
+                  <div className="skeleton-avatar" />
                 </div>
-              ) : null}
-              <div className="onboarding-footer">
-                <button className="primary-button" onClick={() => void repairRuntime()}>修复内置运行时</button>
+                <div className="skeleton-body">
+                  <div className="skeleton-line l1" />
+                  <div className="skeleton-line l3" />
+                </div>
+              </div>
+              <div className="skeleton-bubble assistant">
+                <div className="skeleton-header">
+                  <div className="skeleton-avatar" />
+                  <div className="skeleton-name" />
+                </div>
+                <div className="skeleton-body">
+                  <div className="skeleton-line l2" />
+                  <div className="skeleton-line l3" />
+                </div>
               </div>
             </div>
-          ) : needsProviderSetup ? (
-            <div className="onboarding-card">
-              <div className="onboarding-title">
-                <h3>{isOfficialMode ? "先连接 Hermes 官方账号" : "先配置你自己的模型 API"}</h3>
-              </div>
-              <p>
-                {isOfficialMode
-                  ? "当前切到了 Hermes 官方模式。这个模式会复用你本机现有的 ~/.hermes 登录态和模型配置。"
-                  : "当前切到了自定义私有模式。先在右上角「设置」里填好 provider、model 和 API key，就可以直接开始对话。"}
-              </p>
-              <div className="guide-steps">
-                {isOfficialMode ? (
-                  <>
+          ) : (
+            <>
+              {isHermesMissing ? (
+                <div className="onboarding-card">
+                  <div className="onboarding-title">
+                    <h3>Hermes 运行时未就绪</h3>
+                  </div>
+                  <p>桌面客户端目前无法启动内置 Hermes 运行时。现在这套集成已经改成“应用私有运行时”，不会再依赖你手工指定外部 `hermes` 可执行文件。</p>
+                  <div className="guide-steps">
                     <div className="step-item">
-                      <strong>检测结果</strong>
-                      <p>官方配置目录：<code>{state.official.homeDir}</code></p>
-                      <p>登录状态：<b>{state.official.isLoggedIn ? `已登录 (${state.official.subscriptionLabel})` : "未登录"}</b></p>
+                      <strong>第一步：一键修复内置运行时</strong>
+                      <p>点击下方按钮，应用会把 Hermes runtime 安装/恢复到自己的私有目录，再重新尝试启动本地后台。</p>
                     </div>
                     <div className="step-item">
-                      <strong>当前官方默认模型</strong>
-                      <p>Provider：<b>{state.official.provider}</b>，默认模型：<b>{state.official.defaultModel}</b></p>
+                      <strong>第二步：如果连种子运行时都不存在</strong>
+                      <p>开发环境下如果项目根目录还没有 `.runtime`，先在终端执行 <code>npm run hermes:bootstrap</code>，之后再点修复按钮即可。</p>
                     </div>
-                    {!state.official.isLoggedIn && (
-                      <div className="step-item">
-                        <strong>如何进行官方登录</strong>
-                        <p>请在您的系统终端（Terminal）中执行命令：<code>hermes login</code>。登录成功后，打开右上角设置并点击 <b>“刷新状态”</b> 即可同步。</p>
-                      </div>
+                  </div>
+                  {state.error ? (
+                    <div className="step-item">
+                      <strong>当前错误详情</strong>
+                      <p><code>{state.error}</code></p>
+                    </div>
+                  ) : null}
+                  <div className="onboarding-footer">
+                    <button className="primary-button" onClick={() => void repairRuntime()}>修复内置运行时</button>
+                  </div>
+                </div>
+              ) : needsProviderSetup ? (
+                <div className="onboarding-card">
+                  <div className="onboarding-title">
+                    <h3>{isOfficialMode ? "先连接 Hermes 官方账号" : "先配置你自己的模型 API"}</h3>
+                  </div>
+                  <p>
+                    {isOfficialMode
+                      ? "当前切到了 Hermes 官方模式。这个模式会复用你本机现有的 ~/.hermes 登录态和模型配置。"
+                      : "当前切到了自定义私有模式。先在右上角「设置」里填好 provider、model 和 API key，就可以直接开始对话。"}
+                  </p>
+                  <div className="guide-steps">
+                    {isOfficialMode ? (
+                      <>
+                        <div className="step-item">
+                          <strong>检测结果</strong>
+                          <p>官方配置目录：<code>{state.official.homeDir}</code></p>
+                          <p>登录状态：<b>{state.official.isLoggedIn ? `已登录 (${state.official.subscriptionLabel})` : "未登录"}</b></p>
+                        </div>
+                        <div className="step-item">
+                          <strong>当前官方默认模型</strong>
+                          <p>Provider：<b>{state.official.provider}</b>，默认模型：<b>{state.official.defaultModel}</b></p>
+                        </div>
+                        {!state.official.isLoggedIn && (
+                          <div className="step-item">
+                            <strong>如何进行官方登录</strong>
+                            <p>请在您的系统终端（Terminal）中执行命令：<code>hermes login</code>。登录成功后，打开右上角设置并点击 <b>“刷新状态”</b> 即可同步。</p>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <div className="step-item">
+                          <strong>推荐配置</strong>
+                          <p>如果你在用 DeepSeek，就把 Provider 设成 <b>deepseek</b>，模型填例如 <b>deepseek-chat</b>，再填入对应 API key。</p>
+                        </div>
+                        <div className="step-item">
+                          <strong>自定义兼容接口</strong>
+                          <p>如果你是代理服务或自建 OpenAI-compatible 接口，把 Provider 设成 <b>custom</b>，同时补上 Base URL 和 API key。</p>
+                        </div>
+                      </>
                     )}
-                  </>
-                ) : (
-                  <>
+                  </div>
+                  {state.error ? (
                     <div className="step-item">
-                      <strong>推荐配置</strong>
-                      <p>如果你在用 DeepSeek，就把 Provider 设成 <b>deepseek</b>，模型填例如 <b>deepseek-chat</b>，再填入对应 API key。</p>
+                      <strong>当前错误详情</strong>
+                      <p><code>{state.error}</code></p>
                     </div>
-                    <div className="step-item">
-                      <strong>自定义兼容接口</strong>
-                      <p>如果你是代理服务或自建 OpenAI-compatible 接口，把 Provider 设成 <b>custom</b>，同时补上 Base URL 和 API key。</p>
-                    </div>
-                  </>
-                )}
-              </div>
-              {state.error ? (
-                <div className="step-item">
-                  <strong>当前错误详情</strong>
-                  <p><code>{state.error}</code></p>
+                  ) : null}
+                  <div className="onboarding-footer">
+                    <button className="primary-button" onClick={() => setSettingsOpen(true)}>打开运行设置</button>
+                  </div>
+                </div>
+              ) : activeMessages.length === 0 && !state.activeDraft ? (
+                <div className="welcome-card">
+                  <p className="eyebrow">Ready</p>
+                  <h3>双向情报助手</h3>
+                  <p>
+                    当前工作区配置已生效。你可以在下方直接输入你关于深圳政务信息、情报收集或公文撰写的问题，由本地 Hermes 智能体为你提供支持。
+                  </p>
                 </div>
               ) : null}
-              <div className="onboarding-footer">
-                <button className="primary-button" onClick={() => setSettingsOpen(true)}>打开运行设置</button>
-              </div>
-            </div>
-          ) : activeMessages.length === 0 && !state.activeDraft ? (
-            <div className="welcome-card">
-              <p className="eyebrow">Ready</p>
-              <h3>双向情报助手</h3>
-              <p>
-                当前工作区配置已生效。你可以在下方直接输入你关于深圳政务信息、情报收集或公文撰写的问题，由本地 Hermes 智能体为你提供支持。
-              </p>
-            </div>
-          ) : null}
 
-          {!isHermesMissing && activeMessages.map((message: HermesChatMessage) => (
-            <article key={message.id} className={message.role === "user" ? "bubble user" : "bubble assistant"}>
-              <div className="bubble-head">
-                <strong>{message.role === "user" ? "你" : "Hermes"}</strong>
-                {message.phase ? <span>{message.phase}</span> : null}
-              </div>
-              <MessageBody role={message.role} text={message.text} />
-            </article>
-          ))}
+              {!isHermesMissing && activeMessages.map((message: HermesChatMessage) => (
+                <article key={message.id} className={message.role === "user" ? "bubble user" : "bubble assistant"}>
+                  <div className="bubble-head">
+                    <strong>{message.role === "user" ? "你" : "Hermes"}</strong>
+                    {message.phase ? <span>{message.phase}</span> : null}
+                  </div>
+                  {message.role === "assistant" && message.reasoning?.trim() ? (
+                    <TraceBlock text={message.reasoning} open={false} />
+                  ) : null}
+                  <MessageBody role={message.role} text={message.text} />
+                </article>
+              ))}
 
-          {!isHermesMissing && state.activeDraft ? (
-            <article className="bubble assistant streaming">
-              <div className="bubble-head">
-                <strong>Hermes</strong>
-                <span>处理中</span>
-              </div>
-              {state.activeDraft.reasoning?.trim() ? <TraceBlock text={state.activeDraft.reasoning} /> : null}
-              <MessageBody role="assistant" text={state.activeDraft.text || "…"} />
-            </article>
-          ) : null}
+              {!isHermesMissing && state.activeDraft ? (
+                <article className="bubble assistant streaming">
+                  <div className="bubble-head">
+                    <strong>Hermes</strong>
+                    <span>处理中</span>
+                  </div>
+                  {state.activeDraft.reasoning?.trim() ? <TraceBlock text={state.activeDraft.reasoning} open={true} /> : null}
+                  <MessageBody role="assistant" text={state.activeDraft.text || "…"} />
+                </article>
+              ) : null}
+            </>
+          )}
 
           <div ref={messagesEndRef} />
         </section>
@@ -689,6 +878,137 @@ export default function App() {
           </div>
         </footer>
       </main>
+
+      {rightSidebarOpen && (
+        <aside className="right-sidebar">
+          <div className="right-sidebar-header">
+            <h3>生成的文件</h3>
+            <button
+              className="right-sidebar-close"
+              onClick={() => setRightSidebarOpen(false)}
+              aria-label="关闭侧边栏"
+              title="关闭侧边栏"
+            >
+              ×
+            </button>
+          </div>
+          <div className="right-sidebar-body">
+            {threadFiles.length === 0 ? (
+              <div className="right-sidebar-empty">
+                <div className="right-sidebar-empty-icon">📁</div>
+                <p>当前对话下尚无生成的文件</p>
+                <p style={{ fontSize: "11px", opacity: 0.7 }}>智能体在执行部分特定技能（如数据抓取等）后，会在此处列出生成的文件。</p>
+              </div>
+            ) : (
+              <>
+                <div className="right-sidebar-section-title">本对话生成 ({threadFiles.length})</div>
+                <ul className="right-sidebar-list">
+                  {threadFiles.map((file) => {
+                    const basename = file.split(/[/\\]/).pop();
+                    return (
+                      <li key={file} className="right-sidebar-item" title={file}>
+                        <div className="right-sidebar-item-info">
+                          <span className="right-sidebar-item-icon">📄</span>
+                          <button
+                            className="right-sidebar-item-name"
+                            onClick={() => void window.hermesDesktop.openExternal(`file://${file}`)}
+                          >
+                            {basename}
+                          </button>
+                        </div>
+                        <div className="right-sidebar-item-actions">
+                          <button
+                            className="right-sidebar-action-btn"
+                            onClick={() => {
+                              const parts = file.split(/[/\\]/);
+                              parts.pop();
+                              const dirPath = parts.join("/");
+                              void window.hermesDesktop.openExternal(`file://${dirPath}`);
+                            }}
+                            title="打开文件所在目录"
+                          >
+                            📂
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
+            )}
+          </div>
+          <div className="right-sidebar-footer">
+            <button
+              className="right-sidebar-open-dir-button"
+              onClick={() => {
+                const targetCwd = state?.settings?.cwd;
+                if (targetCwd) {
+                  void window.hermesDesktop.openExternal(`file://${targetCwd}`);
+                } else {
+                  const firstFile = threadFiles[0];
+                  if (firstFile) {
+                    const parts = firstFile.split(/[/\\]/);
+                    parts.pop();
+                    const dirPath = parts.join("/");
+                    void window.hermesDesktop.openExternal(`file://${dirPath}`);
+                  }
+                }
+              }}
+            >
+              📂 打开输出目录
+            </button>
+          </div>
+        </aside>
+      )}
+
+      {state.lastGeneratedFiles && state.lastGeneratedFiles.length > 0 && state.lastGeneratedFiles !== dismissedFiles && (
+        <div className="file-alert-toast">
+          <div className="toast-header">
+            <span className="toast-icon">📁</span>
+            <strong>检测到新生成文件</strong>
+            <button
+              className="toast-close"
+              onClick={() => setDismissedFiles(state.lastGeneratedFiles ?? null)}
+            >
+              ×
+            </button>
+          </div>
+          <div className="toast-body">
+            <p>智能体已在工作区生成了以下文件：</p>
+            <ul className="toast-file-list">
+              {state.lastGeneratedFiles.map((file) => {
+                const basename = file.split(/[/\\]/).pop();
+                return (
+                  <li key={file} title={file}>
+                    <button
+                      className="text-button file-link"
+                      onClick={() => void window.hermesDesktop.openExternal(`file://${file}`)}
+                    >
+                      {basename}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+          <div className="toast-footer">
+            <button
+              className="toast-open-dir-button"
+              onClick={() => {
+                const firstFile = state.lastGeneratedFiles?.[0];
+                if (firstFile) {
+                  const parts = firstFile.split(/[/\\]/);
+                  parts.pop();
+                  const dirPath = parts.join("/");
+                  void window.hermesDesktop.openExternal(`file://${dirPath}`);
+                }
+              }}
+            >
+              打开输出目录
+            </button>
+          </div>
+        </div>
+      )}
 
       {settingsOpen ? (
         <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}>

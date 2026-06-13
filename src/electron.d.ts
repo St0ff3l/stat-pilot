@@ -17,6 +17,7 @@ declare global {
     turnId: string | null;
     phase?: string | null;
     meta?: string;
+    reasoning?: string | null;
   };
 
   type HermesAppState = {
@@ -73,6 +74,7 @@ declare global {
     } | null;
     busy: boolean;
     skills: Array<{ name: string; description: string; path: string }>;
+    lastGeneratedFiles?: string[] | null;
   };
 
   interface Window {

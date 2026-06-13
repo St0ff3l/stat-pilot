@@ -74,6 +74,11 @@ function normalizeSettings(settings) {
         description: "政策分类与政策匹配",
         path: path.resolve(defaultCwd, "skills/policy_classifier/SKILL.md"),
       },
+      {
+        name: "stats_gov_scraper",
+        description: "国家统计局数据发布详情深度分析与本地入库器",
+        path: path.resolve(defaultCwd, "skills/stats_gov_scraper/SKILL.md"),
+      },
     ];
   }
 
@@ -208,6 +213,7 @@ function mapGatewayMessages(messages) {
       id: randomUUID(),
       role: message.role,
       text: toSafeString(message.text),
+      reasoning: toSafeString(message.reasoning || message.payload?.reasoning).trim() || null,
       turnId: null,
     }));
 }
@@ -220,6 +226,31 @@ function isOfficialSessionModelStale(model) {
   const activeModel = toSafeString(model).trim();
   const expectedModel = toSafeString(state.official.defaultModel).trim();
   return Boolean(activeModel && expectedModel && activeModel !== expectedModel);
+}
+
+async function scanDirectoryFiles(dirPath) {
+  try {
+    const list = [];
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile()) {
+        list.push(path.join(dirPath, entry.name));
+      } else if (entry.isDirectory() && entry.name !== "node_modules" && entry.name !== ".git" && entry.name !== ".runtime" && entry.name !== "dist") {
+        try {
+          const subDirPath = path.join(dirPath, entry.name);
+          const subEntries = await fs.readdir(subDirPath, { withFileTypes: true });
+          for (const subEntry of subEntries) {
+            if (subEntry.isFile()) {
+              list.push(path.join(subDirPath, subEntry.name));
+            }
+          }
+        } catch {}
+      }
+    }
+    return list;
+  } catch {
+    return [];
+  }
 }
 
 async function pathExists(targetPath) {
@@ -1001,16 +1032,28 @@ class HermesGatewayBridge {
   }
 
   async createSession() {
+    const cwd = this.settings.cwd || process.cwd();
     return this.request("session.create", {
-      cwd: this.settings.cwd || process.cwd(),
+      cwd,
       cols: 120,
+      developerInstructions: 
+        `【文件存储与对话规范】\n` +
+        `1. 如果用户要求你进行数据抓取、文件爬取、导出报告或生成本地文档等涉及“输出文件/抓取数据”的任务，你必须调用本地文件写入工具，将生成的内容保存到当前工作区目录（CWD: ${cwd}）下。你可以存放在 CWD 根目录，或者 CWD 下的 outputs/ 或 scraped_data/ 目录中。\n` +
+        `2. 在对话回复中，严禁直接展示庞大的原始数据（如大段的原始 JSON、长篇原始文本、超长的完整表格）。你只能在对话回复中说明文件保存的具体相对路径和文件名，并给出一个简明扼要的 150 字内核心摘要/结论，保持聊天界面整洁。\n` +
+        `3. 请在回复中输出指向生成文件或文件夹的本地 file:// 协议链接（格式为 markdown 链接，例如：[打开输出目录](file://${cwd}/scraped_data/) ），以便用户点击。`,
     });
   }
 
   async resumeThread(threadId) {
+    const cwd = this.settings.cwd || process.cwd();
     return this.request("session.resume", {
       session_id: threadId,
       cols: 120,
+      developerInstructions: 
+        `【文件存储与对话规范】\n` +
+        `1. 如果用户要求你进行数据抓取、文件爬取、导出报告或生成本地文档等涉及“输出文件/抓取数据”的任务，你必须调用本地文件写入工具，将生成的内容保存到当前工作区目录（CWD: ${cwd}）下。你可以存放在 CWD 根目录，或者 CWD 下的 outputs/ 或 scraped_data/ 目录中。\n` +
+        `2. 在对话回复中，严禁直接展示庞大的原始数据（如大段的原始 JSON、长篇原始文本、超长的完整表格）。你只能在对话回复中说明文件保存的具体相对路径和文件名，并给出一个简明扼要的 150 字内核心摘要/结论，保持聊天界面整洁。\n` +
+        `3. 请在回复中输出指向生成文件或文件夹的本地 file:// 协议链接（格式为 markdown 链接，例如：[打开输出目录](file://${cwd}/scraped_data/) ），以便用户点击。`,
     });
   }
 
@@ -1078,6 +1121,8 @@ class HermesGatewayBridge {
 let mainWindow = null;
 let bridge = null;
 let activeGatewaySessionId = null;
+let activeSessionUnsubscribe = null;
+let activeSessionReject = null;
 
 let state = {
   status: "Starting Hermes runtime...",
@@ -1157,6 +1202,15 @@ async function loadActiveThread(threadId) {
   broadcastState();
 
   try {
+    if (activeSessionUnsubscribe) {
+      activeSessionUnsubscribe();
+      activeSessionUnsubscribe = null;
+    }
+    if (activeSessionReject) {
+      activeSessionReject(new Error("Thread switched."));
+      activeSessionReject = null;
+    }
+
     if (activeGatewaySessionId) {
       await bridge.closeSession(activeGatewaySessionId);
     }
@@ -1190,8 +1244,21 @@ async function loadActiveThread(threadId) {
 }
 
 async function startNewConversation() {
+  if (activeSessionUnsubscribe) {
+    activeSessionUnsubscribe();
+    activeSessionUnsubscribe = null;
+  }
+  if (activeSessionReject) {
+    activeSessionReject(new Error("Conversation was closed."));
+    activeSessionReject = null;
+  }
+
   if (bridge && activeGatewaySessionId) {
-    await bridge.closeSession(activeGatewaySessionId);
+    try {
+      await bridge.closeSession(activeGatewaySessionId);
+    } catch (err) {
+      console.error("Failed to close session:", err);
+    }
   }
 
   activeGatewaySessionId = null;
@@ -1204,6 +1271,7 @@ async function startNewConversation() {
   state.activeDraft = null;
   state.error = null;
   state.status = "Ready.";
+  state.busy = false;
   broadcastState();
 }
 
@@ -1221,6 +1289,15 @@ async function waitForSessionCompletion(sessionId) {
     throw new Error("Hermes bridge is not ready.");
   }
 
+  if (activeSessionUnsubscribe) {
+    activeSessionUnsubscribe();
+    activeSessionUnsubscribe = null;
+  }
+  if (activeSessionReject) {
+    activeSessionReject(new Error("New session started."));
+    activeSessionReject = null;
+  }
+
   await new Promise((resolve, reject) => {
     const unsubscribe = bridge.onNotification((message) => {
       if (message.session_id !== sessionId) {
@@ -1228,16 +1305,26 @@ async function waitForSessionCompletion(sessionId) {
       }
 
       if (message.type === "message.complete") {
+        if (activeSessionUnsubscribe === unsubscribe) {
+          activeSessionUnsubscribe = null;
+          activeSessionReject = null;
+        }
         unsubscribe();
         resolve();
         return;
       }
 
       if (message.type === "error") {
+        if (activeSessionUnsubscribe === unsubscribe) {
+          activeSessionUnsubscribe = null;
+          activeSessionReject = null;
+        }
         unsubscribe();
         reject(new Error(message.payload?.message ?? "Failed to complete turn."));
       }
     });
+    activeSessionUnsubscribe = unsubscribe;
+    activeSessionReject = reject;
   });
 }
 
@@ -1398,6 +1485,21 @@ function createWindow() {
 
   mainWindow.setMenuBarVisibility(false);
 
+  // Open external links in default browser instead of navigating within Electron
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (!url.startsWith(DEV_SERVER_URL) && !url.startsWith("file://")) {
+      shell.openExternal(url).catch((err) => console.error("Failed to open URL:", err));
+    }
+    return { action: "deny" };
+  });
+
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (!url.startsWith(DEV_SERVER_URL) && !url.startsWith("file://")) {
+      event.preventDefault();
+      shell.openExternal(url).catch((err) => console.error("Failed to open URL:", err));
+    }
+  });
+
   if (app.isPackaged) {
     mainWindow.loadFile(path.join(app.getAppPath(), "dist/index.html")).catch((error) => {
       console.error(error);
@@ -1454,6 +1556,7 @@ ipcMain.handle("hermes:getState", () => state);
 
 ipcMain.handle("hermes:newThread", async () => {
   await startNewConversation();
+  state.lastGeneratedFiles = null;
   return state;
 });
 
@@ -1463,6 +1566,7 @@ ipcMain.handle("hermes:selectThread", async (_event, threadId) => {
   }
 
   await loadActiveThread(String(threadId));
+  state.lastGeneratedFiles = null;
   return state;
 });
 
@@ -1487,6 +1591,7 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
   state.error = null;
   state.status = "Running...";
   state.reasoningTrace = null;
+  state.lastGeneratedFiles = null;
   broadcastState();
 
   try {
@@ -1532,11 +1637,20 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
     };
     broadcastState();
 
+    const targetCwd = state.settings.cwd || process.cwd();
+    const beforeFiles = await scanDirectoryFiles(targetCwd);
+
     console.log("[hermes-send] submitting prompt", activeGatewaySessionId, text);
     await bridge.sendPrompt(activeGatewaySessionId, text);
 
     await waitForSessionCompletion(activeGatewaySessionId);
     console.log("[hermes-send] message complete");
+
+    const afterFiles = await scanDirectoryFiles(targetCwd);
+    const newFiles = afterFiles.filter(f => !beforeFiles.includes(f));
+    if (newFiles.length > 0) {
+      state.lastGeneratedFiles = newFiles;
+    }
 
     const completedAssistantText = toSafeString(state.activeDraft?.text).trim();
     await syncMessagesFromGateway();
@@ -1549,6 +1663,7 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
             id: randomUUID(),
             role: "assistant",
             text: completedAssistantText,
+            reasoning: toSafeString(state.activeDraft?.reasoning).trim() || null,
             turnId: null,
           },
         ];
