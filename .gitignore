@@ -50,3 +50,5 @@ out/
 *.njsproj
 *.sln
 *.sw?
+
+scraped_data/
