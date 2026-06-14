@@ -20,7 +20,19 @@ npm run dev
 
 That installs Hermes into `.runtime/` inside this repo, runs the Hermes setup wizard, and then starts Vite and Electron together.
 
-When you package the app, include `.runtime/` alongside the Electron resources so the bundled Hermes binary can be found automatically.
+The `.runtime/` directory itself stays gitignored. Any project-specific Hermes customizations should be captured in tracked patch scripts under `scripts/` so they can be re-applied deterministically after bootstrap and before packaging.
+
+When you package the app, include `.runtime/` alongside the Electron resources so the bundled Hermes binary can be found automatically. This project now does that through `electron-builder` `extraResources`.
+
+On macOS, dragging the `.app` from the `.dmg` into `Applications` does not run installer hooks by itself. Instead, on the first app launch, the Electron main process copies the bundled `.runtime/` from the app's `Resources` directory into the user's private app-data directory and starts Hermes from there automatically.
+
+To build a distributable macOS `.dmg`:
+
+```bash
+npm install
+npm run hermes:bootstrap
+npm run dist:mac
+```
 
 ## Desktop settings
 

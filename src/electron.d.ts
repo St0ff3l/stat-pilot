@@ -31,6 +31,7 @@ declare global {
       runtimeMode: "private" | "official";
       model: string;
       cwd: string;
+      defaultOutputDir?: string;
       apiProvider: "openrouter" | "deepseek" | "openai" | "custom";
       apiKey: string;
       apiBaseUrl: string;

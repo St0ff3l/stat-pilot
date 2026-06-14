@@ -14,6 +14,7 @@ function formatRelativeTime(value: number): string {
 
 function withDisplayModel(appState: HermesAppState): HermesAppState["settings"] {
   return {
+    defaultOutputDir: "outputs",
     ...appState.settings,
     model: appState.settings.runtimeMode === "official" ? appState.official.defaultModel : appState.settings.model,
   };
@@ -89,11 +90,11 @@ function TraceBlock({ text, open = false }: { text: string; open?: boolean }) {
 function BusyOverlay({ title, detail, elapsedSeconds }: { title: string; detail: string; elapsedSeconds: number }) {
   return (
     <div className="busy-overlay" role="status" aria-live="polite" aria-busy="true">
-      <div className="busy-overlay-card">
-        <div className="busy-spinner" aria-hidden="true" />
-        <strong>{title}</strong>
+      <div className="busy-box">
+        <div className="spinner" aria-hidden="true" />
+        <h3>{title}</h3>
         <p>{detail}</p>
-        <span className="busy-elapsed">当前已等待 {elapsedSeconds}s</span>
+        <span className="busy-timer">当前已等待 {elapsedSeconds}s</span>
       </div>
     </div>
   );
@@ -156,6 +157,7 @@ export default function App() {
     runtimeMode: "private",
     model: "deepseek-chat",
     cwd: "",
+    defaultOutputDir: "outputs",
     apiProvider: "deepseek",
     apiKey: "",
     apiBaseUrl: "",
@@ -518,29 +520,20 @@ export default function App() {
 
           <div className="thread-list">
             {isInitializing ? (
-              <div className="sidebar-skeleton">
-                <div className="skeleton-item">
-                  <div className="skeleton-row">
-                    <div className="skeleton-line title" />
-                    <div className="skeleton-line time" />
+              <div className="flex flex-col gap-2 overflow-hidden">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="w-full h-[84px] border border-white/10 rounded-xl p-3 flex flex-col justify-between animate-pulse bg-white/5">
+                    <div className="flex justify-between items-center">
+                      <div className="h-3.5 bg-white/10 rounded w-7/12" />
+                      <div className="h-2.5 bg-white/10 rounded w-3/12" />
+                    </div>
+                    <div className="h-3 bg-white/5 rounded w-11/12" />
+                    <div className="flex justify-between items-center">
+                      <div className="h-4 bg-white/10 rounded-md w-16" />
+                      <div className="h-2.5 bg-white/5 rounded w-2/12" />
+                    </div>
                   </div>
-                  <div className="skeleton-line preview" />
-                  <div className="skeleton-line preview short" />
-                </div>
-                <div className="skeleton-item">
-                  <div className="skeleton-row">
-                    <div className="skeleton-line title" />
-                    <div className="skeleton-line time" />
-                  </div>
-                  <div className="skeleton-line preview" />
-                </div>
-                <div className="skeleton-item">
-                  <div className="skeleton-row">
-                    <div className="skeleton-line title" />
-                    <div className="skeleton-line time" />
-                  </div>
-                  <div className="skeleton-line preview" />
-                </div>
+                ))}
               </div>
             ) : orderedThreads.length === 0 ? (
               <div className="empty-state">
@@ -606,7 +599,21 @@ export default function App() {
           <div className="header-actions">
             {isOfficialMode ? (
               <div className={`model-header-pill ${quickModelDirty ? "dirty" : ""}`}>
-                <span className="pill-label">运行模型</span>
+                <span className="pill-label" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <svg className="w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="4" y="4" width="16" height="16" rx="2" />
+                    <rect x="9" y="9" width="6" height="6" rx="1" />
+                    <path d="M9 1v3" />
+                    <path d="M15 1v3" />
+                    <path d="M9 20v3" />
+                    <path d="M15 20v3" />
+                    <path d="M20 9h3" />
+                    <path d="M20 15h3" />
+                    <path d="M1 9h3" />
+                    <path d="M1 15h3" />
+                  </svg>
+                  <span>运行模型</span>
+                </span>
                 <select
                   value={headerModelSelection}
                   onChange={(event) => {
@@ -640,13 +647,33 @@ export default function App() {
               </div>
             ) : (
               <div className="model-header-pill">
-                <span className="pill-label">运行模型</span>
+                <span className="pill-label" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <svg className="w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="4" y="4" width="16" height="16" rx="2" />
+                    <rect x="9" y="9" width="6" height="6" rx="1" />
+                    <path d="M9 1v3" />
+                    <path d="M15 1v3" />
+                    <path d="M9 20v3" />
+                    <path d="M15 20v3" />
+                    <path d="M20 9h3" />
+                    <path d="M20 15h3" />
+                    <path d="M1 9h3" />
+                    <path d="M1 15h3" />
+                  </svg>
+                  <span>运行模型</span>
+                </span>
                 <span className="pill-value">{displayModel}</span>
               </div>
             )}
             <div className="workspace-header-pill">
-              <span className="pill-label">工作区</span>
-              <span className={`pill-value ${state.settings.cwd ? "configured" : ""}`}>
+              <span className="pill-label" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <svg className="w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+                  <rect width="20" height="14" x="2" y="6" rx="2" />
+                </svg>
+                <span>工作区</span>
+              </span>
+              <span className={`pill-value ${state.settings.cwd ? "configured" : ""}`} style={{ fontSize: "0.8rem", fontWeight: 500 }}>
                 {state.settings.cwd ? "已配置" : "默认"}
               </span>
             </div>
@@ -655,8 +682,10 @@ export default function App() {
               onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
               title={rightSidebarOpen ? "隐藏生成文件" : "显示生成文件"}
             >
-              <span className="pill-label" style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                <span>📁</span>
+              <span className="pill-label" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+                </svg>
                 <span>生成文件</span>
               </span>
               {threadFiles.length > 0 && (
@@ -668,36 +697,42 @@ export default function App() {
 
         <section className="message-scroller">
           {isThreadLoading ? (
-            <div className="chat-skeleton">
-              <div className="skeleton-bubble assistant">
-                <div className="skeleton-header">
-                  <div className="skeleton-avatar" />
-                  <div className="skeleton-name" />
+            <div className="flex flex-col gap-6 w-full p-4 overflow-hidden">
+              {/* Assistant Skeleton Bubble */}
+              <div className="w-full max-w-[500px] bg-card-bg border border-border-main rounded-[18px] rounded-bl-sm p-4 flex flex-col gap-3 shadow-sm self-start animate-pulse">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-emerald-500/15" />
+                  <div className="h-3 bg-slate-500/20 rounded w-16" />
                 </div>
-                <div className="skeleton-body">
-                  <div className="skeleton-line l1" />
-                  <div className="skeleton-line l2" />
-                  <div className="skeleton-line l3" />
-                </div>
-              </div>
-              <div className="skeleton-bubble user">
-                <div className="skeleton-header">
-                  <div className="skeleton-name" />
-                  <div className="skeleton-avatar" />
-                </div>
-                <div className="skeleton-body">
-                  <div className="skeleton-line l1" />
-                  <div className="skeleton-line l3" />
+                <div className="flex flex-col gap-2">
+                  <div className="h-3 bg-slate-500/10 rounded w-11/12" />
+                  <div className="h-3 bg-slate-500/10 rounded w-4/5" />
+                  <div className="h-3 bg-slate-500/10 rounded w-2/3" />
                 </div>
               </div>
-              <div className="skeleton-bubble assistant">
-                <div className="skeleton-header">
-                  <div className="skeleton-avatar" />
-                  <div className="skeleton-name" />
+
+              {/* User Skeleton Bubble */}
+              <div className="w-full max-w-[420px] bg-emerald-500/5 border border-emerald-500/20 border-dashed rounded-[18px] rounded-br-sm p-4 flex flex-col gap-3 self-end animate-pulse">
+                <div className="flex items-center justify-end gap-2">
+                  <div className="h-3 bg-emerald-500/25 rounded w-12" />
+                  <div className="w-6 h-6 rounded-full bg-emerald-500/20" />
                 </div>
-                <div className="skeleton-body">
-                  <div className="skeleton-line l2" />
-                  <div className="skeleton-line l3" />
+                <div className="flex flex-col gap-2 items-end">
+                  <div className="h-3 bg-emerald-500/15 rounded w-11/12" />
+                  <div className="h-3 bg-emerald-500/15 rounded w-3/4" />
+                </div>
+              </div>
+
+              {/* Assistant Skeleton Bubble 2 */}
+              <div className="w-full max-w-[580px] bg-card-bg border border-border-main rounded-[18px] rounded-bl-sm p-4 flex flex-col gap-3 shadow-sm self-start animate-pulse">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-emerald-500/15" />
+                  <div className="h-3 bg-slate-500/20 rounded w-16" />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <div className="h-3 bg-slate-500/10 rounded w-10/12" />
+                  <div className="h-3 bg-slate-500/10 rounded w-11/12" />
+                  <div className="h-3 bg-slate-500/10 rounded w-1/2" />
                 </div>
               </div>
             </div>
@@ -918,9 +953,15 @@ export default function App() {
           <div className="right-sidebar-body">
             {threadFiles.length === 0 ? (
               <div className="right-sidebar-empty">
-                <div className="right-sidebar-empty-icon">📁</div>
+                <div className="right-sidebar-empty-icon">
+                  <svg className="w-10 h-10 text-slate-400 mx-auto mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+                  </svg>
+                </div>
                 <p>当前对话下尚无生成的文件</p>
-                <p style={{ fontSize: "11px", opacity: 0.7 }}>智能体在执行部分特定技能（如数据抓取等）后，会在此处列出生成的文件。</p>
+                <p style={{ fontSize: "11.5px", opacity: 0.75, lineHeight: "1.5" }}>
+                  智能体执行导出或抓取任务后，生成的文件默认保存至 <b>{state?.settings.defaultOutputDir || "outputs"}/任务子目录/</b>。
+                </p>
               </div>
             ) : (
               <>
@@ -931,7 +972,15 @@ export default function App() {
                     return (
                       <li key={file} className="right-sidebar-item" title={file}>
                         <div className="right-sidebar-item-info">
-                          <span className="right-sidebar-item-icon">📄</span>
+                          <span className="right-sidebar-item-icon" style={{ display: "inline-flex", alignItems: "center" }}>
+                            <svg className="w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+                              <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+                              <path d="M10 9H8" />
+                              <path d="M16 13H8" />
+                              <path d="M16 17H8" />
+                            </svg>
+                          </span>
                           <button
                             className="right-sidebar-item-name"
                             onClick={() => void window.hermesDesktop.openExternal(`file://${file}`)}
@@ -950,7 +999,9 @@ export default function App() {
                             }}
                             title="打开文件所在目录"
                           >
-                            📂
+                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2" />
+                            </svg>
                           </button>
                         </div>
                       </li>
@@ -963,10 +1014,14 @@ export default function App() {
           <div className="right-sidebar-footer">
             <button
               className="right-sidebar-open-dir-button"
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}
               onClick={() => {
                 const targetCwd = state?.settings?.cwd;
+                const defaultOutputDir = state?.settings?.defaultOutputDir || "outputs";
                 if (targetCwd) {
-                  void window.hermesDesktop.openExternal(`file://${targetCwd}`);
+                  const isAbsolute = defaultOutputDir.startsWith("/") || defaultOutputDir.includes(":");
+                  const resolvedPath = isAbsolute ? defaultOutputDir : `${targetCwd}/${defaultOutputDir}`;
+                  void window.hermesDesktop.openExternal(`file://${resolvedPath}`);
                 } else {
                   const firstFile = threadFiles[0];
                   if (firstFile) {
@@ -978,7 +1033,10 @@ export default function App() {
                 }
               }}
             >
-              📂 打开输出目录
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2" />
+              </svg>
+              <span>打开输出目录</span>
             </button>
           </div>
         </aside>
@@ -987,7 +1045,11 @@ export default function App() {
       {state.lastGeneratedFiles && state.lastGeneratedFiles.length > 0 && state.lastGeneratedFiles !== dismissedFiles && (
         <div className="file-alert-toast">
           <div className="toast-header">
-            <span className="toast-icon">📁</span>
+            <span className="toast-icon" style={{ display: "inline-flex", alignItems: "center" }}>
+              <svg className="w-4 h-4 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+              </svg>
+            </span>
             <strong>检测到新生成文件</strong>
             <button
               className="toast-close"
@@ -1151,6 +1213,23 @@ export default function App() {
                         }
                         placeholder="/path/to/workspace"
                       />
+                    </label>
+
+                    <label>
+                      默认输出文件夹
+                      <input
+                        value={draftSettings.defaultOutputDir || ""}
+                        onChange={(event) =>
+                          setDraftSettings((current: HermesAppState["settings"]) => ({
+                            ...current,
+                            defaultOutputDir: event.target.value,
+                          }))
+                        }
+                        placeholder="outputs"
+                      />
+                      <small className="field-hint">
+                        智能体产生的文件将默认保存到该文件夹下的子目录中。支持相对路径（相对于工作区）或绝对路径。
+                      </small>
                     </label>
 
                     <label>
@@ -1664,7 +1743,7 @@ export default function App() {
       {isModelSwitching ? (
         <BusyOverlay
           title="正在切换模型"
-          detail="Hermes 切换模型通常需要 30 到 60 秒，等待 45 秒左右也算正常。期间请不要重复点击或继续发送消息。"
+          detail="模型切换约需 30-60s，在此期间请勿重复点击或继续发送消息。"
           elapsedSeconds={busyElapsedSeconds}
         />
       ) : null}

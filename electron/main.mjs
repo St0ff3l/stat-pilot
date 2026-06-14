@@ -45,11 +45,26 @@ function getLegacyProjectRuntimeRoot() {
   return path.resolve(process.cwd(), ".runtime");
 }
 
+function buildOutputInstructions(cwd, defaultOutputDir = "outputs") {
+  const resolvedDir = path.isAbsolute(defaultOutputDir)
+    ? defaultOutputDir
+    : path.resolve(cwd, defaultOutputDir);
+
+  return (
+    `【文件存储与对话规范】\n` +
+    `1. 如果用户要求你进行数据抓取、文件爬取、导出报告或生成本地文档等涉及“输出文件/抓取数据”的任务，你必须调用本地文件写入工具，并将所有产物统一保存到指定文件夹下。当前配置的输出文件夹为：${resolvedDir}\n` +
+    `2. 每次任务都必须先在该文件夹下创建一个新的任务子文件夹，再把该任务的所有文件写入这个子文件夹中。子文件夹名称应根据当前任务主题自动生成，使用简短中文或拼音语义化命名；如果有多批次结果，可在末尾追加日期或序号，但禁止直接散落写到 CWD 根目录。\n` +
+    `3. 在对话回复中，严禁直接展示庞大的原始数据（如大段的原始 JSON、长篇原始文本、超长的完整表格）。你只能说明保存的具体相对或绝对路径和文件名，并给出一个简明扼要的 150 字内核心摘要/结论，保持聊天界面整洁。\n` +
+    `4. 请在回复中输出指向本次任务输出子文件夹的本地 file:// 协议链接（格式为 markdown 链接，例如：[打开输出目录](file://${resolvedDir}/任务子目录/) ），以便用户点击。`
+  );
+}
+
 const defaultSettings = {
   hermesBin: getDefaultHermesBinaryPath(),
   runtimeMode: "private",
   model: "deepseek-chat",
   cwd: process.cwd(),
+  defaultOutputDir: "outputs",
   apiProvider: "deepseek",
   apiKey: "",
   apiBaseUrl: "",
@@ -99,6 +114,7 @@ function normalizeSettings(settings) {
     runtimeMode: input.runtimeMode === "official" ? "official" : "private",
     model: typeof input.model === "string" && input.model.trim() ? input.model.trim() : defaultSettings.model,
     cwd: defaultCwd,
+    defaultOutputDir: typeof input.defaultOutputDir === "string" ? input.defaultOutputDir : defaultSettings.defaultOutputDir,
     apiProvider:
       typeof input.apiProvider === "string" ? input.apiProvider : defaultSettings.apiProvider,
     apiKey: typeof input.apiKey === "string" ? input.apiKey : defaultSettings.apiKey,
@@ -248,22 +264,29 @@ function isOfficialSessionModelStale(model) {
   return Boolean(activeModel && expectedModel && activeModel !== expectedModel);
 }
 
-async function scanDirectoryFiles(dirPath) {
+async function scanDirectoryFiles(dirPath, maxDepth = 4, currentDepth = 1) {
+  if (currentDepth > maxDepth) return [];
   try {
     const list = [];
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
     for (const entry of entries) {
+      const entryPath = path.join(dirPath, entry.name);
       if (entry.isFile()) {
-        list.push(path.join(dirPath, entry.name));
-      } else if (entry.isDirectory() && entry.name !== "node_modules" && entry.name !== ".git" && entry.name !== ".runtime" && entry.name !== "dist") {
+        list.push(entryPath);
+      } else if (entry.isDirectory()) {
+        if (
+          entry.name === "node_modules" ||
+          entry.name === ".git" ||
+          entry.name === ".runtime" ||
+          entry.name === "dist" ||
+          entry.name === "dist-server" ||
+          entry.name === "release"
+        ) {
+          continue;
+        }
         try {
-          const subDirPath = path.join(dirPath, entry.name);
-          const subEntries = await fs.readdir(subDirPath, { withFileTypes: true });
-          for (const subEntry of subEntries) {
-            if (subEntry.isFile()) {
-              list.push(path.join(subDirPath, subEntry.name));
-            }
-          }
+          const subFiles = await scanDirectoryFiles(entryPath, maxDepth, currentDepth + 1);
+          list.push(...subFiles);
         } catch {}
       }
     }
@@ -1101,11 +1124,7 @@ class HermesGatewayBridge {
     return this.request("session.create", {
       cwd,
       cols: 120,
-      developerInstructions: 
-        `【文件存储与对话规范】\n` +
-        `1. 如果用户要求你进行数据抓取、文件爬取、导出报告或生成本地文档等涉及“输出文件/抓取数据”的任务，你必须调用本地文件写入工具，将生成的内容保存到当前工作区目录（CWD: ${cwd}）下。你可以存放在 CWD 根目录，或者 CWD 下的 outputs/ 或 scraped_data/ 目录中。\n` +
-        `2. 在对话回复中，严禁直接展示庞大的原始数据（如大段的原始 JSON、长篇原始文本、超长的完整表格）。你只能在对话回复中说明文件保存的具体相对路径和文件名，并给出一个简明扼要的 150 字内核心摘要/结论，保持聊天界面整洁。\n` +
-        `3. 请在回复中输出指向生成文件或文件夹的本地 file:// 协议链接（格式为 markdown 链接，例如：[打开输出目录](file://${cwd}/scraped_data/) ），以便用户点击。`,
+      developerInstructions: buildOutputInstructions(cwd, this.settings.defaultOutputDir),
     });
   }
 
@@ -1114,11 +1133,7 @@ class HermesGatewayBridge {
     return this.request("session.resume", {
       session_id: threadId,
       cols: 120,
-      developerInstructions: 
-        `【文件存储与对话规范】\n` +
-        `1. 如果用户要求你进行数据抓取、文件爬取、导出报告或生成本地文档等涉及“输出文件/抓取数据”的任务，你必须调用本地文件写入工具，将生成的内容保存到当前工作区目录（CWD: ${cwd}）下。你可以存放在 CWD 根目录，或者 CWD 下的 outputs/ 或 scraped_data/ 目录中。\n` +
-        `2. 在对话回复中，严禁直接展示庞大的原始数据（如大段的原始 JSON、长篇原始文本、超长的完整表格）。你只能在对话回复中说明文件保存的具体相对路径和文件名，并给出一个简明扼要的 150 字内核心摘要/结论，保持聊天界面整洁。\n` +
-        `3. 请在回复中输出指向生成文件或文件夹的本地 file:// 协议链接（格式为 markdown 链接，例如：[打开输出目录](file://${cwd}/scraped_data/) ），以便用户点击。`,
+      developerInstructions: buildOutputInstructions(cwd, this.settings.defaultOutputDir),
     });
   }
 
