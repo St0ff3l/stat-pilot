@@ -21,8 +21,8 @@ body {
 
 /* Sidebar styling */
 .sidebar {
-  @apply relative p-6 bg-sidebar-bg text-sidebar-text border-r border-sidebar-border flex flex-col gap-5 overflow-hidden min-h-0;
-  min-width: 220px;
+  @apply relative p-5 bg-sidebar-bg text-sidebar-text border-r border-sidebar-border flex flex-col gap-4 overflow-hidden min-h-0;
+  min-width: 260px;
   max-width: 520px;
 }
 
@@ -33,7 +33,7 @@ body {
 
 .sidebar-resizer:hover,
 .sidebar-resizer:active {
-  background: rgba(16, 185, 129, 0.35);
+  background: rgba(37, 99, 235, 0.35);
 }
 
 /* Brand */
@@ -46,11 +46,11 @@ body {
 }
 
 .brand h1 {
-  @apply m-0 text-[1.25rem] font-bold tracking-tight text-sidebar-text;
+  @apply m-0 text-[1.02rem] font-bold tracking-tight text-sidebar-text leading-tight;
 }
 
 .eyebrow {
-  @apply m-0 mb-1 uppercase tracking-widest text-[0.68rem] font-semibold text-accent;
+  @apply m-0 mb-0.5 uppercase tracking-widest text-[0.65rem] font-semibold text-accent;
 }
 
 /* Buttons */
@@ -59,31 +59,39 @@ body {
   background: rgba(255, 255, 255, 0.05);
 }
 
-/* Icon-only ghost button for settings */
+/* Icon-only ghost button for settings & action icons */
 .ghost-button-icon {
-  @apply border border-sidebar-border text-sidebar-text rounded-xl cursor-pointer transition-all duration-200 hover:-translate-y-0.5 flex items-center justify-center;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  background: rgba(255, 255, 255, 0.05);
-  flex-shrink: 0;
+  @apply border-none bg-transparent text-slate-600 rounded-xl cursor-pointer transition-colors duration-150 flex items-center justify-center shrink-0 w-8 h-8 p-0;
 }
 
 .ghost-button-icon:hover {
-  background: rgba(255, 255, 255, 0.12);
+  @apply bg-slate-100 text-slate-900;
+  transform: none !important;
 }
 
+/* Standard Button Design System (按钮规范) */
 .primary-button {
-  @apply bg-linear-to-br from-accent to-accent-hover text-white border-none px-4 py-3 rounded-xl text-[0.9rem] font-semibold cursor-pointer flex items-center justify-center gap-2 transition-all duration-200 hover:-translate-y-0.5 disabled:opacity-60 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none;
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+  @apply bg-linear-to-br from-accent to-accent-hover text-white border-none px-3.5 rounded-lg text-[0.82rem] font-semibold cursor-pointer flex items-center justify-center gap-1.5 transition-all duration-150 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none select-none shrink-0 whitespace-nowrap;
+  height: 34px;
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.22);
 }
 
 .primary-button:hover:not(:disabled) {
-  box-shadow: 0 6px 16px rgba(16, 185, 129, 0.3);
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3);
+}
+
+.primary-button-icon {
+  @apply bg-linear-to-br from-accent to-accent-hover text-white border-none rounded-lg cursor-pointer flex items-center justify-center transition-all duration-150 hover:-translate-y-0.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none shrink-0;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
 }
 
 .secondary-button {
-  @apply bg-slate-100 border border-slate-300 text-slate-700 px-4.5 py-3 rounded-xl text-[0.9rem] font-semibold cursor-pointer transition-all duration-200 hover:bg-slate-200;
+  @apply bg-white border border-slate-200 text-slate-700 px-3.5 rounded-lg text-[0.82rem] font-medium cursor-pointer transition-all duration-150 hover:bg-slate-100 hover:text-slate-900 select-none shrink-0 whitespace-nowrap;
+  height: 34px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
 }
 
 .sidebar-new {
@@ -103,36 +111,33 @@ body {
   @apply flex flex-col gap-2 overflow-y-auto pr-1;
 }
 
-.thread-item {
-  @apply w-full border border-sidebar-border rounded-xl transition-all duration-200 text-inherit;
-  background: rgba(255, 255, 255, 0.03);
+/* Grouped Slim Thread List */
+.thread-folder-group {
+  @apply flex flex-col gap-1 mb-3.5;
 }
 
-.thread-item:hover {
-  @apply translate-x-0.5;
-  background: rgba(255, 255, 255, 0.08);
+.thread-folder-header {
+  @apply flex items-center gap-1.5 px-1 py-1 text-[0.78rem] font-bold text-slate-500 rounded-md select-none;
 }
 
-.thread-item.active {
-  background: rgba(16, 185, 129, 0.15);
-  border-color: rgba(16, 185, 129, 0.4);
+.thread-folder-items {
+  @apply flex flex-col gap-0.5 pl-2 border-l border-slate-200/80 ml-2.5 mt-0.5;
 }
 
-.thread-main-button {
-  @apply bg-transparent text-inherit w-full px-3 pb-3 pt-0 text-left cursor-pointer flex flex-col gap-1.5;
-  border: none;
+.thread-item-slim {
+  @apply flex items-center justify-between px-2.5 py-1.5 rounded-xl text-[0.83rem] text-slate-700 font-medium cursor-pointer transition-all duration-150 hover:bg-slate-100/90 hover:text-slate-900;
 }
 
-.thread-delete-button {
-  @apply flex-shrink-0 border-none rounded text-sidebar-subtext cursor-pointer transition-all duration-150 grid place-items-center opacity-0 hover:bg-red-500 hover:text-white;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  background: rgba(255, 255, 255, 0.1);
+.thread-item-slim.active {
+  @apply bg-blue-50/90 text-blue-600 font-semibold shadow-xs;
 }
 
-.thread-item:hover .thread-delete-button {
-  @apply opacity-100;
+.thread-item-slim-title {
+  @apply truncate flex-1 pr-2 leading-tight;
+}
+
+.thread-item-slim-delete {
+  @apply hidden group-hover:flex items-center justify-center w-4 h-4 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 border-none cursor-pointer text-xs shrink-0 transition-colors font-bold;
 }
 
 .thread-row {
@@ -163,12 +168,17 @@ body {
 
 .status-dot {
   @apply w-2 h-2 rounded-full bg-accent transition-all duration-300;
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
 }
 
 .status-dot.error {
   @apply bg-red-500;
   box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+}
+
+.status-dot.warning {
+  @apply bg-amber-500;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
 }
 
 .status-text {
@@ -210,9 +220,9 @@ body {
 }
 
 .model-header-pill.dirty {
-  border-color: rgba(16, 185, 129, 0.38);
-  background: rgba(16, 185, 129, 0.01);
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.08);
+  border-color: rgba(37, 99, 235, 0.38);
+  background: rgba(37, 99, 235, 0.01);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
 }
 
 .model-header-pill span,
@@ -226,7 +236,7 @@ body {
 }
 
 .model-header-pill.dirty:hover {
-  border-color: rgba(16, 185, 129, 0.5);
+  border-color: rgba(37, 99, 235, 0.5);
 }
 
 .header-model-select {
@@ -237,7 +247,7 @@ body {
 
 .header-apply-button {
   @apply bg-accent text-white border-none rounded-md px-2 h-6 text-[0.72rem] font-semibold cursor-pointer transition-all duration-200 hover:bg-accent-hover active:scale-95 flex items-center justify-center;
-  box-shadow: 0 1px 2px rgba(16, 185, 129, 0.2);
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.2);
 }
 
 .status-indicator {
@@ -273,7 +283,7 @@ body {
   @apply self-end text-white rounded-br-sm;
   max-width: min(720px, 72%);
   background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.18);
 }
 
 .bubble.assistant {
@@ -282,8 +292,8 @@ body {
 }
 
 .bubble.streaming {
-  border-color: rgba(16, 185, 129, 0.3);
-  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.1);
+  border-color: rgba(37, 99, 235, 0.3);
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.1);
 }
 
 .bubble-head {
@@ -314,9 +324,9 @@ body {
 /* Reasoning Trace Block */
 .trace-block {
   @apply mt-2 mb-3 border border-l-4 border-l-accent rounded-t-xl rounded-r-xl rounded-b-xl rounded-bl-sm overflow-hidden;
-  border-color: rgba(16, 185, 129, 0.12) rgba(16, 185, 129, 0.12) rgba(16, 185, 129, 0.12) var(--color-accent);
-  background: rgba(16, 185, 129, 0.02);
-  box-shadow: inset 0 1px 2px rgba(16, 185, 129, 0.02);
+  border-color: rgba(37, 99, 235, 0.12) rgba(37, 99, 235, 0.12) rgba(37, 99, 235, 0.12) var(--color-accent);
+  background: rgba(37, 99, 235, 0.02);
+  box-shadow: inset 0 1px 2px rgba(37, 99, 235, 0.02);
 }
 
 .trace-block summary {
@@ -324,11 +334,11 @@ body {
 }
 
 .trace-block summary:hover {
-  background: rgba(16, 185, 129, 0.04);
+  background: rgba(37, 99, 235, 0.04);
 }
 
 .trace-block[open] summary {
-  border-bottom: 1px solid rgba(16, 185, 129, 0.08);
+  border-bottom: 1px solid rgba(37, 99, 235, 0.08);
 }
 
 .trace-block summary::before {
@@ -347,12 +357,13 @@ body {
 
 /* Composer Area */
 .composer {
-  @apply flex flex-col;
-  padding: 20px 28px 24px;
-  border-top: 1px solid var(--border-color);
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(12px);
-  gap: 12px;
+  @apply flex flex-col w-full mx-auto box-border shrink-0;
+  max-width: min(880px, calc(100% - 32px));
+  padding: 0 0 20px 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  gap: 8px;
 }
 
 .composer textarea {
@@ -364,8 +375,8 @@ body {
 
 .composer textarea:focus {
   @apply outline-hidden;
-  border-color: rgba(16, 185, 129, 0.3);
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.08);
+  border-color: rgba(37, 99, 235, 0.3);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
 }
 
 .composer textarea:disabled {
@@ -403,7 +414,7 @@ body {
 .skill-picker-pill.active {
   @apply text-white border-transparent;
   background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
-  box-shadow: 0 2px 4px rgba(16, 185, 129, 0.2);
+  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
 }
 
 .skill-picker-pill.active:hover {
@@ -412,32 +423,25 @@ body {
 
 /* Header Toggle Button & Badge Styles */
 .header-toggle-sidebar-button {
-  @apply bg-white border border-border-main rounded-md flex items-center justify-center h-8 px-2.5 gap-1.5 cursor-pointer transition-all duration-200;
-  box-shadow: var(--shadow-sm);
+  @apply bg-white border border-border-main rounded-md flex items-center justify-center h-8 px-2.5 gap-1.5 cursor-pointer transition-all duration-200 text-[0.8rem] font-medium text-text-secondary;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
 }
 
 .header-toggle-sidebar-button:hover {
-  @apply bg-main-bg;
-  border-color: rgba(16, 185, 129, 0.25);
-}
-
-.header-toggle-sidebar-button:hover .pill-label {
-  color: var(--color-accent);
+  @apply bg-main-bg text-accent;
+  border-color: rgba(37, 99, 235, 0.25);
 }
 
 .header-toggle-sidebar-button.active {
+  @apply text-accent;
   border-color: var(--color-accent);
-  background: rgba(16, 185, 129, 0.08);
-}
-
-.header-toggle-sidebar-button.active .pill-label {
-  color: var(--color-accent);
+  background: rgba(37, 99, 235, 0.08);
 }
 
 .sidebar-count-badge {
   @apply text-white text-[0.68rem] font-bold px-1 rounded-full min-w-[16px] h-4 flex items-center justify-center;
   background: var(--color-accent);
-  box-shadow: 0 1px 3px rgba(16, 185, 129, 0.2);
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.2);
 }
 
 /* Modals */
@@ -519,15 +523,15 @@ body {
 }
 
 .settings-content-footer {
-  @apply p-3.5 px-6 pb-4 border-t border-border-main bg-slate-50 flex flex-col gap-2.5;
+  @apply p-3 px-5 border-t border-slate-200/80 bg-slate-50 flex items-center justify-between gap-4 shrink-0;
 }
 
 .settings-content-footer .modal-copy {
-  @apply m-0 text-[0.75rem] text-text-secondary leading-normal;
+  @apply m-0 text-[0.72rem] text-slate-500 leading-snug flex-1;
 }
 
 .settings-content-footer .modal-actions {
-  @apply flex justify-end gap-3;
+  @apply flex items-center justify-end gap-2.5 shrink-0;
 }
 
 .modal-actions-inline {
@@ -553,8 +557,8 @@ body {
 
 .settings-modal input:focus,
 .settings-select:focus {
-  border-color: rgba(16, 185, 129, 0.3);
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.08);
+  border-color: rgba(37, 99, 235, 0.3);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
 }
 
 .settings-select {
@@ -616,8 +620,7 @@ body {
 }
 
 .skills-list-container {
-  @apply border border-border-main rounded-2xl p-4 flex flex-col gap-3 max-h-[200px] overflow-y-auto;
-  background: rgba(248, 250, 252, 0.5);
+  @apply flex flex-col gap-3 max-h-[300px] overflow-y-auto;
 }
 
 .skills-list-container.official-mode-container {
@@ -625,7 +628,7 @@ body {
 }
 
 .no-skills-copy {
-  @apply m-0 py-6 text-center text-[0.82rem] text-text-secondary leading-normal;
+  @apply m-0 py-8 text-center text-[0.82rem] text-text-secondary leading-normal border border-dashed border-border-main rounded-xl bg-slate-50/50;
 }
 
 .skill-card {
@@ -663,8 +666,8 @@ body {
 
 .official-status-tag {
   @apply text-[0.78rem] font-bold text-accent rounded px-2.5 py-0.5;
-  background: rgba(16, 185, 129, 0.06);
-  border: 1px solid rgba(16, 185, 129, 0.15);
+  background: rgba(37, 99, 235, 0.06);
+  border: 1px solid rgba(37, 99, 235, 0.15);
 }
 
 .text-action-button {
@@ -683,8 +686,8 @@ body {
 }
 
 .official-login-progress {
-  border-color: rgba(16, 185, 129, 0.2);
-  background: rgba(16, 185, 129, 0.01);
+  border-color: rgba(37, 99, 235, 0.2);
+  background: rgba(37, 99, 235, 0.01);
 }
 
 .hint-title {
@@ -725,8 +728,8 @@ body {
 
 .user-code-display-box {
   @apply mt-2 border rounded-xl p-3 text-center;
-  border-color: rgba(16, 185, 129, 0.25);
-  background: rgba(16, 185, 129, 0.02);
+  border-color: rgba(37, 99, 235, 0.25);
+  background: rgba(37, 99, 235, 0.02);
 }
 
 .user-code-value {
@@ -737,8 +740,8 @@ body {
 .file-alert-toast {
   @apply fixed bottom-6 right-6 w-[320px] backdrop-blur-md border rounded-2xl p-4 flex flex-col gap-3 animate-slide-up;
   background: rgba(255, 255, 255, 0.95);
-  border-color: rgba(16, 185, 129, 0.20);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(16, 185, 129, 0.05);
+  border-color: rgba(37, 99, 235, 0.20);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(37, 99, 235, 0.05);
 }
 
 @keyframes slide-up {
@@ -800,7 +803,7 @@ body {
 
 .spinner {
   @apply w-10 h-10 rounded-full animate-spin;
-  border: 3px solid rgba(16, 185, 129, 0.15);
+  border: 3px solid rgba(37, 99, 235, 0.15);
   border-top-color: var(--color-accent);
 }
 
@@ -1030,8 +1033,8 @@ body {
 
 .right-sidebar-item:hover {
   @apply -translate-y-[0.5px];
-  background: rgba(16, 185, 129, 0.03);
-  border-color: rgba(16, 185, 129, 0.25);
+  background: rgba(37, 99, 235, 0.03);
+  border-color: rgba(37, 99, 235, 0.25);
   box-shadow: var(--shadow-md);
 }
 
@@ -1075,5 +1078,318 @@ body {
 .right-sidebar-open-dir-button:hover {
   @apply text-white border-transparent -translate-y-[0.5px];
   background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
-  box-shadow: 0 4px 10px rgba(16, 185, 129, 0.2);
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.2);
 }
+
+/* Token Error Modal Popup */
+.error-token-modal {
+  @apply w-full max-w-[580px] max-h-[85vh] overflow-y-auto rounded-3xl bg-white border border-red-200 p-7 flex flex-col gap-4 animate-fade-in shadow-2xl;
+  box-shadow: 0 25px 50px -12px rgba(220, 38, 38, 0.25);
+}
+
+.error-modal-header {
+  @apply flex items-center justify-between border-b border-red-100 pb-3.5;
+}
+
+.error-modal-title-group {
+  @apply flex items-center gap-3;
+}
+
+.error-modal-icon {
+  @apply w-10 h-10 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center font-bold text-xl flex-shrink-0 border border-red-200;
+}
+
+.error-modal-title-group h3 {
+  @apply m-0 text-[1.05rem] font-bold text-slate-900;
+}
+
+.error-modal-body {
+  @apply flex flex-col gap-3.5 text-slate-700 text-[0.82rem] leading-relaxed;
+}
+
+.error-code-badge {
+  @apply bg-red-50/70 border border-red-200/80 text-red-800 font-mono text-[11.5px] p-3 rounded-xl break-all select-all;
+}
+
+.error-step-card {
+  @apply bg-amber-50/80 border border-amber-200 rounded-2xl p-4 flex flex-col gap-2.5;
+}
+
+.error-step-card-title {
+  @apply font-bold text-amber-900 text-[0.85rem] flex items-center gap-1.5;
+}
+
+.error-step-list {
+  @apply m-0 pl-4 space-y-1.5 text-[0.8rem] text-amber-950;
+}
+
+.error-modal-footer {
+  @apply flex items-center justify-end gap-3 pt-3 border-t border-slate-100 mt-1;
+}
+
+.composer-error-banner {
+  @apply mb-2.5 p-3 px-4 bg-red-50/90 border border-red-200 rounded-xl flex items-center justify-between gap-3 text-red-800 text-[0.8rem];
+}
+
+.composer-error-banner-link {
+  @apply font-semibold text-red-700 underline hover:text-red-900 bg-transparent border-none cursor-pointer p-0 text-[0.8rem] flex items-center gap-1 shrink-0;
+}
+
+/* Sidebar Actions (Matching Image 2) */
+.sidebar-action-list {
+  @apply flex flex-col gap-0.5 my-1;
+}
+
+.sidebar-action-item {
+  @apply flex items-center gap-2.5 px-3 py-2 rounded-xl text-[0.88rem] font-semibold text-slate-800 bg-transparent border-none cursor-pointer transition-colors duration-150 text-left hover:bg-slate-100/90 disabled:opacity-50 disabled:cursor-not-allowed select-none;
+}
+
+.sidebar-action-item:active {
+  @apply bg-slate-200/80;
+}
+
+/* TRAE IDE Style Theme & Layout */
+.trae-stop-btn {
+  @apply bg-linear-to-r from-red-500 to-red-600 text-white border-none px-3 py-1 rounded-lg text-[0.78rem] font-semibold cursor-pointer flex items-center justify-center gap-1.5 transition-all duration-200 hover:-translate-y-0.5 animate-pulse shrink-0 whitespace-nowrap;
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.25);
+}
+
+.trae-stop-icon-btn {
+  @apply bg-red-500 hover:bg-red-600 text-white border-none rounded-lg cursor-pointer flex items-center justify-center transition-all duration-150 shrink-0 select-none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  box-shadow: 0 2px 6px rgba(239, 68, 68, 0.3);
+}
+
+.trae-hero-container {
+  @apply flex flex-col items-center justify-center max-w-[760px] mx-auto my-auto pt-6 pb-6 text-center animate-fade-in px-4 select-none;
+}
+
+.trae-hero-badge {
+  @apply inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-50/90 border border-blue-200/80 text-[0.78rem] font-semibold text-blue-600 mb-3 shadow-2xs;
+}
+
+.trae-hero-title {
+  @apply text-3xl font-extrabold text-slate-900 tracking-tight mb-2;
+}
+
+.trae-hero-subtitle {
+  @apply text-xs text-slate-500 max-w-[540px] leading-relaxed mb-6;
+}
+
+.trae-quick-suggestions {
+  @apply grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-[720px];
+}
+
+.trae-suggestion-card {
+  @apply flex items-start gap-3 p-3 px-3.5 bg-white border border-slate-200/90 rounded-2xl text-left cursor-pointer transition-all duration-200 hover:border-blue-300 hover:bg-blue-50/50 hover:shadow-md active:scale-[0.99];
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+}
+
+.trae-suggestion-card .icon {
+  @apply text-lg flex shrink-0 items-center justify-center p-2 rounded-xl bg-slate-100 text-slate-700 transition-colors;
+}
+
+.trae-suggestion-card:hover .icon {
+  @apply bg-blue-100 text-blue-600;
+}
+
+.trae-suggestion-card .text-content {
+  @apply flex flex-col gap-0.5 min-w-0;
+}
+
+.trae-suggestion-card .text-content strong {
+  @apply text-[0.82rem] font-semibold text-slate-800 truncate;
+}
+
+.trae-suggestion-card .text-content p {
+  @apply text-[0.74rem] text-slate-500 leading-snug line-clamp-2 m-0;
+}
+
+.trae-composer-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 6px;
+  width: 100%;
+  background: white;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  border-radius: 1rem;
+  padding: 10px 14px;
+  position: relative;
+  overflow: visible;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.03), 0 1px 2px rgba(0, 0, 0, 0.02);
+}
+
+/* input-row is no longer used (pill is a direct child of card) */
+
+.trae-composer-card:focus-within {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(219, 234, 254, 0.8);
+}
+
+/* Skill Tag Pill — inline with textarea text */
+.trae-skill-tag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 20px;
+  font-size: 0.80rem;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+  user-select: none;
+  transition: background 0.15s;
+  background: #f5f2ed;
+  color: #5c3e21;
+  border: 1px solid rgba(217, 119, 6, 0.22);
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.trae-skill-tag-pill:hover {
+  background: #ede7de;
+}
+
+.trae-skill-tag-name {
+  @apply truncate max-w-[260px] leading-tight;
+}
+
+.trae-skill-tag-remove {
+  @apply border-none bg-transparent text-[#8c6542] hover:text-red-600 cursor-pointer text-xs font-bold ml-0.5 p-0 flex items-center justify-center leading-none rounded-full w-4 h-4 hover:bg-amber-950/10 transition-colors shrink-0;
+}
+
+.trae-composer-textarea {
+  flex: 1 1 100%;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  font-size: 0.88rem;
+  color: #1e293b;
+  padding: 0;
+  margin: 0;
+  line-height: 1.6;
+  min-height: 24px;
+  max-height: 180px;
+  overflow-y: auto;
+  display: block;
+  box-shadow: none !important;
+  align-self: center;
+}
+
+.trae-composer-textarea[data-empty="true"]::before {
+  content: attr(data-placeholder);
+  color: #94a3b8;
+  pointer-events: none;
+}
+
+.trae-composer-textarea:focus {
+  outline: none;
+}
+
+.trae-composer-textarea::placeholder {
+  color: #94a3b8;
+}
+
+.trae-composer-actions-bar {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(226, 232, 240, 0.7);
+  margin-top: 2px;
+}
+
+.trae-selector-pill {
+  @apply flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200/90 text-slate-600 text-[0.76rem] font-medium cursor-pointer transition-all duration-150 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600 whitespace-nowrap shrink-0 max-w-[260px] truncate select-none;
+}
+
+.trae-popover-menu {
+  @apply absolute left-0 bottom-full mb-2 w-80 bg-white border border-slate-200 rounded-2xl p-2.5 shadow-xl z-50 flex flex-col gap-1 text-xs animate-fade-in;
+}
+
+.trae-popover-header {
+  @apply px-2.5 py-1 text-[11px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 mb-1 flex items-center justify-between;
+}
+
+.trae-popover-item {
+  @apply flex items-center justify-between w-full px-2.5 py-2 rounded-xl text-left border-none bg-transparent cursor-pointer text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors duration-150 text-[0.78rem] font-medium;
+}
+
+.trae-popover-item.active {
+  @apply bg-blue-50 text-blue-600 font-semibold;
+}
+
+/* Standalone My Skills Page View */
+.skills-page-view {
+  @apply flex flex-col h-full bg-main-bg overflow-hidden relative min-h-0 animate-fade-in;
+}
+
+.skills-page-header {
+  @apply px-8 h-[70px] flex items-center justify-between border-b border-border-main bg-white/80 backdrop-blur-md shrink-0 z-10;
+}
+
+.skills-header-tab {
+  @apply text-base font-bold text-slate-900 border-none bg-transparent cursor-pointer relative pb-1;
+}
+
+.skills-search-input {
+  @apply w-64 h-9 pl-9 pr-3.5 bg-slate-50 border border-slate-200/90 rounded-xl text-xs text-slate-800 placeholder-slate-400 outline-none transition-all duration-200 focus:bg-white focus:border-blue-400 focus:ring-3 focus:ring-blue-50/80;
+}
+
+.skills-page-body {
+  @apply flex-1 p-6 overflow-y-auto flex flex-col gap-4 max-w-[1200px] w-full mx-auto;
+}
+
+.skills-card-grid {
+  @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5;
+}
+
+.skills-grid-card {
+  @apply bg-white border border-slate-200/90 rounded-2xl p-3.5 flex flex-col justify-between gap-3 transition-all duration-200 hover:border-blue-300 hover:shadow-md;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+}
+
+.skills-card-top {
+  @apply flex items-start gap-3 min-w-0;
+}
+
+.skills-card-icon {
+  @apply w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center shrink-0 border border-slate-200/60 text-slate-700;
+}
+
+.skills-card-info {
+  @apply flex flex-col gap-0.5 min-w-0 flex-1;
+}
+
+.skills-card-info h4 {
+  @apply text-[0.88rem] font-bold text-slate-900 m-0 truncate leading-snug;
+}
+
+.skills-card-info p {
+  @apply text-[0.76rem] text-slate-500 m-0 leading-relaxed line-clamp-2;
+}
+
+.skills-card-actions {
+  @apply flex items-center justify-between pt-1 border-none shrink-0 mt-auto;
+}
+
+.skills-empty-state {
+  @apply flex flex-col items-center justify-center p-12 bg-white border border-dashed border-slate-200 rounded-3xl text-center max-w-[540px] mx-auto my-12 shadow-2xs;
+}
+
+.skills-empty-state h3 {
+  @apply text-base font-bold text-slate-800 m-0 mb-1;
+}
+
+.skills-empty-state p {
+  @apply text-xs text-slate-500 m-0 leading-relaxed max-w-[420px];
+}
+
