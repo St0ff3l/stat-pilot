@@ -1291,8 +1291,8 @@ body {
 }
 
 .trae-composer-textarea {
-  flex: 1 1 100%;
-  min-width: 0;
+  flex: 1 1 180px;
+  min-width: 120px;
   background: transparent;
   border: none;
   outline: none;
@@ -1308,12 +1308,6 @@ body {
   display: block;
   box-shadow: none !important;
   align-self: center;
-}
-
-.trae-composer-textarea[data-empty="true"]::before {
-  content: attr(data-placeholder);
-  color: #94a3b8;
-  pointer-events: none;
 }
 
 .trae-composer-textarea:focus {

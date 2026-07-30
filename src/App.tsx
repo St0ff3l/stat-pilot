@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Component, useEffect, useMemo, useRef, useState, type ReactNode, type ErrorInfo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -40,16 +40,16 @@ const PROVIDER_PRESET_MODELS: Record<string, Array<{ id: string; label: string; 
     { id: "anthropic/claude-3.5-sonnet", label: "claude-3.5-sonnet", desc: "Claude 3.5 Sonnet (OpenRouter)" },
   ],
   custom: [
-    { id: "deepseek-chat", label: "deepseek-chat", desc: "DeepSeek-V3 通用" },
-    { id: "deepseek-reasoner", label: "deepseek-reasoner", desc: "DeepSeek-R1 深度思考" },
-    { id: "deepseek-ai/DeepSeek-V3", label: "DeepSeek-V3", desc: "第三方 / 硅基流动 DeepSeek-V3" },
-    { id: "deepseek-ai/DeepSeek-R1", label: "DeepSeek-R1", desc: "第三方 / 硅基流动 DeepSeek-R1" },
+    { id: "deepseek-chat", label: "deepseek-chat", desc: "DeepSeek-V3 (兼容接口)" },
+    { id: "deepseek-reasoner", label: "deepseek-reasoner", desc: "DeepSeek-R1 (兼容接口)" },
+    { id: "gpt-4o", label: "gpt-4o", desc: "GPT-4o (兼容接口)" },
   ],
 };
 
 function MessageBody({ role, text }: { role: HermesChatMessage["role"]; text: string }) {
+  const safeText = text ?? "";
   if (role === "user") {
-    return <pre className="message-plain">{text}</pre>;
+    return <pre className="message-plain">{safeText}</pre>;
   }
 
   return (
@@ -95,19 +95,20 @@ function MessageBody({ role, text }: { role: HermesChatMessage["role"]; text: st
           ),
         }}
       >
-        {text}
+        {safeText}
       </ReactMarkdown>
     </div>
   );
 }
 
 function TraceBlock({ text, open = false }: { text: string; open?: boolean }) {
+  const safeText = text ?? "";
   return (
     <details className="trace-block" open={open}>
       <summary>思考过程</summary>
       <div className="message-markdown">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>
-          {text}
+          {safeText}
         </ReactMarkdown>
       </div>
     </details>
@@ -127,7 +128,7 @@ function BusyOverlay({ title, detail, elapsedSeconds }: { title: string; detail:
   );
 }
 
-export default function App() {
+function App() {
   const [state, setState] = useState<HermesAppState | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeSettingsTab, setActiveSettingsTab] = useState<"runtime" | "chat" | "vision" | "tools">("runtime");
@@ -160,49 +161,20 @@ export default function App() {
   const [activeMainTab, setActiveMainTab] = useState<"chat" | "skills">("chat");
   const [skillsSearchQuery, setSkillsSearchQuery] = useState("");
   const [selectedSkillTag, setSelectedSkillTag] = useState<string | null>(null);
-  const editorRef = useRef<HTMLDivElement>(null);
-  const editorTextRef = useRef<HTMLSpanElement>(null);
-  const editorInputSyncRef = useRef(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   function focusEditor() {
     window.setTimeout(() => {
-      editorRef.current?.focus();
-      const selection = window.getSelection();
-      if (selection && editorRef.current) {
-        selection.selectAllChildren(editorRef.current);
-        selection.collapseToEnd();
-      }
+      textareaRef.current?.focus();
     }, 0);
   }
 
-  function readComposerText(node: Node): string {
-    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
-    if (!(node instanceof HTMLElement)) return "";
-    if (node.dataset.skill) return `@${node.dataset.skill}`;
-    return Array.from(node.childNodes).map(readComposerText).join("");
-  }
-
-  function syncEditorDraft() {
-    if (!editorRef.current) return;
-    const serialized = readComposerText(editorRef.current).replace(/\u00a0/g, " ");
-    const skillToken = selectedSkillTag ? `@${selectedSkillTag}` : "";
-    editorInputSyncRef.current = true;
-    setDraft(skillToken && serialized.includes(skillToken)
-      ? serialized.replace(skillToken, "").replace(/^\s+/, "")
-      : serialized);
-  }
-
   useEffect(() => {
-    if (editorRef.current) {
-      const wasEditorInput = editorInputSyncRef.current;
-      editorInputSyncRef.current = false;
-      if (!wasEditorInput && editorTextRef.current && editorTextRef.current.textContent !== draft) {
-        editorTextRef.current.textContent = draft;
-      }
-      editorRef.current.style.height = "auto";
-      const scrollH = editorRef.current.scrollHeight;
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      const scrollH = textareaRef.current.scrollHeight;
       const targetH = Math.min(Math.max(scrollH, 64), 220);
-      editorRef.current.style.height = `${targetH}px`;
+      textareaRef.current.style.height = `${targetH}px`;
     }
   }, [draft]);
 
@@ -218,7 +190,7 @@ export default function App() {
           setDraft((prev) => prev.replace(/^@[^\s]+\s*/, ""));
           setTimeout(() => {
             focusEditor();
-          }, 60);
+          }, 0);
         }
       }
     }
@@ -488,15 +460,20 @@ export default function App() {
       return;
     }
 
-    const text = (editorRef.current
-      ? readComposerText(editorRef.current)
-      : (selectedSkillTag ? `@${selectedSkillTag} ${rawText}` : rawText)).trim();
+    const text = (selectedSkillTag ? `@${selectedSkillTag} ${rawText}` : rawText).trim();
 
     setDraft("");
     setSelectedSkillTag(null);
-    if (editorRef.current) editorRef.current.innerHTML = "";
-    const nextState = await window.hermesDesktop.sendMessage({ text });
-    setState(nextState);
+    try {
+      const nextState = await window.hermesDesktop.sendMessage({ text });
+      setState(nextState);
+    } catch (e: any) {
+      console.error("Failed to send message:", e);
+      try {
+        const currentState = await window.hermesDesktop.getState();
+        setState(currentState);
+      } catch {}
+    }
   }
 
   async function saveSettings() {
@@ -1204,14 +1181,33 @@ export default function App() {
             ) : null}
 
             <div className="trae-composer-card">
-              <div
-                ref={editorRef}
+              {selectedSkillTag && (
+                <span className="trae-skill-tag-pill" data-skill={selectedSkillTag}>
+                  <svg className="w-3.5 h-3.5 shrink-0" style={{ color: "#734b26" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                  </svg>
+                  <span className="trae-skill-tag-name">{selectedSkillTag}</span>
+                  <button
+                    type="button"
+                    className="trae-skill-tag-remove"
+                    tabIndex={-1}
+                    onClick={() => {
+                      setSelectedSkillTag(null);
+                      focusEditor();
+                    }}
+                    title="移除技能"
+                  >
+                    ×
+                  </button>
+                </span>
+              )}
+
+              <textarea
+                ref={textareaRef}
                 className="trae-composer-textarea"
-                contentEditable={!isHermesMissing && !needsProviderSetup}
-                suppressContentEditableWarning
-                role="textbox"
-                aria-multiline="true"
-                onInput={syncEditorDraft}
+                value={draft}
+                disabled={isHermesMissing || needsProviderSetup}
+                onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
@@ -1222,7 +1218,7 @@ export default function App() {
                     }
                   }
                 }}
-                data-placeholder={
+                placeholder={
                   isHermesMissing
                     ? "运行时未就绪，消息框已禁用"
                     : needsProviderSetup
@@ -1231,31 +1227,7 @@ export default function App() {
                         : "请先在设置中填写 API key，消息框暂不可用"
                       : "继续输入任务需求..."
                 }
-                data-empty={!draft && !selectedSkillTag}
-              >
-                {selectedSkillTag && (
-                  <span className="trae-skill-tag-pill" contentEditable={false} data-skill={selectedSkillTag}>
-                    <svg className="w-3.5 h-3.5 shrink-0" style={{ color: "#734b26" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-                    </svg>
-                    <span className="trae-skill-tag-name">{selectedSkillTag}</span>
-                    <button
-                      type="button"
-                      className="trae-skill-tag-remove"
-                      tabIndex={-1}
-                      onClick={() => {
-                        setSelectedSkillTag(null);
-                        if (editorRef.current) editorRef.current.innerHTML = draft;
-                        focusEditor();
-                      }}
-                      title="移除技能"
-                    >
-                      ×
-                    </button>
-                  </span>
-                )}
-                <span ref={editorTextRef} className="trae-editor-draft-text" />
-              </div>
+              />
 
               <div className="trae-composer-actions-bar">
                 <div className="relative">
@@ -2381,5 +2353,62 @@ function SkillsPageView({
         )}
       </div>
     </div>
+  );
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+export class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("ErrorBoundary caught an unhandled error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: "40px 20px", textAlign: "center", fontFamily: "sans-serif", background: "#f8fafc", minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+          <h2 style={{ fontSize: "1.25rem", color: "#0f172a", marginBottom: "8px" }}>应用遇到意料之外的界面异常</h2>
+          <p style={{ color: "#ef4444", fontSize: "0.88rem", maxWidth: "600px", margin: "12px 0 24px 0", wordBreak: "break-word" }}>
+            {this.state.error?.message || "未知错误"}
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            style={{
+              padding: "8px 20px",
+              background: "#2563eb",
+              color: "#fff",
+              border: "none",
+              borderRadius: "6px",
+              cursor: "pointer",
+              fontSize: "0.88rem",
+              fontWeight: 500,
+            }}
+          >
+            刷新页面恢复
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function AppWithErrorBoundary() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   );
 }
