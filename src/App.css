@@ -1302,8 +1302,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding-top: 4px;
-  border-top: 1px solid rgba(226, 232, 240, 0.7);
+  padding-top: 2px;
   margin-top: 2px;
 }
 
