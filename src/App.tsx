@@ -174,7 +174,7 @@ export default function App() {
       }
       editorRef.current.style.height = "auto";
       const scrollH = editorRef.current.scrollHeight;
-      const targetH = Math.min(Math.max(scrollH, 32), 180);
+      const targetH = Math.min(Math.max(scrollH, 64), 220);
       editorRef.current.style.height = `${targetH}px`;
     }
   }, [draft]);
