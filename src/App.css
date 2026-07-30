@@ -577,6 +577,34 @@ body {
   @apply flex flex-col gap-1.5;
 }
 
+.model-preset-chips {
+  @apply flex flex-col gap-1.5 mt-2 mb-1 p-2.5 rounded-xl bg-slate-50 border border-slate-200/80;
+}
+
+.preset-chips-label {
+  @apply text-[0.72rem] font-semibold text-slate-500 uppercase tracking-wider;
+}
+
+.preset-chips-list {
+  @apply flex flex-wrap gap-1.5;
+}
+
+.preset-chip-btn {
+  @apply flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 text-xs font-medium cursor-pointer transition-all duration-150 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-600;
+}
+
+.preset-chip-btn.active {
+  @apply bg-blue-50 border-blue-500 text-blue-700 font-semibold shadow-xs;
+}
+
+.preset-chip-desc {
+  @apply text-[11px] text-slate-400 font-normal;
+}
+
+.preset-chip-btn.active .preset-chip-desc {
+  @apply text-blue-500;
+}
+
 .settings-model-row {
   @apply flex gap-3;
 }

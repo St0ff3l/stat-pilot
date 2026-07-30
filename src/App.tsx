@@ -20,6 +20,33 @@ function withDisplayModel(appState: HermesAppState): HermesAppState["settings"] 
   };
 }
 
+const PROVIDER_PRESET_MODELS: Record<string, Array<{ id: string; label: string; desc: string }>> = {
+  deepseek: [
+    { id: "deepseek-chat", label: "deepseek-chat", desc: "DeepSeek-V3 通用对话 (推荐)" },
+    { id: "deepseek-reasoner", label: "deepseek-reasoner", desc: "DeepSeek-R1 深度思考推理" },
+    { id: "deepseek-v4-flash", label: "deepseek-v4-flash", desc: "DeepSeek-V4 Flash 快速" },
+    { id: "deepseek-v4-pro", label: "deepseek-v4-pro", desc: "DeepSeek-V4 Pro 旗舰" },
+  ],
+  openai: [
+    { id: "gpt-4o", label: "gpt-4o", desc: "GPT-4o 旗舰多模态" },
+    { id: "gpt-4o-mini", label: "gpt-4o-mini", desc: "GPT-4o Mini 轻量快速" },
+    { id: "o1", label: "o1", desc: "OpenAI o1 深度推理" },
+    { id: "o3-mini", label: "o3-mini", desc: "OpenAI o3-mini 高效推理" },
+  ],
+  openrouter: [
+    { id: "deepseek/deepseek-chat", label: "deepseek-chat", desc: "DeepSeek V3 (OpenRouter)" },
+    { id: "deepseek/deepseek-r1", label: "deepseek-r1", desc: "DeepSeek R1 (OpenRouter)" },
+    { id: "openai/gpt-4o", label: "gpt-4o", desc: "GPT-4o (OpenRouter)" },
+    { id: "anthropic/claude-3.5-sonnet", label: "claude-3.5-sonnet", desc: "Claude 3.5 Sonnet (OpenRouter)" },
+  ],
+  custom: [
+    { id: "deepseek-chat", label: "deepseek-chat", desc: "DeepSeek-V3 通用" },
+    { id: "deepseek-reasoner", label: "deepseek-reasoner", desc: "DeepSeek-R1 深度思考" },
+    { id: "deepseek-ai/DeepSeek-V3", label: "DeepSeek-V3", desc: "第三方 / 硅基流动 DeepSeek-V3" },
+    { id: "deepseek-ai/DeepSeek-R1", label: "DeepSeek-R1", desc: "第三方 / 硅基流动 DeepSeek-R1" },
+  ],
+};
+
 function MessageBody({ role, text }: { role: HermesChatMessage["role"]; text: string }) {
   if (role === "user") {
     return <pre className="message-plain">{text}</pre>;
@@ -316,14 +343,20 @@ export default function App() {
 
       const initial = await window.hermesDesktop.getState();
       setState(initial);
-      setHeaderModelSelection(initial.official.defaultModel);
+      const initialModel = initial.settings.runtimeMode === "official"
+        ? initial.official.defaultModel
+        : initial.settings.model;
+      setHeaderModelSelection(initialModel || "deepseek-chat");
       headerModelDirtyRef.current = false;
       setDraftSettings(withDisplayModel(initial));
 
       unsubscribe = window.hermesDesktop.onState((nextState) => {
         setState(nextState);
         if (!headerModelDirtyRef.current) {
-          setHeaderModelSelection(nextState.official.defaultModel);
+          const nextModel = nextState.settings.runtimeMode === "official"
+            ? nextState.official.defaultModel
+            : nextState.settings.model;
+          setHeaderModelSelection(nextModel || "deepseek-chat");
         }
         setDraftSettings(withDisplayModel(nextState));
       });
@@ -552,8 +585,18 @@ export default function App() {
       return;
     }
     setHeaderModelSelection(selectedModel);
-    const nextState = await window.hermesDesktop.switchSessionModel(selectedModel);
-    setState(nextState);
+    headerModelDirtyRef.current = true;
+    if (state?.settings.runtimeMode === "official") {
+      const nextState = await window.hermesDesktop.switchSessionModel(selectedModel);
+      setState(nextState);
+    } else {
+      const nextState = await window.hermesDesktop.updateSettings({
+        ...state?.settings,
+        model: selectedModel,
+      });
+      setState(nextState);
+      await window.hermesDesktop.switchSessionModel(selectedModel);
+    }
   }
 
   async function registerNewSkill() {
@@ -640,10 +683,16 @@ export default function App() {
   const needsProviderSetup = isOfficialMode ? !state?.official.isLoggedIn : !state?.settings.apiKey.trim();
   const runtimeInstalled = !!state?.runtime.installed;
   const officialModelDirty = !!state && draftSettings.runtimeMode === "official" && draftSettings.model !== state.official.defaultModel;
+  const currentProviderPresets = (PROVIDER_PRESET_MODELS[state?.settings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
+  const currentSavedModel = isOfficialMode ? state?.official.defaultModel : state?.settings.model;
+  const customModelList = Array.from(new Set([currentSavedModel, ...currentProviderPresets].filter(Boolean) as string[]));
+
   const quickModelOptions = isOfficialMode
     ? ((state?.official.availableModels.length ?? 0) > 0 ? (state?.official.availableModels ?? []) : [state?.official.defaultModel ?? draftSettings.model])
-    : [state?.settings.model ?? draftSettings.model];
-  const quickModelDirty = isOfficialMode && !!state && headerModelSelection !== state.official.defaultModel;
+    : customModelList;
+
+  const currentActiveModel = (isOfficialMode ? state?.official.defaultModel : state?.settings.model) || "";
+  const quickModelDirty = !!state && !!headerModelSelection && headerModelSelection !== currentActiveModel;
   const isModelSwitching = !!state?.busy && !!state?.status && state.status.includes("切换模型");
   const isHermesMissing = !state?.runtime.installed || (!!state?.error && (
     state.error.includes("ENOENT") || 
@@ -853,7 +902,6 @@ export default function App() {
               <h2 title={activeName}>{activeName}</h2>
             </div>
             <div className="header-actions">
-              {isOfficialMode ? (
                 <div className={`model-header-pill ${quickModelDirty ? "dirty" : ""}`}>
                   <span className="pill-label" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                     <svg className="w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -871,7 +919,7 @@ export default function App() {
                     <span>运行模型</span>
                   </span>
                   <select
-                    value={headerModelSelection}
+                    value={headerModelSelection || currentActiveModel}
                     onChange={(event) => {
                       headerModelDirtyRef.current = true;
                       setHeaderModelSelection(event.target.value);
@@ -880,7 +928,7 @@ export default function App() {
                     disabled={state.busy}
                     title={
                       quickModelDirty
-                        ? `当前：${state.official.defaultModel}，切换到：${headerModelSelection}。点击“应用切换”后在当前对话内立即生效。`
+                        ? `当前：${currentActiveModel}，切换到：${headerModelSelection}。点击“应用切换”后在当前对话内立即生效。`
                         : "直接在这里选目标模型，然后点击“应用切换”。"
                     }
                   >
@@ -895,32 +943,12 @@ export default function App() {
                       className="header-apply-button"
                       onClick={() => void applyModelChange(headerModelSelection)}
                       disabled={state.busy}
-                      title={`当前：${state.official.defaultModel}，切换到：${headerModelSelection}。点击“应用切换”后在当前对话内立即生效。`}
+                      title={`当前：${currentActiveModel}，切换到：${headerModelSelection}。点击“应用切换”后在当前对话内立即生效。`}
                     >
                       应用切换
                     </button>
                   )}
                 </div>
-              ) : (
-                <div className="model-header-pill">
-                  <span className="pill-label" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <svg className="w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="4" y="4" width="16" height="16" rx="2" />
-                      <rect x="9" y="9" width="6" height="6" rx="1" />
-                      <path d="M9 1v3" />
-                      <path d="M15 1v3" />
-                      <path d="M9 20v3" />
-                      <path d="M15 20v3" />
-                      <path d="M20 9h3" />
-                      <path d="M20 15h3" />
-                      <path d="M1 9h3" />
-                      <path d="M1 15h3" />
-                    </svg>
-                    <span>运行模型</span>
-                  </span>
-                  <span className="pill-value">{displayModel}</span>
-                </div>
-              )}
               <button
                 className={`header-toggle-sidebar-button ${rightSidebarOpen ? "active" : ""}`}
                 onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
@@ -1712,16 +1740,45 @@ export default function App() {
                           </small>
                         </div>
                       ) : (
-                        <input
-                          value={draftSettings.model}
-                          onChange={(event) =>
-                            setDraftSettings((current: HermesAppState["settings"]) => ({
-                              ...current,
-                              model: event.target.value,
-                            }))
-                          }
-                          placeholder="deepseek-chat"
-                        />
+                        <div>
+                          <input
+                            value={draftSettings.model}
+                            onChange={(event) =>
+                              setDraftSettings((current: HermesAppState["settings"]) => ({
+                                ...current,
+                                model: event.target.value,
+                              }))
+                            }
+                            placeholder={draftSettings.apiProvider === "deepseek" ? "deepseek-chat" : "gpt-4o"}
+                          />
+                          <div className="model-preset-chips">
+                            <span className="preset-chips-label">快捷选择预设模型：</span>
+                            <div className="preset-chips-list">
+                              {(PROVIDER_PRESET_MODELS[draftSettings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((preset) => (
+                                <button
+                                  key={preset.id}
+                                  type="button"
+                                  className={`preset-chip-btn ${draftSettings.model === preset.id ? "active" : ""}`}
+                                  onClick={() => {
+                                    setDraftSettings((current) => ({
+                                      ...current,
+                                      model: preset.id,
+                                    }));
+                                  }}
+                                  title={preset.desc}
+                                >
+                                  <span className="preset-chip-name">{preset.label}</span>
+                                  <span className="preset-chip-desc">({preset.desc})</span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          {draftSettings.apiProvider === "deepseek" && (
+                            <small className="field-hint" style={{ marginTop: "4px", display: "block" }}>
+                              💡 <b>DeepSeek 官方模型：</b> <code>deepseek-chat</code>（V3 对话） | <code>deepseek-reasoner</code>（R1 深度思考） | <code>deepseek-v4-flash</code> / <code>deepseek-v4-pro</code>
+                            </small>
+                          )}
+                        </div>
                       )}
                     </label>
 
@@ -1731,12 +1788,16 @@ export default function App() {
                           API Provider (大模型提供商)
                           <select
                             value={draftSettings.apiProvider}
-                            onChange={(event) =>
+                            onChange={(event) => {
+                              const newProvider = event.target.value as HermesAppState["settings"]["apiProvider"];
+                              const defaultModelForProvider = PROVIDER_PRESET_MODELS[newProvider]?.[0]?.id || "deepseek-chat";
                               setDraftSettings((current: HermesAppState["settings"]) => ({
                                 ...current,
-                                apiProvider: event.target.value as HermesAppState["settings"]["apiProvider"],
-                              }))
-                            }
+                                apiProvider: newProvider,
+                                model: current.model || defaultModelForProvider,
+                                apiBaseUrl: newProvider === "deepseek" && !current.apiBaseUrl ? "https://api.deepseek.com" : current.apiBaseUrl,
+                              }));
+                            }}
                             className="settings-select"
                           >
                             <option value="openai">OpenAI</option>
