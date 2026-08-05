@@ -2696,25 +2696,14 @@ function SkillsPageView({
         ) : (
           <div className="skills-card-grid">
             {filteredSkills.map((skill) => {
-              const isOfficialBuiltin = [
-                "info_digest_html",
-                "stats_gov_scraper",
-                "gov_digest",
-                "policy_classifier",
-              ].includes(skill.name);
+              const isOfficialBuiltin = skill.name === "info_digest_html";
 
               const skillIcons: Record<string, string> = {
                 info_digest_html: "📰",
-                stats_gov_scraper: "📊",
-                gov_digest: "📄",
-                policy_classifier: "🏷️",
               };
 
               const skillDisplayNames: Record<string, string> = {
                 info_digest_html: "动态信息汇总 HTML 报表",
-                stats_gov_scraper: "统计数据与动态采集器",
-                gov_digest: "政府公文摘要提取",
-                policy_classifier: "政策分类与匹配",
               };
 
               const icon = skillIcons[skill.name] || "🧩";
