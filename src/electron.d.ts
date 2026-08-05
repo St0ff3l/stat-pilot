@@ -94,9 +94,12 @@ declare global {
       newThread: () => Promise<HermesAppState>;
       selectThread: (threadId: string) => Promise<HermesAppState>;
       sendMessage: (payload: { text: string }) => Promise<HermesAppState>;
+      stopMessage: () => Promise<HermesAppState>;
+      selectWorkspaceFolder: () => Promise<{ cwd: string; folderName: string; branch: string | null } | null>;
       switchSessionModel: (model: string) => Promise<HermesAppState>;
       archiveThread: (threadId: string) => Promise<HermesAppState>;
       updateSettings: (settings: Partial<HermesAppState["settings"]>) => Promise<HermesAppState>;
+      cancelOfficialLogin: () => Promise<HermesAppState>;
       repairRuntime: () => Promise<HermesAppState>;
       uninstallRuntime: () => Promise<HermesAppState>;
       openExternal: (url: string) => Promise<void>;

@@ -20,10 +20,10 @@ function withDisplayModel(appState: HermesAppState): HermesAppState["settings"] 
   };
 }
 
+const EMPTY_MESSAGES: HermesChatMessage[] = [];
+
 const PROVIDER_PRESET_MODELS: Record<string, Array<{ id: string; label: string; desc: string }>> = {
   deepseek: [
-    { id: "deepseek-chat", label: "deepseek-chat", desc: "DeepSeek-V3 通用对话 (推荐)" },
-    { id: "deepseek-reasoner", label: "deepseek-reasoner", desc: "DeepSeek-R1 深度思考推理" },
     { id: "deepseek-v4-flash", label: "deepseek-v4-flash", desc: "DeepSeek-V4 Flash 快速" },
     { id: "deepseek-v4-pro", label: "deepseek-v4-pro", desc: "DeepSeek-V4 Pro 旗舰" },
   ],
@@ -101,11 +101,12 @@ function MessageBody({ role, text }: { role: HermesChatMessage["role"]; text: st
   );
 }
 
-function TraceBlock({ text, open = false }: { text: string; open?: boolean }) {
+function TraceBlock({ text, open = false, title = "思考过程" }: { text: string; open?: boolean; title?: string }) {
   const safeText = text ?? "";
+  if (!safeText.trim()) return null;
   return (
     <details className="trace-block" open={open}>
-      <summary>思考过程</summary>
+      <summary>{title}</summary>
       <div className="message-markdown">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>
           {safeText}
@@ -653,7 +654,37 @@ function App() {
   }, [orderedThreads]);
   const activeThread = state?.activeThread ?? null;
   const activeName = activeThread?.name || activeThread?.preview || "新对话";
-  const activeMessages = state?.messages ?? [];
+  const activeMessages = state?.messages ?? EMPTY_MESSAGES;
+
+  const renderTurnGroups = useMemo(() => {
+    interface RenderTurnGroup {
+      id: string;
+      role: "user" | "assistant";
+      messages: HermesChatMessage[];
+    }
+    const groups: RenderTurnGroup[] = [];
+    for (const message of activeMessages) {
+      if (message.role === "user") {
+        groups.push({
+          id: message.id,
+          role: "user",
+          messages: [message],
+        });
+      } else {
+        const lastGroup = groups[groups.length - 1];
+        if (lastGroup && lastGroup.role === "assistant") {
+          lastGroup.messages.push(message);
+        } else {
+          groups.push({
+            id: message.id,
+            role: "assistant",
+            messages: [message],
+          });
+        }
+      }
+    }
+    return groups;
+  }, [activeMessages]);
   const isOfficialMode = state?.settings.runtimeMode === "official";
   const resolvedUsageModel = state?.lastUsageModel?.trim() || state?.currentRuntimeModel?.trim() || null;
   const displayModel = resolvedUsageModel || (isOfficialMode ? state?.official.defaultModel : state?.settings.model) || "未设置";
@@ -946,39 +977,61 @@ function App() {
 
           <section className="message-scroller">
             {isThreadLoading ? (
-              <div className="flex flex-col gap-6 w-full p-4 overflow-hidden">
-                <div className="w-full max-w-[500px] bg-card-bg border border-border-main rounded-[18px] rounded-bl-sm p-4 flex flex-col gap-3 shadow-sm self-start animate-pulse">
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-blue-500/15" />
-                    <div className="h-3 bg-slate-500/20 rounded w-16" />
+              <div className="thread-loading-wrapper flex flex-col gap-6 w-full max-w-[860px] mx-auto py-4 px-2 overflow-hidden animate-fade-in">
+                <div className="loading-status-bar flex items-center justify-center gap-2.5 py-1.5 px-4 rounded-full bg-blue-50/90 border border-blue-200/60 w-fit mx-auto shadow-xs text-xs font-medium text-blue-700">
+                  <span className="loading-spinner-ring" />
+                  <span>正在同步加载对话历史与结构化数据...</span>
+                </div>
+
+                {/* Assistant Bubble Skeleton */}
+                <div className="w-full max-w-[560px] bg-white border border-slate-200/90 rounded-[18px] rounded-bl-sm p-4.5 flex flex-col gap-3 shadow-xs self-start">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-full bg-blue-600/10 flex items-center justify-center shrink-0">
+                      <svg className="w-4 h-4 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                      </svg>
+                    </div>
+                    <div className="h-3.5 skeleton-shimmer rounded-full w-24" />
                   </div>
-                  <div className="flex flex-col gap-2">
-                    <div className="h-3 bg-slate-500/10 rounded w-11/12" />
-                    <div className="h-3 bg-slate-500/10 rounded w-4/5" />
-                    <div className="h-3 bg-slate-500/10 rounded w-2/3" />
+                  <div className="flex flex-col gap-2.5 pt-1">
+                    <div className="h-3.5 skeleton-shimmer rounded-md w-11/12" />
+                    <div className="h-3.5 skeleton-shimmer rounded-md w-4/5" />
+                    <div className="h-3.5 skeleton-shimmer rounded-md w-3/5" />
                   </div>
                 </div>
 
-                <div className="w-full max-w-[420px] bg-blue-500/5 border border-blue-500/20 border-dashed rounded-[18px] rounded-br-sm p-4 flex flex-col gap-3 self-end animate-pulse">
+                {/* User Bubble Skeleton */}
+                <div className="w-full max-w-[440px] bg-gradient-to-r from-blue-600/90 to-blue-700/90 border border-blue-500/30 rounded-[18px] rounded-br-sm p-4 flex flex-col gap-2.5 self-end shadow-xs">
                   <div className="flex items-center justify-end gap-2">
-                    <div className="h-3 bg-blue-500/25 rounded w-12" />
-                    <div className="w-6 h-6 rounded-full bg-blue-500/20" />
+                    <div className="h-3.5 skeleton-shimmer-blue rounded-full w-14" />
                   </div>
                   <div className="flex flex-col gap-2 items-end">
-                    <div className="h-3 bg-blue-500/15 rounded w-11/12" />
-                    <div className="h-3 bg-blue-500/15 rounded w-3/4" />
+                    <div className="h-3.5 skeleton-shimmer-blue rounded-md w-11/12" />
+                    <div className="h-3.5 skeleton-shimmer-blue rounded-md w-3/4" />
                   </div>
                 </div>
 
-                <div className="w-full max-w-[580px] bg-card-bg border border-border-main rounded-[18px] rounded-bl-sm p-4 flex flex-col gap-3 shadow-sm self-start animate-pulse">
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-blue-500/15" />
-                    <div className="h-3 bg-slate-500/20 rounded w-16" />
+                {/* Assistant Bubble Skeleton 2 with reasoning trace placeholder */}
+                <div className="w-full max-w-[620px] bg-white border border-slate-200/90 rounded-[18px] rounded-bl-sm p-4.5 flex flex-col gap-3.5 shadow-xs self-start">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-full bg-blue-600/10 flex items-center justify-center shrink-0">
+                      <svg className="w-4 h-4 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                      </svg>
+                    </div>
+                    <div className="h-3.5 skeleton-shimmer rounded-full w-28" />
                   </div>
-                  <div className="flex flex-col gap-2">
-                    <div className="h-3 bg-slate-500/10 rounded w-10/12" />
-                    <div className="h-3 bg-slate-500/10 rounded w-11/12" />
-                    <div className="h-3 bg-slate-500/10 rounded w-1/2" />
+
+                  {/* Reasoning placeholder box */}
+                  <div className="p-3 rounded-xl border border-blue-100 bg-blue-50/40 flex flex-col gap-2">
+                    <div className="h-3 skeleton-shimmer rounded-md w-32" />
+                    <div className="h-2.5 skeleton-shimmer rounded-md w-11/12 opacity-80" />
+                  </div>
+
+                  <div className="flex flex-col gap-2.5">
+                    <div className="h-3.5 skeleton-shimmer rounded-md w-full" />
+                    <div className="h-3.5 skeleton-shimmer rounded-md w-10/12" />
+                    <div className="h-3.5 skeleton-shimmer rounded-md w-1/2" />
                   </div>
                 </div>
               </div>
@@ -1131,26 +1184,133 @@ function App() {
                   </div>
                 )}
 
-                {!isHermesMissing && activeMessages.map((message: HermesChatMessage) => (
-                  <article key={message.id} className={message.role === "user" ? "bubble user" : "bubble assistant"}>
-                    <div className="bubble-head">
-                      <strong>{message.role === "user" ? "你" : "深统 Scope"}</strong>
-                      {message.phase ? <span>{message.phase}</span> : null}
-                    </div>
-                    {message.role === "assistant" && message.reasoning?.trim() ? (
-                      <TraceBlock text={message.reasoning} open={false} />
-                    ) : null}
-                    <MessageBody role={message.role} text={message.text} />
-                  </article>
-                ))}
+                {!isHermesMissing && renderTurnGroups.map((group, groupIdx) => {
+                  const isLastGroup = groupIdx === renderTurnGroups.length - 1;
+                  const isThisGroupStreaming = Boolean(state?.activeDraft) && isLastGroup && group.role === "assistant";
 
-                {!isHermesMissing && state.activeDraft ? (
+                  if (group.role === "user") {
+                    const msg = group.messages[0];
+                    return (
+                      <article key={group.id} className="bubble user">
+                        <div className="bubble-head">
+                          <strong>你</strong>
+                        </div>
+                        <MessageBody role="user" text={msg.text} />
+                      </article>
+                    );
+                  }
+
+                  // Assistant turn group
+                  if (isThisGroupStreaming && state?.activeDraft) {
+                    const stepMsgs = group.messages;
+                    const activeReasoning = state.activeDraft.reasoning?.trim() || "";
+                    const activeText = state.activeDraft.text || "";
+
+                    const stepParts: string[] = [];
+                    stepMsgs.forEach((m, idx) => {
+                      let part = `**步骤 ${idx + 1}**`;
+                      if (m.reasoning?.trim()) {
+                        part += `\n*思考*: ${m.reasoning.trim()}`;
+                      }
+                      if (m.text?.trim()) {
+                        part += `\n${m.text.trim()}`;
+                      }
+                      stepParts.push(part);
+                    });
+
+                    let combinedTrace = stepParts.join("\n\n---\n\n");
+                    if (activeReasoning) {
+                      if (combinedTrace) combinedTrace += "\n\n---\n\n";
+                      combinedTrace += `**当前思考**\n${activeReasoning}`;
+                    }
+
+                    const title = stepMsgs.length > 0
+                      ? `执行中 (${stepMsgs.length + 1} 个步骤)`
+                      : "思考中…";
+
+                    return (
+                      <article key={group.id} className="bubble assistant streaming">
+                        <div className="bubble-head">
+                          <strong>深统 Scope</strong>
+                          <span>处理中</span>
+                        </div>
+                        {combinedTrace ? (
+                          <TraceBlock text={combinedTrace} open={true} title={title} />
+                        ) : null}
+                        <MessageBody role="assistant" text={activeText || "…"} />
+                      </article>
+                    );
+                  }
+
+                  // Completed assistant group
+                  const historyMsgs = group.messages;
+                  if (historyMsgs.length === 1) {
+                    const msg = historyMsgs[0];
+                    return (
+                      <article key={group.id} className="bubble assistant">
+                        <div className="bubble-head">
+                          <strong>深统 Scope</strong>
+                          {msg.phase ? <span>{msg.phase}</span> : null}
+                        </div>
+                        {msg.reasoning?.trim() ? (
+                          <TraceBlock text={msg.reasoning} open={false} />
+                        ) : null}
+                        <MessageBody role="assistant" text={msg.text} />
+                      </article>
+                    );
+                  }
+
+                  // Multiple assistant messages in one turn
+                  const finalMsg = historyMsgs[historyMsgs.length - 1];
+                  const stepMsgs = historyMsgs.slice(0, -1);
+
+                  const stepParts: string[] = [];
+                  stepMsgs.forEach((m, idx) => {
+                    let part = `**步骤 ${idx + 1}**`;
+                    if (m.reasoning?.trim()) {
+                      part += `\n*思考*: ${m.reasoning.trim()}`;
+                    }
+                    if (m.text?.trim()) {
+                      part += `\n${m.text.trim()}`;
+                    }
+                    stepParts.push(part);
+                  });
+
+                  let combinedTrace = stepParts.join("\n\n---\n\n");
+                  if (finalMsg.reasoning?.trim()) {
+                    if (combinedTrace) combinedTrace += "\n\n---\n\n";
+                    combinedTrace += `**最终思考**\n${finalMsg.reasoning.trim()}`;
+                  }
+
+                  const finalText = finalMsg.text?.trim() || stepMsgs[stepMsgs.length - 1]?.text || "(已完成)";
+
+                  return (
+                    <article key={group.id} className="bubble assistant">
+                      <div className="bubble-head">
+                        <strong>深统 Scope</strong>
+                        {finalMsg.phase ? <span>{finalMsg.phase}</span> : null}
+                      </div>
+                      {combinedTrace ? (
+                        <TraceBlock
+                          text={combinedTrace}
+                          open={false}
+                          title={`思考与执行过程 (${stepMsgs.length} 个步骤)`}
+                        />
+                      ) : null}
+                      <MessageBody role="assistant" text={finalText} />
+                    </article>
+                  );
+                })}
+
+                {!isHermesMissing && state?.activeDraft && (renderTurnGroups.length === 0 || renderTurnGroups[renderTurnGroups.length - 1].role !== "assistant") ? (
                   <article className="bubble assistant streaming">
                     <div className="bubble-head">
                       <strong>深统 Scope</strong>
                       <span>处理中</span>
                     </div>
-                    {state.activeDraft.reasoning?.trim() ? <TraceBlock text={state.activeDraft.reasoning} open={true} /> : null}
+                    {state.activeDraft.reasoning?.trim() ? (
+                      <TraceBlock text={state.activeDraft.reasoning} open={true} title="思考中…" />
+                    ) : null}
                     <MessageBody role="assistant" text={state.activeDraft.text || "…"} />
                   </article>
                 ) : null}
@@ -1347,8 +1507,12 @@ function App() {
             </div>
           </div>
 
-          <div className="flex items-center justify-end px-2 pt-1 text-[11px] text-slate-400 select-none">
-            <span>Shift + Enter 换行</span>
+          <div className="composer-bottom-info flex items-center justify-between max-w-[960px] w-full mx-auto px-1 pt-1 text-[11px] text-slate-400 select-none">
+            <span className="flex items-center gap-1.5 font-medium text-slate-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
+              深统 Scope 智能工作台
+            </span>
+            <span>Shift + Enter 换行 · Enter 发送</span>
           </div>
         </footer>
       </main>
@@ -1747,7 +1911,7 @@ function App() {
                           </div>
                           {draftSettings.apiProvider === "deepseek" && (
                             <small className="field-hint" style={{ marginTop: "4px", display: "block" }}>
-                              💡 <b>DeepSeek 官方模型：</b> <code>deepseek-chat</code>（V3 对话） | <code>deepseek-reasoner</code>（R1 深度思考） | <code>deepseek-v4-flash</code> / <code>deepseek-v4-pro</code>
+                              💡 <b>DeepSeek 官方模型：</b> <code>deepseek-v4-flash</code>（Flash 快速） | <code>deepseek-v4-pro</code>（Pro 旗舰）
                             </small>
                           )}
                         </div>
@@ -1762,7 +1926,7 @@ function App() {
                             value={draftSettings.apiProvider}
                             onChange={(event) => {
                               const newProvider = event.target.value as HermesAppState["settings"]["apiProvider"];
-                              const defaultModelForProvider = PROVIDER_PRESET_MODELS[newProvider]?.[0]?.id || "deepseek-chat";
+                              const defaultModelForProvider = PROVIDER_PRESET_MODELS[newProvider]?.[0]?.id || "deepseek-v4-flash";
                               setDraftSettings((current: HermesAppState["settings"]) => ({
                                 ...current,
                                 apiProvider: newProvider,

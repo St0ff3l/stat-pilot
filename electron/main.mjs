@@ -2,7 +2,7 @@ import { randomUUID, randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import net from "node:net";
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
@@ -63,7 +63,7 @@ const defaultSettings = {
   hermesBin: getDefaultHermesBinaryPath(),
   runtimeMode: "private",
   model: "deepseek-chat",
-  cwd: process.cwd(),
+  cwd: "",
   defaultOutputDir: "outputs",
   apiProvider: "deepseek",
   apiKey: "",
@@ -82,9 +82,9 @@ const defaultSettings = {
 };
 
 function normalizeSettings(settings) {
-  const input = settings ?? {};
+  const { loginOfficial, logoutOfficial, ...input } = settings ?? {};
   const legacyBin = typeof input.codexBin === "string" ? input.codexBin : undefined;
-  const defaultCwd = typeof input.cwd === "string" && input.cwd.trim() ? input.cwd.trim() : process.cwd();
+  const defaultCwd = typeof input.cwd === "string" ? input.cwd.trim() : "";
 
   let registeredSkills = input.registeredSkills;
   if (!Array.isArray(registeredSkills)) {
@@ -641,30 +641,30 @@ function buildHermesEnv(settings, launchConfig = null, sessionToken = "") {
       env.OPENAI_BASE_URL = settings.apiBaseUrl;
       env.OPENAI_API_BASE = settings.apiBaseUrl;
     }
+  }
 
-    // Vision model configuration
-    if (settings.visionModel) {
-      const vModel = toSafeString(settings.visionModel).trim();
-      const vProvider = toSafeString(settings.visionProvider).trim() || "openai";
+  // Vision model configuration
+  if (settings.visionModel) {
+    const vModel = toSafeString(settings.visionModel).trim();
+    const vProvider = toSafeString(settings.visionProvider).trim() || "openai";
 
-      env.HERMES_VISION_MODEL = vModel;
-      env.VISION_MODEL = vModel;
-      env.BROWSER_VISION_MODEL = vModel;
+    env.HERMES_VISION_MODEL = vModel;
+    env.VISION_MODEL = vModel;
+    env.BROWSER_VISION_MODEL = vModel;
 
-      env.HERMES_VISION_PROVIDER = vProvider;
-      env.VISION_PROVIDER = vProvider;
+    env.HERMES_VISION_PROVIDER = vProvider;
+    env.VISION_PROVIDER = vProvider;
 
-      if (settings.visionApiKey) {
-        env.HERMES_VISION_API_KEY = settings.visionApiKey;
-        env.VISION_API_KEY = settings.visionApiKey;
-        env.BROWSER_VISION_API_KEY = settings.visionApiKey;
-      }
+    if (settings.visionApiKey) {
+      env.HERMES_VISION_API_KEY = settings.visionApiKey;
+      env.VISION_API_KEY = settings.visionApiKey;
+      env.BROWSER_VISION_API_KEY = settings.visionApiKey;
+    }
 
-      if (settings.visionBaseUrl) {
-        env.HERMES_VISION_BASE_URL = settings.visionBaseUrl;
-        env.VISION_BASE_URL = settings.visionBaseUrl;
-        env.BROWSER_VISION_BASE_URL = settings.visionBaseUrl;
-      }
+    if (settings.visionBaseUrl) {
+      env.HERMES_VISION_BASE_URL = settings.visionBaseUrl;
+      env.VISION_BASE_URL = settings.visionBaseUrl;
+      env.BROWSER_VISION_BASE_URL = settings.visionBaseUrl;
     }
   }
 
@@ -1150,6 +1150,18 @@ class HermesGatewayBridge {
     });
   }
 
+  async cancelPrompt(sessionId) {
+    try {
+      await this.request("prompt.cancel", { session_id: sessionId });
+    } catch {
+      try {
+        await this.request("session.cancel", { session_id: sessionId });
+      } catch {
+        // ignore fallback errors
+      }
+    }
+  }
+
   async execSlash(sessionId, command) {
     return this.request("slash.exec", {
       session_id: sessionId,
@@ -1203,6 +1215,7 @@ let bridge = null;
 let activeGatewaySessionId = null;
 let activeSessionUnsubscribe = null;
 let activeSessionReject = null;
+let activeOfficialLogin = null;
 
 let state = {
   status: "Starting Hermes runtime...",
@@ -1238,6 +1251,21 @@ let state = {
 
 function getSettingsPath() {
   return path.join(app.getPath("userData"), SETTINGS_FILE);
+}
+
+function settingsRequireBridgeRestart(previousSettings, nextSettings) {
+  const comparablePrevious = {
+    ...normalizeSettings(previousSettings),
+    logoutOfficial: undefined,
+    loginOfficial: undefined,
+  };
+  const comparableNext = {
+    ...normalizeSettings(nextSettings),
+    logoutOfficial: undefined,
+    loginOfficial: undefined,
+  };
+
+  return JSON.stringify(comparablePrevious) !== JSON.stringify(comparableNext);
 }
 
 async function loadSettings() {
@@ -1471,6 +1499,9 @@ async function initializeBridge() {
       state.status = state.error;
       state.busy = false;
       state.activeDraft = null;
+      if (/invalid refresh token|refresh_token|agent init failed/i.test(state.error)) {
+        activeGatewaySessionId = null;
+      }
       broadcastState();
       return;
     }
@@ -1553,7 +1584,7 @@ function createWindow() {
     height: 940,
     minWidth: 1180,
     minHeight: 760,
-    title: "SZ Gov Scope",
+    title: "深统政务 Scope",
     backgroundColor: "#f4f1e7",
     webPreferences: {
       preload: path.join(app.getAppPath(), "electron/preload.cjs"),
@@ -1600,6 +1631,38 @@ function createWindow() {
     void loadDev();
   }
 
+  mainWindow.on("focus", async () => {
+    try {
+      if (state.settings?.runtimeMode !== "official") return;
+      const latestOfficial = await inspectOfficialHermesConfig();
+      const authStateChanged = state.official?.isLoggedIn !== latestOfficial.isLoggedIn;
+      const hadError = Boolean(state.error && /invalid refresh token|refresh_token|agent init failed/i.test(state.error));
+
+      if ((authStateChanged && latestOfficial.isLoggedIn) || (hadError && latestOfficial.isLoggedIn)) {
+        console.log("[hermes-focus-sync] Window focused with valid login on disk! Auto-restarting bridge...");
+        state.official = latestOfficial;
+        activeGatewaySessionId = null;
+        state.activeThreadId = null;
+        state.activeThread = null;
+        state.currentRuntimeModel = null;
+        state.reasoningTrace = null;
+        state.messages = [];
+        state.activeDraft = null;
+        state.error = null;
+        state.status = "Ready. 自动同步了最新的官方登录状态。";
+
+        if (bridge) {
+          await bridge.updateSettings(state.settings);
+          await refreshThreads();
+          await startNewConversation();
+        }
+        broadcastState();
+      }
+    } catch (err) {
+      console.error("[hermes-focus-sync] Focus sync error:", err);
+    }
+  });
+
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
@@ -1635,6 +1698,15 @@ app.on("window-all-closed", async () => {
 ipcMain.handle("hermes:getState", () => state);
 
 ipcMain.handle("hermes:newThread", async () => {
+  state.settings.cwd = "";
+  await saveSettings(state.settings);
+  if (bridge) {
+    try {
+      await bridge.updateSettings(state.settings);
+    } catch (e) {
+      console.error("Failed to update bridge settings on newThread:", e);
+    }
+  }
   await startNewConversation();
   state.lastGeneratedFiles = null;
   return state;
@@ -1720,10 +1792,41 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
     const targetCwd = state.settings.cwd || process.cwd();
     const beforeFiles = await scanDirectoryFiles(targetCwd);
 
-    console.log("[hermes-send] submitting prompt", activeGatewaySessionId, text);
-    await bridge.sendPrompt(activeGatewaySessionId, text);
+    let sendError = null;
+    try {
+      console.log("[hermes-send] submitting prompt", activeGatewaySessionId, text);
+      await bridge.sendPrompt(activeGatewaySessionId, text);
+      await waitForSessionCompletion(activeGatewaySessionId);
+    } catch (err) {
+      sendError = err;
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (/invalid refresh token|refresh_token|agent init failed/i.test(errMsg)) {
+        console.warn("[hermes-send] Token error on prompt submission. Checking disk for auto-recovery...");
+        activeGatewaySessionId = null;
+        const latestOfficial = await inspectOfficialHermesConfig();
+        state.official = latestOfficial;
+        if (latestOfficial.isLoggedIn) {
+          console.log("[hermes-send] Auto-recovering: valid token on disk, restarting bridge...");
+          try {
+            await bridge.restart();
+            const session = await bridge.createSession();
+            activeGatewaySessionId = String(session.session_id ?? "");
+            state.activeThreadId = String(session.stored_session_id ?? "");
+            console.log("[hermes-send] Retrying prompt submission on new session:", activeGatewaySessionId);
+            await bridge.sendPrompt(activeGatewaySessionId, text);
+            await waitForSessionCompletion(activeGatewaySessionId);
+            sendError = null;
+          } catch (retryErr) {
+            console.error("[hermes-send] Auto-recovery retry failed:", retryErr);
+            sendError = retryErr;
+          }
+        }
+      }
+    }
 
-    await waitForSessionCompletion(activeGatewaySessionId);
+    if (sendError) {
+      throw sendError;
+    }
     console.log("[hermes-send] message complete");
 
     const afterFiles = await scanDirectoryFiles(targetCwd);
@@ -1764,6 +1867,9 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
     console.error("[hermes-send] failed", error);
     state.error = error instanceof Error ? error.message : "Failed to send message.";
     state.status = state.error;
+    if (/invalid refresh token|refresh_token|agent init failed/i.test(state.error)) {
+      activeGatewaySessionId = null;
+    }
   } finally {
     state.busy = false;
     broadcastState();
@@ -1873,6 +1979,10 @@ function stripAnsi(str) {
 }
 
 async function runOfficialHermesLogin(settings) {
+  if (activeOfficialLogin?.proc) {
+    await cancelOfficialHermesLogin();
+  }
+
   const launchConfig = resolveBackendLaunch();
   const args = [
     ...launchConfig.argsPrefix,
@@ -1891,7 +2001,14 @@ async function runOfficialHermesLogin(settings) {
     cwd: settings.cwd || process.cwd(),
     env,
     stdio: ["ignore", "pipe", "pipe"],
+    detached: process.platform !== "win32",
+    shell: false,
   });
+  const loginAttempt = {
+    proc: loginProc,
+    cancelRequested: false,
+  };
+  activeOfficialLogin = loginAttempt;
 
   let stdoutBuffer = "";
 
@@ -1923,41 +2040,71 @@ async function runOfficialHermesLogin(settings) {
 
   return new Promise((resolve) => {
     let resolved = false;
-    loginProc.on("close", (code) => {
-      console.log("[hermes-login] exited with code:", code);
+    let timeoutId = null;
+
+    const finish = (result) => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      if (activeOfficialLogin === loginAttempt) {
+        activeOfficialLogin = null;
+      }
       state.official.userCode = null;
       broadcastState();
       if (!resolved) {
         resolved = true;
-        resolve(code === 0);
+        resolve(result);
       }
+    };
+
+    loginProc.on("close", (code) => {
+      console.log("[hermes-login] exited with code:", code);
+      finish({
+        success: code === 0,
+        cancelled: loginAttempt.cancelRequested,
+      });
     });
 
     loginProc.on("error", (err) => {
       console.error("[hermes-login] error:", err);
-      state.official.userCode = null;
-      broadcastState();
-      if (!resolved) {
-        resolved = true;
-        resolve(false);
-      }
+      finish({
+        success: false,
+        cancelled: loginAttempt.cancelRequested,
+      });
     });
 
-    setTimeout(() => {
+    timeoutId = setTimeout(() => {
       if (!resolved) {
-        resolved = true;
-        state.official.userCode = null;
-        broadcastState();
-        try {
-          loginProc.kill();
-        } catch {}
-        resolve(false);
+        void terminateProcessTree(loginProc, "hermes-login");
+        finish({
+          success: false,
+          cancelled: false,
+        });
       }
     }, 180000);
   });
 }
 
+async function cancelOfficialHermesLogin() {
+  if (!activeOfficialLogin?.proc) {
+    state.official.userCode = null;
+    broadcastState();
+    return false;
+  }
+
+  activeOfficialLogin.cancelRequested = true;
+  state.official.userCode = null;
+  broadcastState();
+  await terminateProcessTree(activeOfficialLogin.proc, "hermes-login");
+  return true;
+}
+
 ipcMain.handle("hermes:updateSettings", async (_event, nextSettings) => {
+  const previousSettings = normalizeSettings(state.settings);
+  const previousOfficialLoggedIn = state.official?.isLoggedIn;
+  const previousHadAuthError = Boolean(
+    state.error && /invalid refresh token|refresh_token|agent init failed/i.test(state.error)
+  );
   const { logoutOfficial, loginOfficial, ...cleanSettings } = nextSettings || {};
   if (logoutOfficial) {
     const homeDir = getOfficialHermesHomeDir();
@@ -1991,8 +2138,9 @@ ipcMain.handle("hermes:updateSettings", async (_event, nextSettings) => {
     }
   }
 
+  let loginResult = null;
   if (loginOfficial) {
-    await runOfficialHermesLogin(state.settings);
+    loginResult = await runOfficialHermesLogin(state.settings);
   }
 
   let merged = normalizeSettings({ ...state.settings, ...cleanSettings });
@@ -2009,7 +2157,21 @@ ipcMain.handle("hermes:updateSettings", async (_event, nextSettings) => {
   state.official = reconciled.official;
   await saveSettings(merged);
 
-  if (bridge) {
+  const authStateChanged = previousOfficialLoggedIn !== state.official.isLoggedIn;
+  const loggedInAfterError = previousHadAuthError && state.official.isLoggedIn;
+  const loginSucceeded = Boolean(loginOfficial && loginResult?.success);
+
+  const shouldRestartBridge =
+    bridge &&
+    (settingsRequireBridgeRestart(previousSettings, merged) ||
+      loginSucceeded ||
+      logoutOfficial ||
+      authStateChanged ||
+      loggedInAfterError);
+
+  const shouldSkipBridgeRestart = !shouldRestartBridge;
+
+  if (bridge && shouldRestartBridge) {
     activeGatewaySessionId = null;
     state.activeThreadId = null;
     state.activeThread = null;
@@ -2032,6 +2194,28 @@ ipcMain.handle("hermes:updateSettings", async (_event, nextSettings) => {
     }
   }
 
+  if (shouldSkipBridgeRestart) {
+    state.error = null;
+    if (loginOfficial && loginResult?.cancelled) {
+      state.status = "已取消官方登录。";
+    } else if (loginOfficial && loginResult?.success) {
+      state.status = "Ready. 官方登录状态已同步。";
+    } else if (logoutOfficial) {
+      state.status = "Ready. 官方登录状态已退出。";
+    } else {
+      state.status = "Ready.";
+    }
+  }
+
+  broadcastState();
+  return state;
+});
+
+ipcMain.handle("hermes:cancelOfficialLogin", async () => {
+  await cancelOfficialHermesLogin();
+  state.official = await inspectOfficialHermesConfig();
+  state.error = null;
+  state.status = "已取消官方登录。";
   broadcastState();
   return state;
 });
@@ -2194,3 +2378,96 @@ ipcMain.handle("hermes:unregisterSkill", async (_event, filePath) => {
 });
 
 ipcMain.handle("hermes:openExternal", (_event, url) => shell.openExternal(String(url)));
+
+function getGitBranch(dirPath) {
+  if (!dirPath) return null;
+  try {
+    const stdout = execSync("git rev-parse --abbrev-ref HEAD", {
+      cwd: dirPath,
+      encoding: "utf8",
+      timeout: 1000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+ipcMain.handle("hermes:stopMessage", async () => {
+  const sessionId = activeGatewaySessionId || state.activeThreadId;
+  if (bridge && sessionId) {
+    try {
+      await bridge.cancelPrompt(sessionId);
+    } catch (e) {
+      console.error("Failed to send cancel prompt:", e);
+    }
+  }
+  if (activeSessionReject) {
+    try {
+      activeSessionReject(new Error("用户已终止对话处理。"));
+    } catch {}
+    activeSessionReject = null;
+  }
+  if (activeSessionUnsubscribe) {
+    try {
+      activeSessionUnsubscribe();
+    } catch {}
+    activeSessionUnsubscribe = null;
+  }
+  state.busy = false;
+  state.activeDraft = null;
+  state.status = "已终止处理。";
+  broadcastState();
+  return state;
+});
+
+ipcMain.handle("hermes:selectWorkspaceFolder", async () => {
+  if (!mainWindow) {
+    throw new Error("Main window is not available.");
+  }
+
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: "选择项目工作区文件夹",
+    properties: ["openDirectory"],
+  });
+
+  if (canceled || filePaths.length === 0) {
+    return null;
+  }
+
+  const selectedPath = filePaths[0];
+  const branch = getGitBranch(selectedPath);
+
+  const merged = {
+    ...state.settings,
+    cwd: selectedPath,
+  };
+  state.settings = merged;
+  await saveSettings(merged);
+
+  if (bridge) {
+    activeGatewaySessionId = null;
+    state.activeThreadId = null;
+    state.activeThread = null;
+    state.currentRuntimeModel = null;
+    state.reasoningTrace = null;
+    state.messages = [];
+    state.activeDraft = null;
+    try {
+      await bridge.updateSettings(merged);
+      await refreshThreads();
+      await startNewConversation();
+    } catch (e) {
+      console.error("Failed to update bridge settings for new cwd:", e);
+    }
+  }
+
+  broadcastState();
+  return {
+    cwd: selectedPath,
+    folderName: path.basename(selectedPath),
+    branch,
+  };
+});
+

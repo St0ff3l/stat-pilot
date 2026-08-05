@@ -355,32 +355,34 @@ body {
   background: rgba(255, 255, 255, 0.4);
 }
 
-/* Composer Area */
+/* Composer Area (Full-width bottom dock) */
 .composer {
-  @apply flex flex-col w-full mx-auto box-border shrink-0;
-  max-width: min(880px, calc(100% - 32px));
-  padding: 0 0 20px 0;
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  gap: 8px;
+  @apply flex flex-col w-full box-border shrink-0 bg-white border-t border-slate-200/90 relative z-10;
+  max-width: 100%;
+  padding: 12px 24px 10px;
+  box-shadow: 0 -4px 16px rgba(15, 23, 42, 0.03);
+  gap: 6px;
 }
 
 .composer textarea {
-  @apply w-full border border-border-main bg-white rounded-2xl text-[0.92rem] text-inherit resize-none transition-all duration-200;
+  @apply w-full text-[0.92rem] text-inherit resize-none transition-all duration-200;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
   font-family: inherit;
-  padding: 14px 16px;
-  box-shadow: var(--shadow-sm);
+  padding: 4px 2px;
 }
 
 .composer textarea:focus {
-  @apply outline-hidden;
-  border-color: rgba(37, 99, 235, 0.3);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 .composer textarea:disabled {
-  @apply bg-slate-100 cursor-not-allowed;
+  background: transparent !important;
+  cursor: not-allowed;
 }
 
 .composer-actions {
@@ -1239,23 +1241,26 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 6px;
+  gap: 6px 8px;
   width: 100%;
-  background: white;
-  border: 1px solid rgba(148, 163, 184, 0.5);
-  border-radius: 1rem;
+  max-width: 960px;
+  margin: 0 auto;
+  background: #f8fafc;
+  border: 1px solid rgba(203, 213, 225, 0.85);
+  border-radius: 14px;
   padding: 10px 14px;
   position: relative;
   overflow: visible;
-  transition: border-color 0.2s, box-shadow 0.2s;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.03), 0 1px 2px rgba(0, 0, 0, 0.02);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.02);
 }
 
 /* input-row is no longer used (pill is a direct child of card) */
 
 .trae-composer-card:focus-within {
-  border-color: #60a5fa;
-  box-shadow: 0 0 0 3px rgba(219, 234, 254, 0.8);
+  background: #ffffff;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12), inset 0 1px 2px rgba(0, 0, 0, 0.01);
 }
 
 /* Skill Tag Pill — inline with textarea text */
@@ -1291,18 +1296,18 @@ body {
 }
 
 .trae-composer-textarea {
-  flex: 1 1 180px;
-  min-width: 120px;
-  background: transparent;
-  border: none;
-  outline: none;
+  flex: 1 1 100%;
+  width: 100%;
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
   resize: none;
   font-size: 0.88rem;
   color: #1e293b;
-  padding: 0;
+  padding: 4px 6px;
   margin: 0;
   line-height: 1.6;
-  min-height: 64px;
+  min-height: 54px;
   max-height: 220px;
   overflow-y: auto;
   display: block;
@@ -1311,7 +1316,9 @@ body {
 }
 
 .trae-composer-textarea:focus {
-  outline: none;
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 .trae-composer-textarea::placeholder {
@@ -1413,4 +1420,53 @@ body {
 .skills-empty-state p {
   @apply text-xs text-slate-500 m-0 leading-relaxed max-w-[420px];
 }
+
+/* Loading State & Skeleton Animations */
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(226, 232, 240, 0.6) 0%,
+    rgba(241, 245, 249, 0.95) 50%,
+    rgba(226, 232, 240, 0.6) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.8s infinite ease-in-out;
+}
+
+.skeleton-shimmer-blue {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.18) 0%,
+    rgba(255, 255, 255, 0.45) 50%,
+    rgba(255, 255, 255, 0.18) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.8s infinite ease-in-out;
+}
+
+.loading-spinner-ring {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(37, 99, 235, 0.2);
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 
