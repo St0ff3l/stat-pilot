@@ -52,3 +52,6 @@ out/
 *.sw?
 
 scraped_data/
+output/
+outputs/*
+!outputs/.gitkeep
