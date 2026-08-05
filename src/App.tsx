@@ -129,6 +129,102 @@ function BusyOverlay({ title, detail, elapsedSeconds }: { title: string; detail:
   );
 }
 
+export interface DigestItem {
+  id: string;
+  title: string;
+  organization?: string;
+  publish_time?: string;
+  summary?: string;
+  link?: string;
+  category?: string;
+}
+
+function extractDigestItems(text: string): DigestItem[] {
+  if (!text) return [];
+  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/\[\s*\{[\s\S]*\}\s*\]/);
+  if (jsonMatch) {
+    try {
+      const jsonStr = jsonMatch[1] || jsonMatch[0];
+      const parsed = JSON.parse(jsonStr);
+      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].title) {
+        return parsed.map((item: any, idx: number) => ({
+          id: item.link || item.url || `${item.title}_${idx}`,
+          title: item.title || item.name || "未命名动态",
+          organization: item.organization || item.unit || item.source || item.site || "统计局",
+          publish_time: item.publish_time || item.date || item.time || "",
+          summary: item.summary || item.desc || item.content || "",
+          link: item.link || item.url || "",
+          category: item.category || item.type || item.relevance || "工作动态",
+        }));
+      }
+    } catch {
+      // ignore parse error
+    }
+  }
+  return [];
+}
+
+function CheckableItemSection({
+  items,
+  selectedMap,
+  onToggleItem,
+  onToggleAll,
+}: {
+  items: DigestItem[];
+  selectedMap: Record<string, DigestItem>;
+  onToggleItem: (item: DigestItem) => void;
+  onToggleAll: (items: DigestItem[]) => void;
+}) {
+  if (!items || items.length === 0) return null;
+  const allSelected = items.every((it) => Boolean(selectedMap[it.id]));
+
+  return (
+    <div className="digest-items-container">
+      <div className="digest-items-header">
+        <h4>
+          <span>📌</span> 检索提取条目 ({items.length} 条动态可选)
+        </h4>
+        <button
+          type="button"
+          className="digest-items-select-all"
+          onClick={() => onToggleAll(items)}
+        >
+          {allSelected ? "取消全选" : "全选本组"}
+        </button>
+      </div>
+
+      <div className="digest-items-grid">
+        {items.map((item) => {
+          const isChecked = Boolean(selectedMap[item.id]);
+          return (
+            <div
+              key={item.id}
+              className={`digest-item-row ${isChecked ? "selected" : ""}`}
+              onClick={() => onToggleItem(item)}
+            >
+              <input
+                type="checkbox"
+                className="digest-checkbox"
+                checked={isChecked}
+                onChange={() => {}}
+              />
+              <div className="digest-item-content">
+                <div className="digest-item-title-row">
+                  <span className="digest-item-title">{item.title}</span>
+                  {item.organization && (
+                    <span className="digest-item-org-badge">{item.organization}</span>
+                  )}
+                </div>
+                {item.summary && <p className="digest-item-summary">{item.summary}</p>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [state, setState] = useState<HermesAppState | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -162,6 +258,62 @@ function App() {
   const [activeMainTab, setActiveMainTab] = useState<"chat" | "skills">("chat");
   const [skillsSearchQuery, setSkillsSearchQuery] = useState("");
   const [selectedSkillTag, setSelectedSkillTag] = useState<string | null>(null);
+  const [selectedDigestItems, setSelectedDigestItems] = useState<Record<string, DigestItem>>({});
+
+  function handleToggleDigestItem(item: DigestItem) {
+    setSelectedDigestItems((prev) => {
+      const next = { ...prev };
+      if (next[item.id]) {
+        delete next[item.id];
+      } else {
+        next[item.id] = item;
+      }
+      return next;
+    });
+  }
+
+  function handleToggleAllDigestItems(items: DigestItem[]) {
+    setSelectedDigestItems((prev) => {
+      const next = { ...prev };
+      const allSelected = items.every((it) => Boolean(next[it.id]));
+      if (allSelected) {
+        items.forEach((it) => delete next[it.id]);
+      } else {
+        items.forEach((it) => {
+          next[it.id] = it;
+        });
+      }
+      return next;
+    });
+  }
+
+  function handleClearSelectedDigestItems() {
+    setSelectedDigestItems({});
+  }
+
+  const selectedDigestList = useMemo(() => Object.values(selectedDigestItems), [selectedDigestItems]);
+
+  function handleDigestActionBriefing() {
+    if (selectedDigestList.length === 0) return;
+    const prompt = `请针对我勾选的这 ${selectedDigestList.length} 条统计/政务动态，进行深度分析与关键信息提炼，生成一份结构清晰的分析简报：\n\n` + JSON.stringify(selectedDigestList, null, 2);
+    setDraft(prompt);
+    focusEditor();
+  }
+
+  function handleDigestActionCompare() {
+    if (selectedDigestList.length === 0) return;
+    const prompt = `请对我勾选的这 ${selectedDigestList.length} 条统计/政务动态进行交叉对比，梳理出各单位在工作重点、技术路径、建设进度上的异同与值得借鉴的亮点：\n\n` + JSON.stringify(selectedDigestList, null, 2);
+    setDraft(prompt);
+    focusEditor();
+  }
+
+  function handleDigestActionGenerateHtml() {
+    if (selectedDigestList.length === 0) return;
+    handleUseSkillInChat("info_digest_html");
+    const prompt = `请调用 @info_digest_html 技能，根据我勾选的这 ${selectedDigestList.length} 条动态，一键生成风格统一、可直接呈报的 HTML 参阅材料仪表盘。勾选的条目数据为：\n\n` + JSON.stringify(selectedDigestList, null, 2);
+    setDraft(prompt);
+    focusEditor();
+  }
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   function focusEditor() {
@@ -1180,6 +1332,21 @@ function App() {
                           <p>检索政务公开目录与数据交换标准规范</p>
                         </div>
                       </button>
+
+                      <button
+                        type="button"
+                        className="trae-suggestion-card"
+                        onClick={() => {
+                          handleUseSkillInChat("info_digest_html");
+                          setDraft("请抓取国家统计局与各省统计局官网最新工作动态，并使用 @info_digest_html 生成一键参阅 HTML 报表");
+                        }}
+                      >
+                        <span className="icon">📰</span>
+                        <div className="text-content">
+                          <strong>信息汇总 HTML 报表</strong>
+                          <p>抓取统计局工作动态并一键生成专业 HTML 参阅仪表盘</p>
+                        </div>
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1246,6 +1413,7 @@ function App() {
                   const historyMsgs = group.messages;
                   if (historyMsgs.length === 1) {
                     const msg = historyMsgs[0];
+                    const digestItems = extractDigestItems(msg.text);
                     return (
                       <article key={group.id} className="bubble assistant">
                         <div className="bubble-head">
@@ -1256,6 +1424,12 @@ function App() {
                           <TraceBlock text={msg.reasoning} open={false} />
                         ) : null}
                         <MessageBody role="assistant" text={msg.text} />
+                        <CheckableItemSection
+                          items={digestItems}
+                          selectedMap={selectedDigestItems}
+                          onToggleItem={handleToggleDigestItem}
+                          onToggleAll={handleToggleAllDigestItems}
+                        />
                       </article>
                     );
                   }
@@ -1283,6 +1457,7 @@ function App() {
                   }
 
                   const finalText = finalMsg.text?.trim() || stepMsgs[stepMsgs.length - 1]?.text || "(已完成)";
+                  const digestItems = extractDigestItems(finalText);
 
                   return (
                     <article key={group.id} className="bubble assistant">
@@ -1298,6 +1473,12 @@ function App() {
                         />
                       ) : null}
                       <MessageBody role="assistant" text={finalText} />
+                      <CheckableItemSection
+                        items={digestItems}
+                        selectedMap={selectedDigestItems}
+                        onToggleItem={handleToggleDigestItem}
+                        onToggleAll={handleToggleAllDigestItems}
+                      />
                     </article>
                   );
                 })}
@@ -1319,6 +1500,44 @@ function App() {
 
             <div ref={messagesEndRef} />
           </section>
+
+          {selectedDigestList.length > 0 && (
+            <div className="digest-floating-bar">
+              <div className="digest-bar-info">
+                <span className="digest-bar-badge">已勾选 {selectedDigestList.length} 条动态</span>
+                <button
+                  type="button"
+                  className="digest-bar-clear"
+                  onClick={handleClearSelectedDigestItems}
+                >
+                  清空勾选
+                </button>
+              </div>
+              <div className="digest-bar-actions">
+                <button
+                  type="button"
+                  className="digest-bar-btn"
+                  onClick={handleDigestActionBriefing}
+                >
+                  ✨ 提炼关键简报
+                </button>
+                <button
+                  type="button"
+                  className="digest-bar-btn"
+                  onClick={handleDigestActionCompare}
+                >
+                  🔀 交叉比对分析
+                </button>
+                <button
+                  type="button"
+                  className="digest-bar-btn primary"
+                  onClick={handleDigestActionGenerateHtml}
+                >
+                  📰 生成 HTML 报表 (@info_digest_html)
+                </button>
+              </div>
+            </div>
+          )}
 
           <footer className="composer">
             {state?.error ? (
@@ -2476,43 +2695,76 @@ function SkillsPageView({
           </div>
         ) : (
           <div className="skills-card-grid">
-            {filteredSkills.map((skill) => (
-              <div key={skill.path} className="skills-grid-card">
-                <div className="skills-card-top">
-                  <div className="skills-card-icon">
-                    <svg className="w-4.5 h-4.5 text-slate-700 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-                    </svg>
-                  </div>
-                  <div className="skills-card-info">
-                    <h4 title={skill.name}>{skill.name}</h4>
-                    <p title={skill.description}>{skill.description}</p>
-                  </div>
-                </div>
+            {filteredSkills.map((skill) => {
+              const isOfficialBuiltin = [
+                "info_digest_html",
+                "stats_gov_scraper",
+                "gov_digest",
+                "policy_classifier",
+              ].includes(skill.name);
 
-                <div className="skills-card-actions">
-                  <button
-                    type="button"
-                    className="primary-button text-xs px-4"
-                    onClick={() => onUseSkill(skill.name)}
-                    title="在对话中使用此技能"
-                  >
-                    使用
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost-button-icon"
-                    onClick={() => onUnregisterSkill(skill.path)}
-                    title="移除此技能"
-                  >
-                    <svg className="w-4 h-4 text-slate-400 hover:text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    </svg>
-                  </button>
+              const skillIcons: Record<string, string> = {
+                info_digest_html: "📰",
+                stats_gov_scraper: "📊",
+                gov_digest: "📄",
+                policy_classifier: "🏷️",
+              };
+
+              const skillDisplayNames: Record<string, string> = {
+                info_digest_html: "动态信息汇总 HTML 报表",
+                stats_gov_scraper: "统计数据与动态采集器",
+                gov_digest: "政府公文摘要提取",
+                policy_classifier: "政策分类与匹配",
+              };
+
+              const icon = skillIcons[skill.name] || "🧩";
+              const displayName = skillDisplayNames[skill.name] || skill.name;
+
+              return (
+                <div key={skill.path} className={`skills-grid-card ${isOfficialBuiltin ? "border-blue-200/80 bg-slate-50/40" : ""}`}>
+                  <div className="skills-card-top">
+                    <div className="skills-card-icon text-lg flex items-center justify-center">
+                      {icon}
+                    </div>
+                    <div className="skills-card-info">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <h4 title={skill.name} className="truncate">{displayName}</h4>
+                        {isOfficialBuiltin && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-blue-100/80 text-blue-700 border border-blue-200 shrink-0">
+                            官方内置
+                          </span>
+                        )}
+                      </div>
+                      <p title={skill.description}>{skill.description}</p>
+                    </div>
+                  </div>
+
+                  <div className="skills-card-actions">
+                    <button
+                      type="button"
+                      className="primary-button text-xs px-4"
+                      onClick={() => onUseSkill(skill.name)}
+                      title="在对话中使用此技能"
+                    >
+                      使用技能
+                    </button>
+                    {!isOfficialBuiltin && (
+                      <button
+                        type="button"
+                        className="ghost-button-icon"
+                        onClick={() => onUnregisterSkill(skill.path)}
+                        title="移除此技能"
+                      >
+                        <svg className="w-4 h-4 text-slate-400 hover:text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

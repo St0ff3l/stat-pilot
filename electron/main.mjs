@@ -86,25 +86,36 @@ function normalizeSettings(settings) {
   const legacyBin = typeof input.codexBin === "string" ? input.codexBin : undefined;
   const defaultCwd = typeof input.cwd === "string" ? input.cwd.trim() : "";
 
-  let registeredSkills = input.registeredSkills;
-  if (!Array.isArray(registeredSkills)) {
-    registeredSkills = [
-      {
-        name: "gov_digest",
-        description: "政府公文摘要与情报提取",
-        path: path.resolve(defaultCwd, "skills/gov_digest/SKILL.md"),
-      },
-      {
-        name: "policy_classifier",
-        description: "政策分类与政策匹配",
-        path: path.resolve(defaultCwd, "skills/policy_classifier/SKILL.md"),
-      },
-      {
-        name: "stats_gov_scraper",
-        description: "国家统计局数据发布详情深度分析与本地入库器",
-        path: path.resolve(defaultCwd, "skills/stats_gov_scraper/SKILL.md"),
-      },
-    ];
+  let registeredSkills = Array.isArray(input.registeredSkills) ? [...input.registeredSkills] : [];
+  const existingSkillNames = new Set(registeredSkills.map((s) => s?.name));
+
+  const defaultSkillsList = [
+    {
+      name: "gov_digest",
+      description: "政府公文摘要与情报提取",
+      path: path.resolve(defaultCwd, "skills/gov_digest/SKILL.md"),
+    },
+    {
+      name: "policy_classifier",
+      description: "政策分类与政策匹配",
+      path: path.resolve(defaultCwd, "skills/policy_classifier/SKILL.md"),
+    },
+    {
+      name: "stats_gov_scraper",
+      description: "国家统计局数据发布详情深度分析与本地入库器",
+      path: path.resolve(defaultCwd, "skills/stats_gov_scraper/SKILL.md"),
+    },
+    {
+      name: "info_digest_html",
+      description: "统计与政务动态 HTML 参阅报表与交互仪表盘生成器",
+      path: path.resolve(defaultCwd, "skills/info_digest_html/SKILL.md"),
+    },
+  ];
+
+  for (const ds of defaultSkillsList) {
+    if (!existingSkillNames.has(ds.name)) {
+      registeredSkills.push(ds);
+    }
   }
 
   return {

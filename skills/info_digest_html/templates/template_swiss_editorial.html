@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>统计信息化动态监测 (先锋报刊版)</title>
+<style>
+  :root {
+    --bg: #faf9f6; /* 暖乳白 */
+    --ink: #111111; /* 纯黑 */
+    --muted: #555555;
+    --faint: #888888;
+    --border: #111111; /* 黑色细线 */
+    --border-light: rgba(17, 17, 17, 0.1);
+    
+    /* 克莱因蓝 - 唯一的聚焦色 */
+    --brand: #0033cc;
+    --brand-bg: rgba(0, 51, 204, 0.05);
+    
+    /* 栏目分类色 (纯字色，不做彩色卡片) */
+    --c-policy: #111111;
+    --c-meet: #111111;
+    --c-practice: #111111;
+    --c-data: #111111;
+    --c-local: #111111;
+
+    --sans: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, "PingFang SC", sans-serif;
+    --serif: Georgia, "Nimbus Roman No9 L", "Songti SC", "Noto Serif SC", serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; border-radius: 0 !important; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    background: var(--bg);
+    padding: 0 0 80px 0;
+  }
+
+  a { color: inherit; text-decoration: none; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 0 32px; }
+
+  /* ===== HEADER (SWISS GRID) ===== */
+  .hero { 
+    padding: 64px 0 24px;
+    border-bottom: 2px solid var(--border);
+  }
+  .brand-line {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 12px;
+    margin-bottom: 24px;
+  }
+  .brand-logo {
+    font-family: var(--mono);
+    font-weight: 800;
+    font-size: 16px;
+    color: #fff;
+    background: var(--ink);
+    padding: 2px 8px;
+    letter-spacing: -0.5px;
+  }
+  .brand-meta {
+    font-size: 12px;
+    text-transform: uppercase;
+    font-family: var(--mono);
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+  
+  .title-layout {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 40px;
+    align-items: end;
+  }
+  .hero h1 { 
+    font-family: var(--serif); 
+    font-weight: 800; 
+    font-size: clamp(32px, 5.5vw, 64px);
+    line-height: 1.05; 
+    letter-spacing: -2px;
+    color: var(--ink);
+  }
+  .hero h1 em {
+    font-style: italic;
+    font-weight: 400;
+    color: var(--brand);
+  }
+  .hero-summary {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--muted);
+    font-family: var(--serif);
+    border-left: 2px solid var(--brand);
+    padding-left: 16px;
+    margin-bottom: 8px;
+  }
+
+  /* ===== KEY INDICATOR ROW ===== */
+  .stats { 
+    display: grid; 
+    grid-template-columns: repeat(6, 1fr); 
+    border-bottom: 1px solid var(--border);
+    margin-top: 32px;
+  }
+  .stat { 
+    border-right: 1px solid var(--border-light);
+    padding: 16px 8px;
+    text-align: left;
+  }
+  .stat:first-child {
+    border-left: 1px solid var(--border-light);
+  }
+  .stat-n { 
+    font-family: var(--mono); 
+    font-weight: 700; 
+    font-size: 28px; 
+    line-height: 1;
+    color: var(--ink);
+    margin-bottom: 6px;
+  }
+  .stat-n.highlight {
+    color: var(--brand);
+  }
+  .stat-l { 
+    font-size: 11px; 
+    color: var(--muted); 
+    font-weight: 700; 
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* ===== NAVIGATION & DIRECTORY INDEX ===== */
+  .nav-bar { 
+    position: sticky; 
+    top: 0; 
+    z-index: 100;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 0;
+  }
+  .nav-in { 
+    display: flex; 
+    align-items: center; 
+    justify-content: space-between; 
+    gap: 24px;
+  }
+  .nav-chips { 
+    display: flex; 
+    flex-wrap: wrap; 
+    gap: 16px; 
+  }
+  .nav-chip { 
+    font-size: 13px; 
+    font-weight: 700; 
+    color: var(--muted); 
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding-bottom: 4px;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s ease;
+  }
+  .nav-chip:hover { 
+    color: var(--ink);
+  }
+  .nav-chip.active {
+    color: var(--brand);
+    border-color: var(--brand);
+  }
+  .nav-chip-count {
+    font-family: var(--mono);
+    font-size: 10px;
+    vertical-align: super;
+    margin-left: 2px;
+    color: var(--muted);
+  }
+  .nav-chip.active .nav-chip-count {
+    color: var(--brand);
+  }
+
+  /* 极简底线搜索框 */
+  .search-box { 
+    position: relative; 
+    width: 280px; 
+  }
+  .search-box input {
+    width: 100%; 
+    padding: 6px 12px 6px 28px; 
+    border: none;
+    border-bottom: 1px solid var(--border);
+    background: transparent; 
+    font-size: 13px; 
+    color: var(--ink); 
+    outline: none;
+  }
+  .search-box input:focus { 
+    border-color: var(--brand); 
+  }
+  .search-icon {
+    position: absolute; 
+    left: 4px; 
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--ink); 
+    display: flex; 
+    align-items: center;
+  }
+
+  /* ===== MAIN GRID (SWISS ASYMMETRICAL) ===== */
+  main { padding: 48px 0; }
+  
+  .sec { 
+    margin-bottom: 64px; 
+    scroll-margin-top: 100px; 
+  }
+  .sec-head { 
+    display: flex; 
+    align-items: baseline; 
+    gap: 16px; 
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px; 
+    margin-bottom: 32px;
+  }
+  .sec-idx { 
+    font-family: var(--mono); 
+    font-weight: 800; 
+    font-size: 20px; 
+    color: var(--brand);
+  }
+  .sec-meta { 
+    flex: 1; 
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .sec-title { 
+    font-family: var(--sans); 
+    font-weight: 900; 
+    font-size: 20px; 
+    text-transform: uppercase;
+    letter-spacing: -0.5px;
+  }
+  .sec-en { 
+    font-family: var(--mono);
+    font-size: 11px; 
+    text-transform: uppercase; 
+    color: var(--faint); 
+  }
+  .sec-ct { 
+    font-family: var(--mono); 
+    font-size: 12px; 
+    font-weight: 700;
+    color: var(--brand);
+  }
+  .sec-desc { 
+    font-size: 13px; 
+    color: var(--muted); 
+    margin: -24px 0 28px; 
+    line-height: 1.6;
+    max-width: 800px;
+  }
+
+  /* 非对称网格系统 */
+  .grid { 
+    display: grid; 
+    grid-template-columns: repeat(12, 1fr); 
+    gap: 32px; 
+  }
+  
+  /* 卡片完全扁平化，仅有底线 */
+  .card { 
+    grid-column: span 4;
+    border-bottom: 1px solid var(--border-light);
+    padding-bottom: 24px;
+    display: flex; 
+    flex-direction: column; 
+    justify-content: space-between;
+  }
+  
+  /* 重点卡片：占8列，左右结构 */
+  .card.featured {
+    grid-column: span 8;
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 32px;
+    border-bottom: 1px solid var(--border);
+  }
+  .card.featured .card-main-content {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    height: 100%;
+  }
+
+  .card-top { 
+    display: flex; 
+    align-items: center; 
+    gap: 12px;
+    margin-bottom: 12px; 
+  }
+  .num { 
+    font-family: var(--mono); 
+    font-weight: 700; 
+    font-size: 11px; 
+    color: var(--brand);
+    border: 1px solid var(--brand);
+    padding: 1px 6px;
+  }
+  .date { 
+    font-family: var(--mono);
+    font-size: 11px; 
+    color: var(--muted); 
+  }
+  
+  .card-title { 
+    font-family: var(--serif); 
+    font-size: 18px; 
+    font-weight: 700; 
+    line-height: 1.35; 
+    color: var(--ink); 
+    margin-bottom: 12px; 
+  }
+  .card.featured .card-title {
+    font-size: 24px;
+    letter-spacing: -0.5px;
+    line-height: 1.25;
+  }
+  .card-title a { 
+    transition: color 0.15s; 
+  }
+  .card-title a:hover { 
+    color: var(--brand); 
+    text-decoration: underline;
+  }
+  
+  .card-sum { 
+    font-size: 13.5px; 
+    color: var(--muted); 
+    line-height: 1.6; 
+    margin-bottom: 16px; 
+    font-family: var(--serif);
+  }
+  
+  .card-foot { 
+    display: flex; 
+    align-items: center; 
+    justify-content: space-between; 
+    margin-top: auto;
+    padding-top: 8px;
+  }
+  .chip { 
+    font-size: 11px; 
+    font-weight: 700; 
+    color: var(--ink); 
+    background: transparent;
+    border: 1px solid var(--border);
+    padding: 2px 6px; 
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .go { 
+    display: inline-flex; 
+    align-items: center; 
+    gap: 4px;
+    font-size: 12px; 
+    font-weight: 700; 
+    color: var(--brand); 
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .go:hover { 
+    text-decoration: underline;
+  }
+
+  .empty { 
+    grid-column: 1 / -1; 
+    text-align: center; 
+    color: var(--faint); 
+    padding: 48px;
+    border: 1px solid var(--border-light);
+    font-size: 13px; 
+    font-style: italic;
+  }
+
+  /* ===== FOOTER ===== */
+  footer { 
+    border-top: 2px solid var(--border); 
+    margin-top: 64px; 
+    padding: 48px 0; 
+    color: var(--muted); 
+  }
+  .foot-layout {
+    display: grid;
+    grid-template-columns: 1.5fr 2fr;
+    gap: 60px;
+  }
+  .foot-h { 
+    font-family: var(--serif); 
+    font-size: 20px; 
+    color: var(--ink); 
+    margin-bottom: 12px; 
+    font-weight: 800; 
+  }
+  .foot-sum { 
+    font-size: 13.5px; 
+    line-height: 1.6;
+    margin-bottom: 24px; 
+    font-family: var(--serif);
+  }
+  .foot-sum b { 
+    color: var(--brand); 
+    font-family: var(--mono); 
+  }
+  
+  .src-title { 
+    font-size: 12px; 
+    font-weight: 700; 
+    color: var(--ink); 
+    margin-bottom: 12px; 
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .src-list { 
+    display: flex; 
+    flex-wrap: wrap; 
+    gap: 6px; 
+  }
+  .src-chip { 
+    font-size: 11px; 
+    color: var(--muted); 
+    background: transparent;
+    border: 1px solid var(--border-light); 
+    padding: 4px 8px;
+  }
+  .src-chip.dim { 
+    opacity: 0.25; 
+  }
+  
+  .foot-note { 
+    grid-column: span 2;
+    margin-top: 32px; 
+    font-size: 12px; 
+    color: var(--faint); 
+    line-height: 1.8; 
+    border-top: 1px solid var(--border-light);
+    padding-top: 24px;
+    font-family: var(--serif);
+  }
+  .foot-note b { 
+    color: var(--ink); 
+  }
+
+  /* ===== RESPONSIVE ===== */
+  @media (max-width: 960px) {
+    .title-layout { grid-template-columns: 1fr; gap: 20px; }
+    .stats { grid-template-columns: repeat(3, 1fr); }
+    .stat:nth-child(3n) { border-right: none; }
+    .card, .card.featured { grid-column: span 6; display: flex; flex-direction: column; }
+    .foot-layout { grid-template-columns: 1fr; gap: 32px; }
+    .foot-note { grid-column: span 1; }
+  }
+  @media (max-width: 640px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .stat:nth-child(2n) { border-right: none; }
+    .nav-in { flex-direction: column; align-items: stretch; }
+    .search-box { width: 100%; }
+    .card, .card.featured { grid-column: span 12; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="brand-line">
+      <div class="brand-logo">SZ STATISTICS</div>
+      <div class="brand-meta">DIGITAL MONITORING / REPORT</div>
+    </div>
+    
+    <div class="title-layout">
+      <div>
+        <h1>统计信息化与<em>数字化转型</em>动态监测</h1>
+      </div>
+      <div>
+        <p class="hero-summary">
+          数据驱动时代的官方动态监测系统。聚合全国 18 家重点城市及国家级统计门户的工作纪实、政策公告与改革方向。
+        </p>
+      </div>
+    </div>
+    
+    <!-- 数据分类行 -->
+    <div class="stats">
+      <div class="stat"><div class="stat-n highlight">9</div><div class="stat-l">Total items</div></div>
+      <div class="stat"><div class="stat-n">0</div><div class="stat-l">Policy</div></div>
+      <div class="stat"><div class="stat-n">0</div><div class="stat-l">Meetings</div></div>
+      <div class="stat"><div class="stat-n">4</div><div class="stat-l">Practice</div></div>
+      <div class="stat"><div class="stat-n">4</div><div class="stat-l">Data Sharing</div></div>
+      <div class="stat"><div class="stat-n">1</div><div class="stat-l">Exchange</div></div>
+    </div>
+  </div>
+</header>
+
+<!-- 置顶导航区 -->
+<nav class="nav-bar">
+  <div class="wrap">
+    <div class="nav-in">
+      <div class="nav-chips">
+        <div class="nav-chip active" data-target="all">
+          全部监测栏目<span class="nav-chip-count">9</span>
+        </div>
+        <div class="nav-chip" data-target="sec-policy">
+          政策规划<span class="nav-chip-count">0</span>
+        </div>
+        <div class="nav-chip" data-target="sec-meet">
+          会议调研<span class="nav-chip-count">0</span>
+        </div>
+        <div class="nav-chip" data-target="sec-practice">
+          转型实践<span class="nav-chip-count">4</span>
+        </div>
+        <div class="nav-chip" data-target="sec-data">
+          数据共享<span class="nav-chip-count">4</span>
+        </div>
+        <div class="nav-chip" data-target="sec-local">
+          地方动态<span class="nav-chip-count">1</span>
+        </div>
+      </div>
+      
+      <!-- 极简底线搜索框 -->
+      <div class="search-box">
+        <span class="search-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        </span>
+        <input type="text" id="search-input" placeholder="输入关键字检索动态...">
+      </div>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap">
+  <main>
+    <!-- ==================== 01 政策文件与规划 ==================== -->
+    <section class="sec" id="sec-policy" style="--ac: var(--border); --tint: transparent">
+      <div class="sec-head">
+        <span class="sec-idx">01/</span>
+        <div class="sec-meta">
+          <h2 class="sec-title">政策文件与规划</h2>
+          <span class="sec-en">Policy &amp; Standards</span>
+        </div>
+        <span class="sec-ct">0 条</span>
+      </div>
+      <div class="sec-desc">关于信息化建设规划、数字政府意见、国家及地方性数据条例等。</div>
+      <div class="grid">
+        <div class="empty">暂无相关筛选结果。</div>
+      </div>
+    </section>
+
+    <!-- ==================== 02 领导活动与会议 ==================== -->
+    <section class="sec" id="sec-meet" style="--ac: var(--border); --tint: transparent">
+      <div class="sec-head">
+        <span class="sec-idx">02/</span>
+        <div class="sec-meta">
+          <h2 class="sec-title">领导活动与会议</h2>
+          <span class="sec-en">Meetings &amp; Survey</span>
+        </div>
+        <span class="sec-ct">0 条</span>
+      </div>
+      <div class="sec-desc">局级领导带队调研系统建设情况、签约合作与高层次工作推进座谈会。</div>
+      <div class="grid">
+        <div class="empty">暂无相关筛选结果。</div>
+      </div>
+    </section>
+
+    <!-- ==================== 03 数字化转型实践 ==================== -->
+    <section class="sec" id="sec-practice" style="--ac: var(--border); --tint: transparent">
+      <div class="sec-head">
+        <span class="sec-idx">03/</span>
+        <div class="sec-meta">
+          <h2 class="sec-title">数字化转型实践</h2>
+          <span class="sec-en">Digital Transformation Practice</span>
+        </div>
+        <span class="sec-ct">4 条</span>
+      </div>
+      <div class="sec-desc">统计业务流程再造、云平台部署、前沿技术（如AI大模型及智能体）与日常工作的深度融合。</div>
+      <div class="grid">
+        
+        <article class="card featured" style="--ac: var(--border); --tint: transparent">
+          <div class="card-main-content">
+            <div class="card-top">
+              <span class="num">TOPIC</span>
+              <span class="date">2026年7月1日</span>
+            </div>
+            <h3 class="card-title">
+              <a href="https://www.stats.gov.cn/xw/tjxw/tzgg/202607/t20260701_1964049.html" target="_blank" rel="noopener noreferrer">关于2026年第二季度政府网站与政务新媒体检查情况的通报</a>
+            </h3>
+            <div class="card-foot">
+              <span class="chip">国家统计局</span>
+              <a class="go" href="https://www.stats.gov.cn/xw/tjxw/tzgg/202607/t20260701_1964049.html" target="_blank" rel="noopener noreferrer">
+                READ ARTICLE →
+              </a>
+            </div>
+          </div>
+          <div>
+            <p class="card-sum" style="margin-top: 24px;">
+              通报国家层面上半年度政府网站与政务新媒体抽查评估情况，指出要持续提升统计业务在数字终端的高稳定性与公开透明性。
+            </p>
+          </div>
+        </article>
+
+        <article class="card" style="--ac: var(--border); --tint: transparent">
+          <div>
+            <div class="card-top">
+              <span class="num">02</span>
+              <span class="date">2026年5月25日</span>
+            </div>
+            <h3 class="card-title">
+              <a href="https://tjj.cq.gov.cn/zwxx_233/bmdt/202605/t20260525_15700303.html" target="_blank" rel="noopener noreferrer">市统计局全力推进统计政务新媒体建设</a>
+            </h3>
+            <p class="card-sum">重庆市统计局多管齐下推进官方新媒体矩阵，深化图解科普与数字化渠道传播，打造生动灵活的政务数据服务阵地。</p>
+          </div>
+          <div class="card-foot">
+            <span class="chip">重庆市统计局</span>
+            <a class="go" href="https://tjj.cq.gov.cn/zwxx_233/bmdt/202605/t20260525_15700303.html" target="_blank" rel="noopener noreferrer">
+              READ →
+            </a>
+          </div>
+        </article>
+
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="foot-layout">
+      <div>
+        <div class="foot-h">统计信息化动态监测与发布</div>
+        <p class="foot-sum">本期监测周期内，累计收录 <b>9</b> 条高度相关动态。已划分为政策规划、会议调研、转型实践、数据要素、地方交流五个主要维度进行呈现。</p>
+      </div>
+      <div>
+        <div class="src-title">监测源清单 (已覆盖 18 家省部级官方门户)</div>
+        <div class="src-list">
+          <span class="src-chip">国家统计局</span>
+          <span class="src-chip dim">北京市统计局</span>
+          <span class="src-chip">上海市统计局</span>
+          <span class="src-chip">天津市统计局</span>
+          <span class="src-chip">重庆市统计局</span>
+          <span class="src-chip">广东省统计局</span>
+          <span class="src-chip dim">浙江省统计局</span>
+          <span class="src-chip dim">江苏省统计局</span>
+          <span class="src-chip">广州市统计局</span>
+          <span class="src-chip dim">杭州市统计局</span>
+          <span class="src-chip dim">南京市统计局</span>
+          <span class="src-chip dim">成都市统计局</span>
+          <span class="src-chip dim">武汉市统计局</span>
+          <span class="src-chip dim">青岛市统计局</span>
+          <span class="src-chip dim">厦门市统计局</span>
+          <span class="src-chip dim">宁波市统计局</span>
+          <span class="src-chip dim">苏州市统计局</span>
+        </div>
+      </div>
+    </div>
+    
+    <div class="foot-note">
+      <b>说明：</b>本仪表盘内容根据特定关键词逻辑从官网抓取公开稿件，仅供行业学术与内部政务研讨使用。<br>
+      <b>排版哲学：</b>本设计严格遵循 International Typographic Style (瑞士平面设计) 标准。
+    </div>
+  </footer>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const searchInput = document.getElementById('search-input');
+    const chips = document.querySelectorAll('.nav-chip');
+    const sections = document.querySelectorAll('.sec');
+    
+    let activeCategory = 'all';
+    
+    function applyFilter() {
+      const query = searchInput.value.toLowerCase().trim();
+      
+      sections.forEach(sec => {
+        const secId = sec.id;
+        const secCards = sec.querySelectorAll('.card');
+        let visibleCountInSec = 0;
+        
+        secCards.forEach(card => {
+          const cardText = card.textContent.toLowerCase();
+          const matchesSearch = cardText.includes(query);
+          
+          if (matchesSearch) {
+            card.style.display = '';
+            visibleCountInSec++;
+          } else {
+            card.style.display = 'none';
+          }
+        });
+        
+        let emptyMsg = sec.querySelector('.empty-message');
+        if (visibleCountInSec === 0 && secCards.length > 0) {
+          if (!emptyMsg) {
+            emptyMsg = document.createElement('div');
+            emptyMsg.className = 'empty empty-message';
+            emptyMsg.textContent = '未检索到匹配的条目。';
+            sec.querySelector('.grid').appendChild(emptyMsg);
+          }
+        } else if (emptyMsg) {
+          emptyMsg.remove();
+        }
+        
+        if (activeCategory === 'all' || secId === activeCategory) {
+          sec.style.display = '';
+        } else {
+          sec.style.display = 'none';
+        }
+      });
+    }
+
+    searchInput.addEventListener('input', applyFilter);
+
+    chips.forEach(chip => {
+      chip.addEventListener('click', () => {
+        chips.forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        activeCategory = chip.getAttribute('data-target');
+        applyFilter();
+        
+        if (activeCategory !== 'all') {
+          const targetSec = document.getElementById(activeCategory);
+          if (targetSec) {
+            targetSec.scrollIntoView({ behavior: 'smooth' });
+          }
+        }
+      });
+    });
+  });
+</script>
+</body>
+</html>
