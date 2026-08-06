@@ -86,6 +86,12 @@ declare global {
     busy: boolean;
     skills: Array<{ name: string; description: string; path: string }>;
     lastGeneratedFiles?: string[] | null;
+    pendingApproval?: {
+      sessionId: string;
+      command: string;
+      description: string;
+      patternKey: string;
+    } | null;
   };
 
   interface Window {
@@ -106,6 +112,7 @@ declare global {
       onState: (handler: (state: HermesAppState) => void) => () => void;
       registerSkillFile: () => Promise<HermesAppState>;
       unregisterSkill: (path: string) => Promise<HermesAppState>;
+      respondApproval: (choice: "approve" | "deny") => Promise<HermesAppState>;
     };
   }
 }

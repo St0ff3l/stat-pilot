@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>最近一周统计信息化动态监测 (极客卡片版)</title>
+<style>
+  :root {
+    --bg: #f3f7fb; /* 极轻灰蓝背景 */
+    --surface: #ffffff; /* 纯白卡片 */
+    --ink: #0f172a; /* 深蓝灰字 */
+    --ink2: #334155; /* 次级字色 */
+    --muted: #64748b;
+    --faint: #94a3b8;
+    
+    /* 核心极客蓝 */
+    --brand: #0066ff;
+    --brand-bg: rgba(0, 102, 255, 0.05);
+    --border-blue: #dbeafe;
+    
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --serif: Georgia, "Nimbus Roman No9 L", "Songti SC", "Noto Serif SC", serif;
+    --mono: "IBM Plex Mono", Courier, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    background: var(--bg);
+    padding: 0 0 100px 0;
+  }
+
+  a { color: inherit; text-decoration: none; }
+  
+  /* 限制阅读容器宽度，营造极其精致的卡片信息流感 */
+  .container { max-width: 680px; margin: 0 auto; padding: 0 20px; }
+
+  /* ===== HEADER (HERO GRADIENT) ===== */
+  .hero {
+    padding: 54px 0 28px;
+    background: linear-gradient(180deg, #e4effc 0%, #f3f7fb 100%);
+    text-align: center;
+  }
+  .sub-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border-blue);
+    border-radius: 999px;
+    padding: 6px 16px;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--brand);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    box-shadow: 0 2px 8px rgba(0, 102, 255, 0.03);
+    margin-bottom: 20px;
+  }
+  .sub-badge-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+  }
+  
+  .hero h1 {
+    font-family: var(--serif);
+    font-weight: 800;
+    font-size: clamp(24px, 4.5vw, 36px);
+    color: var(--ink);
+    letter-spacing: -0.5px;
+    margin-bottom: 12px;
+    line-height: 1.25;
+  }
+  .hero h1 em {
+    font-style: normal;
+    color: var(--brand);
+  }
+  
+  .hero-meta {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 28px;
+  }
+  .hero-meta span {
+    font-family: var(--mono);
+    font-weight: 600;
+    color: var(--ink2);
+  }
+
+  /* ===== BENTO STATS (HORIZONTAL CARD - 优化版) ===== */
+  .stats-card {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface);
+    border: 1px solid var(--border-blue);
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(0, 102, 255, 0.02);
+    margin: 0 auto 10px;
+    max-width: 440px;
+    width: 100%;
+  }
+  .stat-col {
+    flex: 1;
+    padding: 14px 10px;
+    text-align: center;
+    border-right: 1px solid #f0f6ff;
+  }
+  .stat-col:last-child {
+    border-right: none;
+  }
+  .stat-val {
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 24px;
+    color: var(--brand);
+    line-height: 1.1;
+    margin-bottom: 4px;
+  }
+  .stat-lbl {
+    font-size: 11.5px;
+    color: var(--muted);
+    font-weight: 500;
+  }
+
+  /* ===== STICKY NAV & SEARCH (APP STYLE) ===== */
+  .sticky-controls {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(243, 247, 251, 0.95);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(0, 102, 255, 0.05);
+    padding: 12px 0;
+    margin-bottom: 24px;
+  }
+  .controls-in {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  
+  /* 分类横向滑动条 */
+  .nav-scroll {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: none; /* Firefox */
+  }
+  .nav-scroll::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+  }
+  .nav-pill {
+    white-space: nowrap;
+    padding: 6px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border-blue);
+    border-radius: 999px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .nav-pill:hover {
+    border-color: var(--brand);
+    color: var(--brand);
+  }
+  .nav-pill.active {
+    background: var(--brand);
+    border-color: var(--brand);
+    color: #fff;
+    box-shadow: 0 4px 10px rgba(0, 102, 255, 0.15);
+  }
+  
+  /* 搜索药丸框 */
+  .search-pill {
+    position: relative;
+    width: 100%;
+  }
+  .search-pill input {
+    width: 100%;
+    padding: 10px 14px 10px 38px;
+    border-radius: 999px;
+    border: 1px solid var(--border-blue);
+    background: var(--surface);
+    font-size: 13px;
+    color: var(--ink);
+    outline: none;
+    transition: all 0.2s;
+  }
+  .search-pill input:focus {
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.08);
+  }
+  .search-icon {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+  }
+
+  /* ===== MAIN TIMELINE STREAM (全量重构) ===== */
+  .stream {
+    position: relative;
+    padding: 24px 0 48px;
+  }
+  
+  /* 时间轴的每条记录 */
+  .timeline-item {
+    display: flex;
+    position: relative;
+    gap: 20px;
+  }
+  
+  /* 时间轴连接线 */
+  .timeline-line-segment {
+    position: absolute;
+    left: 30px; /* 定位在最左侧 */
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--border-blue);
+    z-index: 1;
+  }
+  
+  /* 左侧时间/节点栏 */
+  .timeline-left {
+    width: 140px; /* 拓宽以在右侧容纳时间文字 */
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start; /* 改为左对齐 */
+    justify-content: flex-start;
+    padding-top: 22px; /* 与右侧卡片头部对齐 */
+    flex-shrink: 0;
+    position: relative;
+  }
+  
+  /* 节点指示器 */
+  .timeline-dot-wrapper {
+    position: absolute;
+    left: 21px; /* 定位在 30px 分割线上 */
+    top: 22px;
+    z-index: 2;
+  }
+  .timeline-ring {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid var(--brand);
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 0 4px rgba(0, 102, 255, 0.08);
+  }
+  .timeline-inner-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--brand);
+  }
+  
+  .timeline-date {
+    margin-left: 54px; /* 让开左侧节点，向右偏移 */
+    text-align: left; /* 时间文字左对齐 */
+  }
+  .timeline-time-ago {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--brand);
+    margin-bottom: 2px;
+  }
+  .timeline-full-date {
+    font-size: 11px;
+    color: var(--muted);
+    font-family: var(--mono);
+  }
+  
+  /* 右侧内容卡片栏 */
+  .timeline-right {
+    flex: 1;
+    padding-bottom: 32px; /* 项与项之间的间隔线距离 */
+  }
+
+  /* ===== SMART CARD ===== */
+  .card {
+    background: var(--surface);
+    border: 1px solid rgba(0, 102, 255, 0.08);
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 4px 12px rgba(0, 102, 255, 0.015);
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.25s, box-shadow 0.25s;
+  }
+  .card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 102, 255, 0.05);
+  }
+  
+  .card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+  .num {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  
+  /* 来源圆角标签 */
+  .badge {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    color: #475569;
+  }
+  .badge.orange { background: #fff7ed; border-color: #ffedd5; color: #c2410c; }
+  .badge.emerald { background: #ecfdf5; border-color: #d1fae5; color: #047857; }
+  .badge.purple { background: #faf5ff; border-color: #f3e8ff; color: #7e22ce; }
+  
+  .card-title {
+    font-size: 17.5px;
+    font-weight: 700;
+    line-height: 1.45;
+    color: var(--ink);
+    margin-bottom: 12px;
+  }
+  .card-title a {
+    transition: color 0.15s;
+  }
+  .card-title a:hover {
+    color: var(--brand);
+  }
+  
+  .card-sum {
+    font-size: 14.5px;
+    color: var(--ink2);
+    line-height: 1.7;
+    margin-bottom: 20px;
+  }
+  
+  .card-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: auto;
+  }
+  
+  /* 极客蓝链接 */
+  .go {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--brand);
+    transition: gap 0.15s;
+  }
+  .go:hover {
+    gap: 7px;
+  }
+  .go-arr {
+    font-size: 14px;
+    font-weight: 900;
+  }
+
+  .empty-state-view {
+    display: none;
+    text-align: center;
+    color: var(--muted);
+    padding: 48px;
+    background: var(--surface);
+    border: 1px dashed var(--border-blue);
+    border-radius: 12px;
+    font-size: 13.5px;
+    margin-top: 12px;
+  }
+
+  /* ===== SCROLL REVEAL ANIMATIONS (滚动滑入动画) ===== */
+  .reveal {
+    opacity: 0;
+    transform: translateY(24px);
+    transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    will-change: transform, opacity;
+  }
+  .reveal.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* ===== FOOTER ===== */
+  footer {
+    border-top: 1px solid var(--border-blue);
+    margin-top: 60px;
+    padding-top: 40px;
+    color: var(--muted);
+  }
+  .foot-h {
+    font-family: var(--serif);
+    font-size: 18px;
+    color: var(--ink);
+    margin-bottom: 10px;
+    font-weight: 800;
+  }
+  .foot-sum {
+    font-size: 13.5px;
+    line-height: 1.6;
+    margin-bottom: 24px;
+  }
+  .foot-sum b {
+    color: var(--brand);
+    font-family: var(--mono);
+  }
+  
+  .src-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--ink);
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .src-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .src-chip {
+    font-size: 11px;
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--border-blue);
+    border-radius: 4px;
+    padding: 4px 8px;
+  }
+  .src-chip.dim {
+    opacity: 0.25;
+  }
+  
+  .foot-note {
+    margin-top: 28px;
+    font-size: 12px;
+    color: var(--faint);
+    line-height: 1.8;
+    border-top: 1px solid var(--border-blue);
+    padding-top: 20px;
+    font-family: var(--serif);
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="container">
+    <div class="sub-badge">
+      <span class="sub-badge-dot"></span>
+      weekly monitoring · stats &amp; tech
+    </div>
+    
+    <h1>统计信息化与<em>数字化转型</em>动态监测</h1>
+    
+    <div class="hero-meta">
+      时间窗 <span>2026-06-01 ~ 2026-07-10</span> · 按发布时间倒序
+    </div>
+    
+    <!-- Bento KPI Card (横向和谐排版) -->
+    <div class="stats-card">
+      <div class="stat-col">
+        <div class="stat-val">9</div>
+        <div class="stat-lbl">监测条目</div>
+      </div>
+      <div class="stat-col">
+        <div class="stat-val">5</div>
+        <div class="stat-lbl">覆盖板块</div>
+      </div>
+      <div class="stat-col">
+        <div class="stat-val">18</div>
+        <div class="stat-lbl">数据源官网</div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- 置顶过滤与检索 -->
+<div class="sticky-controls">
+  <div class="container">
+    <div class="controls-in">
+      <!-- 横向滑动分类药丸 -->
+      <div class="nav-scroll">
+        <div class="nav-pill active" data-target="all">全部</div>
+        <div class="nav-pill" data-target="sec-policy">政策规划</div>
+        <div class="nav-pill" data-target="sec-meet">会议调研</div>
+        <div class="nav-pill" data-target="sec-practice">转型实践</div>
+        <div class="nav-pill" data-target="sec-data">数据共享</div>
+        <div class="nav-pill" data-target="sec-local">地方动态</div>
+      </div>
+      
+      <!-- 搜索药丸 -->
+      <div class="search-pill">
+        <span class="search-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        </span>
+        <input type="text" id="search-input" placeholder="检索动态关键词或来源...">
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <!-- 纵向时间轴内容流 (全量重构) -->
+  <main class="stream" id="timeline-stream-container">
+    
+    <!-- Item 01 -->
+    <div class="timeline-item reveal" data-category="sec-local">
+      <div class="timeline-line-segment"></div>
+      <div class="timeline-left">
+        <div class="timeline-dot-wrapper">
+          <div class="timeline-ring"><div class="timeline-inner-dot"></div></div>
+        </div>
+        <div class="timeline-date">
+          <div class="timeline-time-ago">4天前</div>
+          <div class="timeline-full-date">2026-07-06</div>
+        </div>
+      </div>
+      <div class="timeline-right">
+        <article class="card">
+          <div class="card-top">
+            <span class="num">01</span>
+            <span class="badge purple">地方交流</span>
+          </div>
+          <h3 class="card-title">
+            <a href="https://tjj.sh.gov.cn/tjxw/20260706/475e0bb7a92142798529c4ae9dca0369.html" target="_blank" rel="noopener noreferrer">辽宁省统计局、数据和政务服务局一行来沪调研交流</a>
+          </h3>
+          <p class="card-sum">辽宁两部门联合赴上海进行信息化调研，围绕统计数据治理体系、政务大数据宏观应用以及新型统计报送渠道建设进行专题交流。</p>
+          <div class="card-foot">
+            <a class="go" href="https://tjj.sh.gov.cn/tjxw/20260706/475e0bb7a92142798529c4ae9dca0369.html" target="_blank" rel="noopener noreferrer">
+              阅读原文 <span class="go-arr">↗</span>
+            </a>
+          </div>
+        </article>
+      </div>
+    </div>
+
+    <!-- Item 02 -->
+    <div class="timeline-item reveal" data-category="sec-practice">
+      <div class="timeline-line-segment"></div>
+      <div class="timeline-left">
+        <div class="timeline-dot-wrapper">
+          <div class="timeline-ring"><div class="timeline-inner-dot"></div></div>
+        </div>
+        <div class="timeline-date">
+          <div class="timeline-time-ago">9天前</div>
+          <div class="timeline-full-date">2026-07-01</div>
+        </div>
+      </div>
+      <div class="timeline-right">
+        <article class="card">
+          <div class="card-top">
+            <span class="num">02</span>
+            <span class="badge orange">国家级公告</span>
+          </div>
+          <h3 class="card-title">
+            <a href="https://www.stats.gov.cn/xw/tjxw/tzgg/202607/t20260701_1964049.html" target="_blank" rel="noopener noreferrer">关于2026年第二季度政府网站与政务新媒体检查情况的通报</a>
+          </h3>
+          <p class="card-sum">国家层面对第二季度政府网站与政务新媒体进行常规检查，强调加强日常运维监控、优化数字终端接口、提升政务信息的安全与稳定。</p>
+          <div class="card-foot">
+            <a class="go" href="https://www.stats.gov.cn/xw/tjxw/tzgg/202607/t20260701_1964049.html" target="_blank" rel="noopener noreferrer">
+              阅读原文 <span class="go-arr">↗</span>
+            </a>
+          </div>
+        </article>
+      </div>
+    </div>
+
+    <!-- Item 03 -->
+    <div class="timeline-item reveal" data-category="sec-data">
+      <div class="timeline-line-segment"></div>
+      <div class="timeline-left">
+        <div class="timeline-dot-wrapper">
+          <div class="timeline-ring"><div class="timeline-inner-dot"></div></div>
+        </div>
+        <div class="timeline-date">
+          <div class="timeline-time-ago">9天前</div>
+          <div class="timeline-full-date">2026-07-01</div>
+        </div>
+      </div>
+      <div class="timeline-right">
+        <article class="card">
+          <div class="card-top">
+            <span class="num">03</span>
+            <span class="badge purple">广东省局</span>
+          </div>
+          <h3 class="card-title">
+            <a href="http://stats.gd.gov.cn/gdys/content/post_4920019.html" target="_blank" rel="noopener noreferrer">聚力数据共享 夯实普查根基——珠海市农普办召开数据共享协调会议</a>
+          </h3>
+          <p class="card-sum">珠海市农普办联合交通、农业等部门召开协调会，依托省数据共享平台打通行政底册壁垒，切实保障四农普数据源头的精确度。</p>
+          <div class="card-foot">
+            <a class="go" href="http://stats.gd.gov.cn/gdys/content/post_4920019.html" target="_blank" rel="noopener noreferrer">
+              阅读原文 <span class="go-arr">↗</span>
+            </a>
+          </div>
+        </article>
+      </div>
+    </div>
+
+    <!-- Item 04 -->
+    <div class="timeline-item reveal" data-category="sec-data">
+      <div class="timeline-line-segment"></div>
+      <div class="timeline-left">
+        <div class="timeline-dot-wrapper">
+          <div class="timeline-ring"><div class="timeline-inner-dot"></div></div>
+        </div>
+        <div class="timeline-date">
+          <div class="timeline-time-ago">10天前</div>
+          <div class="timeline-full-date">2026-06-30</div>
+        </div>
+      </div>
+      <div class="timeline-right">
+        <article class="card">
+          <div class="card-top">
+            <span class="num">04</span>
+            <span class="badge">要素价值</span>
+          </div>
+          <h3 class="card-title">
+            <a href="http://stats.gd.gov.cn/gdys/content/post_4920017.html" target="_blank" rel="noopener noreferrer">湛江市局扎实推进企业数据支出统计试点工作</a>
+          </h3>
+          <p class="card-sum">湛江市作为试点地区，重点推进企业数据资产支出的成本归集方法验证，探索解决“数据要素如何衡量与资本化入账”的核心难题。</p>
+          <div class="card-foot">
+            <a class="go" href="http://stats.gd.gov.cn/gdys/content/post_4920017.html" target="_blank" rel="noopener noreferrer">
+              阅读原文 <span class="go-arr">↗</span>
+            </a>
+          </div>
+        </article>
+      </div>
+    </div>
+
+    <!-- Item 05 -->
+    <div class="timeline-item reveal" data-category="sec-data">
+      <div class="timeline-line-segment"></div>
+      <div class="timeline-left">
+        <div class="timeline-dot-wrapper">
+          <div class="timeline-ring"><div class="timeline-inner-dot"></div></div>
+        </div>
+        <div class="timeline-date">
+          <div class="timeline-time-ago">15天前</div>
+          <div class="timeline-full-date">2026-06-25</div>
+        </div>
+      </div>
+      <div class="timeline-right">
+        <article class="card">
+          <div class="card-top">
+            <span class="num">05</span>
+            <span class="badge purple">韶关农普</span>
+          </div>
+          <h3 class="card-title">
+            <a href="http://stats.gd.gov.cn/gdys/content/post_4916553.html" target="_blank" rel="noopener noreferrer">部门联动共享数据 抓实农普清查摸底</a>
+          </h3>
+          <p class="card-sum">韶关市农普办赴多部门进行行政底册对接，以多部门联动的数据共享方式，优化普查清查阶段的登记质效。</p>
+          <div class="card-foot">
+            <a class="go" href="http://stats.gd.gov.cn/gdys/content/post_4916553.html" target="_blank" rel="noopener noreferrer">
+              阅读原文 <span class="go-arr">↗</span>
+            </a>
+          </div>
+        </article>
+      </div>
+    </div>
+
+    <!-- Item 06 -->
+    <div class="timeline-item reveal" data-category="sec-data">
+      <div class="timeline-line-segment"></div>
+      <div class="timeline-left">
+        <div class="timeline-dot-wrapper">
+          <div class="timeline-ring"><div class="timeline-inner-dot"></div></div>
+        </div>
+        <div class="timeline-date">
+          <div class="timeline-time-ago">22天前</div>
+          <div class="timeline-full-date">2026-06-18</div>
+        </div>
+      </div>
+      <div class="timeline-right">
+        <article class="card">
+          <div class="card-top">
+            <span class="num">06</span>
+            <span class="badge">要素试点</span>
+          </div>
+          <h3 class="card-title">
+            <a href="http://stats.gd.gov.cn/gzys/content/post_4913248.html" target="_blank" rel="noopener noreferrer">聚焦统计改革 赋能创新发展——省局举办全省企业数据支出统计试点调查培训班</a>
+          </h3>
+          <p class="card-sum">广东省局举办试点业务培训，聚焦数据资产入表的统计标准、安全审查规则及数据采集口径进行落地指导。</p>
+          <div class="card-foot">
+            <a class="go" href="http://stats.gd.gov.cn/gzys/content/post_4913248.html" target="_blank" rel="noopener noreferrer">
+              阅读原文 <span class="go-arr">↗</span>
+            </a>
+          </div>
+        </article>
+      </div>
+    </div>
+
+    <!-- Item 07 -->
+    <div class="timeline-item reveal" data-category="sec-practice">
+      <div class="timeline-line-segment"></div>
+      <div class="timeline-left">
+        <div class="timeline-dot-wrapper">
+          <div class="timeline-ring"><div class="timeline-inner-dot"></div></div>
+        </div>
+        <div class="timeline-date">
+          <div class="timeline-time-ago">1个月前</div>
+          <div class="timeline-full-date">2026-06-04</div>
+        </div>
+      </div>
+      <div class="timeline-right">
+        <article class="card">
+          <div class="card-top">
+            <span class="num">07</span>
+            <span class="badge">天津市局</span>
+          </div>
+          <h3 class="card-title">
+            <a href="https://stats.tj.gov.cn/sy_51953/202606/t20260604_7312061.html" target="_blank" rel="noopener noreferrer">科技赋能创未来——市统计局赴2026世界智能产业博览会开展主题党日活动</a>
+          </h3>
+          <p class="card-sum">天津局赴智能大会学习观摩，重点关注大数据存储安全、新型传感器及数字孪生政务云在宏观统计工作中的前沿应用。</p>
+          <div class="card-foot">
+            <a class="go" href="https://stats.tj.gov.cn/sy_51953/202606/t20260604_7312061.html" target="_blank" rel="noopener noreferrer">
+              阅读原文 <span class="go-arr">↗</span>
+            </a>
+          </div>
+        </article>
+      </div>
+    </div>
+
+    <!-- Item 08 -->
+    <div class="timeline-item reveal" data-category="sec-practice">
+      <div class="timeline-line-segment"></div>
+      <div class="timeline-left">
+        <div class="timeline-dot-wrapper">
+          <div class="timeline-ring"><div class="timeline-inner-dot"></div></div>
+        </div>
+        <div class="timeline-date">
+          <div class="timeline-time-ago">1个月前</div>
+          <div class="timeline-full-date">2026-06-01</div>
+        </div>
+      </div>
+      <div class="timeline-right">
+        <article class="card">
+          <div class="card-top">
+            <span class="num">08</span>
+            <span class="badge emerald">AI大讲堂</span>
+          </div>
+          <h3 class="card-title">
+            <a href="http://tjj.gz.gov.cn/news_newtjdt/gzdt/content/post_10835943.html" target="_blank" rel="noopener noreferrer">解码AI智能体新赛道 提升统计前沿感知力</a>
+          </h3>
+          <p class="card-sum">广州市统计局举办首期读懂统计大讲堂，特邀人工智能专家围绕大语言模型、智能代理开发等方向为干部员工做技术赋能专题授课。</p>
+          <div class="card-foot">
+            <a class="go" href="http://tjj.gz.gov.cn/news_newtjdt/gzdt/content/post_10835943.html" target="_blank" rel="noopener noreferrer">
+              阅读原文 <span class="go-arr">↗</span>
+            </a>
+          </div>
+        </article>
+      </div>
+    </div>
+
+    <!-- Item 09 -->
+    <div class="timeline-item reveal" data-category="sec-practice">
+      <div class="timeline-line-segment"></div>
+      <div class="timeline-left">
+        <div class="timeline-dot-wrapper">
+          <div class="timeline-ring"><div class="timeline-inner-dot"></div></div>
+        </div>
+        <div class="timeline-date">
+          <div class="timeline-time-ago">1个月前</div>
+          <div class="timeline-full-date">2026-05-25</div>
+        </div>
+      </div>
+      <div class="timeline-right">
+        <article class="card">
+          <div class="card-top">
+            <span class="num">09</span>
+            <span class="badge">重庆市局</span>
+          </div>
+          <h3 class="card-title">
+            <a href="https://tjj.cq.gov.cn/zwxx_233/bmdt/202605/t20260525_15700303.html" target="_blank" rel="noopener noreferrer">市统计局全力推进统计政务新媒体建设</a>
+          </h3>
+          <p class="card-sum">重庆市局推进政务新媒体矩阵建设，利用数字化可视化长图、一图读懂等方式，多维度拓展统计公开和科普阵地。</p>
+          <div class="card-foot">
+            <a class="go" href="https://tjj.cq.gov.cn/zwxx_233/bmdt/202605/t20260525_15700303.html" target="_blank" rel="noopener noreferrer">
+              阅读原文 <span class="go-arr">↗</span>
+            </a>
+          </div>
+        </article>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- 空状态占位 -->
+  <div class="empty-state-view" id="empty-state">
+    暂无符合当前筛选条件的监测数据。
+  </div>
+
+  <!-- 页脚 -->
+  <footer>
+    <div class="foot-h">统计工作信息化动态监测</div>
+    <div class="foot-sum">本期收录 <b>9</b> 条核心纪实，数据来源于各大统计官方公开动态。</div>
+    
+    <div class="src-title">监测网站源（共 18 家省市统计局）</div>
+    <div class="src-list">
+      <span class="src-chip">国家统计局</span>
+      <span class="src-chip dim">北京市统计局</span>
+      <span class="src-chip">上海市统计局</span>
+      <span class="src-chip">天津市统计局</span>
+      <span class="src-chip">重庆市统计局</span>
+      <span class="src-chip">广东省统计局</span>
+      <span class="src-chip dim">浙江省统计局</span>
+      <span class="src-chip dim">江苏省统计局</span>
+      <span class="src-chip">广州市统计局</span>
+      <span class="src-chip dim">杭州市统计局</span>
+      <span class="src-chip dim">南京市统计局</span>
+      <span class="src-chip dim">成都市统计局</span>
+      <span class="src-chip dim">武汉市统计局</span>
+      <span class="src-chip dim">青岛市统计局</span>
+      <span class="src-chip dim">厦门市统计局</span>
+      <span class="src-chip dim">宁波市统计局</span>
+      <span class="src-chip dim">苏州市统计局</span>
+    </div>
+    
+    <div class="foot-note">
+      <b>使用指南：</b>本数据卡片流经过智能分词与规则匹配技术筛选，仅做内部工作调研形势学习。阅读原文按钮在新标签页中打开。
+    </div>
+  </footer>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const searchInput = document.getElementById('search-input');
+    const pills = document.querySelectorAll('.nav-pill');
+    const items = document.querySelectorAll('.timeline-item');
+    const emptyState = document.getElementById('empty-state');
+    
+    let activeCategory = 'all';
+    
+    // ================= 动态调整时间线头尾长度的 JS 函数 =================
+    function updateTimelineLines() {
+      let firstVisible = null;
+      let lastVisible = null;
+      let totalVisible = 0;
+      
+      items.forEach(item => {
+        item.classList.remove('first-visible', 'last-visible');
+        if (item.style.display !== 'none') {
+          totalVisible++;
+          if (!firstVisible) firstVisible = item;
+          lastVisible = item;
+        }
+      });
+      
+      if (firstVisible) firstVisible.classList.add('first-visible');
+      if (lastVisible) lastVisible.classList.add('last-visible');
+      
+      // 显示/隐藏空状态提示
+      if (totalVisible === 0) {
+        emptyState.style.display = 'block';
+      } else {
+        emptyState.style.display = 'none';
+      }
+    }
+
+    // ================= 过滤与检索主函数 =================
+    function applyFilter() {
+      const query = searchInput.value.toLowerCase().trim();
+      
+      items.forEach(item => {
+        const text = item.textContent.toLowerCase();
+        const category = item.getAttribute('data-category');
+        
+        const matchesSearch = text.includes(query);
+        const matchesCategory = (activeCategory === 'all' || category === activeCategory);
+        
+        if (matchesSearch && matchesCategory) {
+          item.style.display = 'flex';
+          // 重新加入渐入类以防二次显示时没有动画
+          item.classList.add('visible');
+        } else {
+          item.style.display = 'none';
+        }
+      });
+      
+      updateTimelineLines();
+    }
+
+    // 搜索输入监听
+    searchInput.addEventListener('input', applyFilter);
+
+    // 栏目导航药丸点击监听
+    pills.forEach(pill => {
+      pill.addEventListener('click', () => {
+        pills.forEach(p => p.classList.remove('active'));
+        pill.classList.add('active');
+        activeCategory = pill.getAttribute('data-target');
+        applyFilter();
+      });
+    });
+
+    // ================= 滚动渐入动画 (Scroll Reveal) =================
+    const revealObserver = new IntersectionObserver((entries, observer) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+          observer.unobserve(entry.target); // 只触发一次，体验更平滑
+        }
+      });
+    }, {
+      rootMargin: '0px 0px -8% 0px' // 当项滑入视口底部 8% 处时触发
+    });
+    
+    // 初始化线段并绑定动画观测器
+    items.forEach(item => {
+      revealObserver.observe(item);
+    });
+    
+    // 首次载入渲染线段
+    updateTimelineLines();
+  });
+</script>
+</body>
+</html>

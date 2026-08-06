@@ -84,7 +84,17 @@ function MessageBody({ role, text }: { role: HermesChatMessage["role"]; text: st
           h3: ({ children }) => <h3>{children}</h3>,
           hr: () => <hr />,
           a: ({ href, children }) => (
-            <a href={href} target="_blank" rel="noreferrer">
+            <a
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e) => {
+                if (href && window.hermesDesktop?.openExternal) {
+                  e.preventDefault();
+                  void window.hermesDesktop.openExternal(href);
+                }
+              }}
+            >
               {children}
             </a>
           ),
@@ -141,6 +151,8 @@ export interface DigestItem {
 
 function extractDigestItems(text: string): DigestItem[] {
   if (!text) return [];
+
+  // 1. Try JSON block parsing
   const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/\[\s*\{[\s\S]*\}\s*\]/);
   if (jsonMatch) {
     try {
@@ -161,6 +173,53 @@ function extractDigestItems(text: string): DigestItem[] {
       // ignore parse error
     }
   }
+
+  // 2. Try parsing Markdown articles with book titles 《...》
+  const items: DigestItem[] = [];
+  const bookTitleRegex = /《([^》]+)》\s*(?:[（(]([^）)]+)[）)])?/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = bookTitleRegex.exec(text)) !== null) {
+    const rawTitle = match[1].trim();
+    if (rawTitle.includes("info_digest_html") || rawTitle.includes("weekly_report")) {
+      continue;
+    }
+    const pubTime = match[2]?.trim() || "";
+
+    const restText = text.slice(match.index + match[0].length);
+    const nextMatch = restText.search(/《[^》]+》|###|\n---\n/);
+    const block = nextMatch !== -1 ? restText.slice(0, nextMatch) : restText;
+
+    let summary = "";
+    const summaryMatch = block.match(/(?:核心内容|主要内容|摘要|简介|内容)[:：]\s*([^\n]+)/);
+    if (summaryMatch) {
+      summary = summaryMatch[1].trim();
+    } else {
+      const firstLine = block.split("\n").map(l => l.trim()).find(l => l.length > 5 && !l.startsWith("关联度") && !l.startsWith("来源") && !l.startsWith("附注"));
+      summary = firstLine || "";
+    }
+
+    const linkMatch = block.match(/(https?:\/\/[^\s)\\]]+)/);
+    const link = linkMatch ? linkMatch[1] : "";
+
+    const orgMatch = block.match(/(?:来源|单位|发布方)[:：]\s*([^\n]+)/);
+    const organization = orgMatch ? orgMatch[1].trim() : "国家统计局";
+
+    items.push({
+      id: link || `${rawTitle}_${items.length}`,
+      title: rawTitle,
+      organization,
+      publish_time: pubTime,
+      summary,
+      link,
+      category: "工作动态",
+    });
+  }
+
+  if (items.length > 0) {
+    return items;
+  }
+
   return [];
 }
 
@@ -254,6 +313,23 @@ function App() {
     }
   });
   const [isFolderMenuOpen, setIsFolderMenuOpen] = useState(false);
+  const folderMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isFolderMenuOpen) return;
+
+    function handleClickOutside(e: MouseEvent) {
+      if (folderMenuRef.current && !folderMenuRef.current.contains(e.target as Node)) {
+        setIsFolderMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isFolderMenuOpen]);
+
   const [activeBranch, setActiveBranch] = useState<string | null>(null);
   const [activeMainTab, setActiveMainTab] = useState<"chat" | "skills">("chat");
   const [skillsSearchQuery, setSkillsSearchQuery] = useState("");
@@ -293,16 +369,30 @@ function App() {
 
   const selectedDigestList = useMemo(() => Object.values(selectedDigestItems), [selectedDigestItems]);
 
+  function formatSelectedItemsForPrompt(items: DigestItem[]): string {
+    return items
+      .map((item, idx) => {
+        let line = `${idx + 1}. 《${item.title}》`;
+        if (item.organization) line += `（${item.organization}）`;
+        if (item.publish_time) line += ` [${item.publish_time}]`;
+        if (item.summary) line += `\n   摘要：${item.summary}`;
+        return line;
+      })
+      .join("\n\n");
+  }
+
   function handleDigestActionBriefing() {
     if (selectedDigestList.length === 0) return;
-    const prompt = `请针对我勾选的这 ${selectedDigestList.length} 条统计/政务动态，进行深度分析与关键信息提炼，生成一份结构清晰的分析简报：\n\n` + JSON.stringify(selectedDigestList, null, 2);
+    const itemsText = formatSelectedItemsForPrompt(selectedDigestList);
+    const prompt = `请针对我勾选的这 ${selectedDigestList.length} 条统计/政务动态进行深度分析与核心要点提炼：\n\n${itemsText}`;
     setDraft(prompt);
     focusEditor();
   }
 
   function handleDigestActionCompare() {
-    if (selectedDigestList.length === 0) return;
-    const prompt = `请对我勾选的这 ${selectedDigestList.length} 条统计/政务动态进行交叉对比，梳理出各单位在工作重点、技术路径、建设进度上的异同与值得借鉴的亮点：\n\n` + JSON.stringify(selectedDigestList, null, 2);
+    if (selectedDigestList.length < 2) return;
+    const itemsText = formatSelectedItemsForPrompt(selectedDigestList);
+    const prompt = `请对我勾选的这 ${selectedDigestList.length} 条统计/政务动态进行交叉对比，梳理出各单位在工作重点、技术路径、建设进度上的异同与值得借鉴的亮点：\n\n${itemsText}`;
     setDraft(prompt);
     focusEditor();
   }
@@ -310,7 +400,8 @@ function App() {
   function handleDigestActionGenerateHtml() {
     if (selectedDigestList.length === 0) return;
     handleUseSkillInChat("info_digest_html");
-    const prompt = `请调用 @info_digest_html 技能，根据我勾选的这 ${selectedDigestList.length} 条动态，一键生成风格统一、可直接呈报的 HTML 参阅材料仪表盘。勾选的条目数据为：\n\n` + JSON.stringify(selectedDigestList, null, 2);
+    const itemsText = formatSelectedItemsForPrompt(selectedDigestList);
+    const prompt = `请调用 @info_digest_html 技能，根据我勾选的这 ${selectedDigestList.length} 条动态生成 HTML 参阅报表：\n\n${itemsText}`;
     setDraft(prompt);
     focusEditor();
   }
@@ -492,38 +583,78 @@ function App() {
     return () => unsubscribe?.();
   }, []);
 
-  // Load files when active thread changes
+  // Load and auto-extract files when active thread or messages change
   useEffect(() => {
-    if (state?.activeThreadId) {
-      const key = `hermes_files_${state.activeThreadId}`;
-      const existingStr = localStorage.getItem(key);
-      if (existingStr) {
-        try {
-          const files = JSON.parse(existingStr);
-          if (Array.isArray(files)) {
-            setThreadFiles(files);
-            return;
-          }
-        } catch (e) {
-          // ignore
+    const threadId = state?.activeThreadId;
+    if (!threadId) {
+      setThreadFiles([]);
+      return;
+    }
+
+    const key = `hermes_files_${threadId}`;
+    let filesFromStorage: string[] = [];
+    const existingStr = localStorage.getItem(key);
+    if (existingStr) {
+      try {
+        const parsed = JSON.parse(existingStr);
+        if (Array.isArray(parsed)) {
+          filesFromStorage = parsed;
         }
+      } catch (e) {
+        // ignore
       }
     }
-    setThreadFiles([]);
-  }, [state?.activeThreadId]);
 
-  // Append files when new ones are generated
-  useEffect(() => {
-    if (state?.activeThreadId && state?.lastGeneratedFiles && state.lastGeneratedFiles.length > 0) {
-      const key = `hermes_files_${state.activeThreadId}`;
-      setThreadFiles((prev) => {
-        const merged = Array.from(new Set([...prev, ...state.lastGeneratedFiles!]));
-        localStorage.setItem(key, JSON.stringify(merged));
-        return merged;
-      });
-      setRightSidebarOpen(true);
+    const filesFromMessages: string[] = [];
+    const activeCwd = state?.activeThread?.cwd || state?.settings?.cwd || "";
+
+    (state?.messages || []).forEach((msg) => {
+      if (msg.role !== "assistant") return;
+      const text = msg.text || "";
+
+      // 1. Extract markdown links like [xxx](file:///path/to/file)
+      const linkMatches = text.matchAll(/\[[^\]]*\]\((file:\/\/\/[^\)\s]+)\)/g);
+      for (const m of linkMatches) {
+        const fileUrl = m[1];
+        if (fileUrl) {
+          try {
+            let pathName = decodeURIComponent(fileUrl.replace(/^file:\/\/\/?/, "/"));
+            if (!pathName.startsWith("/")) pathName = "/" + pathName;
+            filesFromMessages.push(pathName);
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      // 2. Extract folder headers like 📁 产出文件 （ /Users/... ）
+      let folderPath = activeCwd;
+      const folderMatch = text.match(/📁\s*产出文件\s*[\(（]\s*([^\)）\n]+)\s*[\)）]/);
+      if (folderMatch) {
+        folderPath = folderMatch[1].trim();
+      }
+
+      // 3. Extract backticked file names ending with file extensions
+      const codeMatches = text.matchAll(/`([^`\n]+\.(html|json|csv|xlsx|pdf|docx|txt|png|jpg|jpeg|zip|py|sh|md))`/gi);
+      for (const m of codeMatches) {
+        const rawName = m[1].trim();
+        if (rawName.startsWith("/")) {
+          filesFromMessages.push(rawName);
+        } else if (folderPath) {
+          const combined = folderPath.endsWith("/") ? folderPath + rawName : folderPath + "/" + rawName;
+          filesFromMessages.push(combined);
+        }
+      }
+    });
+
+    const lastGen = state?.lastGeneratedFiles || [];
+    const allFiles = Array.from(new Set([...filesFromStorage, ...lastGen, ...filesFromMessages]));
+
+    if (allFiles.length > 0) {
+      localStorage.setItem(key, JSON.stringify(allFiles));
     }
-  }, [state?.activeThreadId, state?.lastGeneratedFiles]);
+    setThreadFiles(allFiles);
+  }, [state?.activeThreadId, state?.messages, state?.lastGeneratedFiles]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -1501,45 +1632,47 @@ function App() {
             <div ref={messagesEndRef} />
           </section>
 
-          {selectedDigestList.length > 0 && (
-            <div className="digest-floating-bar">
-              <div className="digest-bar-info">
-                <span className="digest-bar-badge">已勾选 {selectedDigestList.length} 条动态</span>
-                <button
-                  type="button"
-                  className="digest-bar-clear"
-                  onClick={handleClearSelectedDigestItems}
-                >
-                  清空勾选
-                </button>
-              </div>
-              <div className="digest-bar-actions">
-                <button
-                  type="button"
-                  className="digest-bar-btn"
-                  onClick={handleDigestActionBriefing}
-                >
-                  ✨ 提炼关键简报
-                </button>
-                <button
-                  type="button"
-                  className="digest-bar-btn"
-                  onClick={handleDigestActionCompare}
-                >
-                  🔀 交叉比对分析
-                </button>
-                <button
-                  type="button"
-                  className="digest-bar-btn primary"
-                  onClick={handleDigestActionGenerateHtml}
-                >
-                  📰 生成 HTML 报表 (@info_digest_html)
-                </button>
-              </div>
-            </div>
-          )}
-
           <footer className="composer">
+            {selectedDigestList.length > 0 && (
+              <div className="digest-composer-toolbar">
+                <div className="digest-bar-info">
+                  <span className="digest-bar-badge">已选择 {selectedDigestList.length} 项动态</span>
+                  <button
+                    type="button"
+                    className="digest-bar-clear"
+                    onClick={handleClearSelectedDigestItems}
+                  >
+                    清空
+                  </button>
+                </div>
+                <div className="digest-bar-actions">
+                  <button
+                    type="button"
+                    className="digest-bar-btn"
+                    onClick={handleDigestActionBriefing}
+                  >
+                    ✨ 提炼简报
+                  </button>
+                  <button
+                    type="button"
+                    className={`digest-bar-btn ${selectedDigestList.length < 2 ? "disabled" : ""}`}
+                    disabled={selectedDigestList.length < 2}
+                    title={selectedDigestList.length < 2 ? "至少需勾选 2 条动态才能交叉比对" : "交叉比对分析"}
+                    onClick={handleDigestActionCompare}
+                  >
+                    🔀 比对分析 {selectedDigestList.length < 2 ? "(需≥2条)" : ""}
+                  </button>
+                  <button
+                    type="button"
+                    className="digest-bar-btn primary"
+                    onClick={handleDigestActionGenerateHtml}
+                  >
+                    📰 生成 HTML 报表 (@info_digest_html)
+                  </button>
+                </div>
+              </div>
+            )}
+
             {state?.error ? (
               <div className="composer-error-banner">
                 <span>⚠️ 错误提示: <code>{state.error}</code></span>
@@ -1556,6 +1689,41 @@ function App() {
                     🔑 前往账号设置重新登录 →
                   </button>
                 ) : null}
+              </div>
+            ) : null}
+
+            {state?.pendingApproval ? (
+              <div className="composer-approval-banner">
+                <div className="composer-approval-info">
+                  <div className="composer-approval-title">
+                    <svg className="w-5 h-5 shrink-0" style={{ color: "#d97706" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                    </svg>
+                    <strong>安全指令拦截 - 等待授权许可</strong>
+                  </div>
+                  <div className="composer-approval-desc">
+                    {state.pendingApproval.description}
+                  </div>
+                  {state.pendingApproval.command ? (
+                    <pre className="composer-approval-code">{state.pendingApproval.command}</pre>
+                  ) : null}
+                </div>
+                <div className="composer-approval-actions">
+                  <button
+                    type="button"
+                    className="composer-approval-btn approve"
+                    onClick={() => void window.hermesDesktop?.respondApproval?.("approve")}
+                  >
+                    ✓ 允许执行 (/approve)
+                  </button>
+                  <button
+                    type="button"
+                    className="composer-approval-btn deny"
+                    onClick={() => void window.hermesDesktop?.respondApproval?.("deny")}
+                  >
+                    ✕ 拒绝并终止 (/deny)
+                  </button>
+                </div>
               </div>
             ) : null}
 
@@ -1609,7 +1777,7 @@ function App() {
               />
 
               <div className="trae-composer-actions-bar">
-                <div className="relative">
+                <div ref={folderMenuRef} className="relative">
                   <button
                     type="button"
                     className="trae-selector-pill"
@@ -2696,14 +2864,16 @@ function SkillsPageView({
         ) : (
           <div className="skills-card-grid">
             {filteredSkills.map((skill) => {
-              const isOfficialBuiltin = skill.name === "info_digest_html";
+              const isOfficialBuiltin = skill.name === "info_digest_html" || skill.name === "weekly_report";
 
               const skillIcons: Record<string, string> = {
                 info_digest_html: "📰",
+                weekly_report: "📊",
               };
 
               const skillDisplayNames: Record<string, string> = {
                 info_digest_html: "动态信息汇总 HTML 报表",
+                weekly_report: "统计信息化采集与周报生成器",
               };
 
               const icon = skillIcons[skill.name] || "🧩";

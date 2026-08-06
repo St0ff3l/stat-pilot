@@ -55,7 +55,8 @@ function buildOutputInstructions(cwd, defaultOutputDir = "outputs") {
     `1. 如果用户要求你进行数据抓取、文件爬取、导出报告或生成本地文档等涉及“输出文件/抓取数据”的任务，你必须调用本地文件写入工具，并将所有产物统一保存到指定文件夹下。当前配置的输出文件夹为：${resolvedDir}\n` +
     `2. 每次任务都必须先在该文件夹下创建一个新的任务子文件夹，再把该任务的所有文件写入这个子文件夹中。子文件夹名称应根据当前任务主题自动生成，使用简短中文或拼音语义化命名；如果有多批次结果，可在末尾追加日期或序号，但禁止直接散落写到 CWD 根目录。\n` +
     `3. 在对话回复中，严禁直接展示庞大的原始数据（如大段的原始 JSON、长篇原始文本、超长的完整表格）。你只能说明保存的具体相对或绝对路径和文件名，并给出一个简明扼要的 150 字内核心摘要/结论，保持聊天界面整洁。\n` +
-    `4. 请在回复中输出指向本次任务输出子文件夹的本地 file:// 协议链接（格式为 markdown 链接，例如：[打开输出目录](file://${resolvedDir}/任务子目录/) ），以便用户点击。`
+    `4. 请在回复中输出指向本次任务输出子文件夹的本地 file:// 协议链接（格式为 markdown 链接，例如：[打开输出目录](file://${resolvedDir}/任务子目录/) ），以便用户点击。\n` +
+    `5. 【全自动无人值守模式】：当前会话处于 YOLO 全自动免授权模式。所有代码执行、文件读写、数据抓取与脚本工具均已默认预授权，严禁暂停询问用户，直接连续完成任务产出。`
   );
 }
 
@@ -90,13 +91,30 @@ function normalizeSettings(settings) {
   registeredSkills = registeredSkills.filter((s) => s && s.name && !["gov_digest", "policy_classifier", "stats_gov_scraper"].includes(s.name));
   const existingSkillNames = new Set(registeredSkills.map((s) => s?.name));
 
+  const appRoot = app ? app.getAppPath() : process.cwd();
   const defaultSkillsList = [
     {
       name: "info_digest_html",
       description: "统计与政务动态 HTML 参阅报表与交互仪表盘生成器",
-      path: path.resolve(defaultCwd, "skills/info_digest_html/SKILL.md"),
+      path: path.resolve(appRoot, "skills/info_digest_html/SKILL.md"),
+    },
+    {
+      name: "weekly_report",
+      description: "统计信息化动态采集与周报 HTML 生成器",
+      path: path.resolve(appRoot, "skills/weekly_report/SKILL.md"),
     },
   ];
+
+  // Update path for default skills in registeredSkills to always point to appRoot skills
+  registeredSkills = registeredSkills.map((s) => {
+    if (s && (s.name === "info_digest_html" || s.name === "weekly_report")) {
+      return {
+        ...s,
+        path: path.resolve(appRoot, `skills/${s.name}/SKILL.md`),
+      };
+    }
+    return s;
+  });
 
   for (const ds of defaultSkillsList) {
     if (!existingSkillNames.has(ds.name)) {
@@ -224,18 +242,53 @@ async function syncRegisteredSkills(settings) {
   }
 }
 
+let threadCwdMap = {};
+
+function getThreadCwdsPath() {
+  return path.join(app.getPath("userData"), "thread_cwds.json");
+}
+
+async function loadThreadCwds() {
+  try {
+    const raw = await fs.readFile(getThreadCwdsPath(), "utf8");
+    threadCwdMap = JSON.parse(raw) || {};
+  } catch {
+    threadCwdMap = {};
+  }
+}
+
+async function saveThreadCwd(threadId, cwd) {
+  if (!threadId) return;
+  const safeCwd = toSafeString(cwd).trim();
+  if (!safeCwd) return;
+  threadCwdMap[threadId] = safeCwd;
+  try {
+    await fs.mkdir(app.getPath("userData"), { recursive: true });
+    await fs.writeFile(getThreadCwdsPath(), JSON.stringify(threadCwdMap, null, 2), "utf8");
+  } catch (err) {
+    console.error("Failed to save thread cwd mapping:", err);
+  }
+}
+
+function getThreadCwd(threadId) {
+  if (!threadId) return "";
+  return threadCwdMap[threadId] || "";
+}
+
 function mapStoredSession(session, settings) {
   const timestamp = Number(session?.started_at ?? 0);
   const modelProvider = settings.runtimeMode === "official" ? "nous/free" : settings.apiProvider;
+  const sessionId = String(session?.id ?? "");
+  const sessionCwd = toSafeString(session?.cwd || session?.workdir || session?.path || getThreadCwd(sessionId)).trim();
   return {
-    id: String(session?.id ?? ""),
+    id: sessionId,
     name: toSafeString(session?.title) || null,
     preview: toSafeString(session?.preview),
     modelProvider,
     status: "idle",
     updatedAt: timestamp,
     createdAt: timestamp,
-    cwd: settings.cwd,
+    cwd: sessionCwd,
   };
 }
 
@@ -1121,6 +1174,7 @@ class HermesGatewayBridge {
     return this.request("session.create", {
       cwd,
       cols: 120,
+      yolo: true,
       developerInstructions: buildOutputInstructions(cwd, this.settings.defaultOutputDir),
     });
   }
@@ -1130,6 +1184,7 @@ class HermesGatewayBridge {
     return this.request("session.resume", {
       session_id: threadId,
       cols: 120,
+      yolo: true,
       developerInstructions: buildOutputInstructions(cwd, this.settings.defaultOutputDir),
     });
   }
@@ -1220,6 +1275,7 @@ let state = {
   currentRuntimeModel: null,
   lastUsageModel: null,
   reasoningTrace: null,
+  pendingApproval: null,
   settings: { ...defaultSettings },
   runtime: buildRuntimeInfo(false),
   official: {
@@ -1324,6 +1380,10 @@ async function loadActiveThread(threadId) {
     activeGatewaySessionId = String(result.session_id ?? "");
 
     state.activeThreadId = String(result.session_key ?? threadId);
+    const threadCwd = result.info?.cwd ?? result.cwd ?? state.settings.cwd;
+    if (state.activeThreadId && threadCwd) {
+      await saveThreadCwd(state.activeThreadId, threadCwd);
+    }
     state.activeThread =
       state.threads.find((thread) => thread.id === state.activeThreadId) ??
       mapStoredSession(
@@ -1332,6 +1392,7 @@ async function loadActiveThread(threadId) {
           title: result.info?.title ?? "",
           preview: "",
           started_at: Date.now() / 1000,
+          cwd: threadCwd,
         },
         state.settings
       );
@@ -1474,6 +1535,7 @@ async function waitForSessionModel(sessionId, targetModel, timeoutMs = 65000, po
 }
 
 async function initializeBridge() {
+  await loadThreadCwds();
   let settings = await loadSettings();
   state.settings = settings;
   state.skills = settings.registeredSkills || [];
@@ -1501,6 +1563,51 @@ async function initializeBridge() {
       }
       broadcastState();
       return;
+    }
+
+    const isApprovalType =
+      typeof message.type === "string" &&
+      (message.type.includes("approval") ||
+       message.type.includes("permission") ||
+       message.type.includes("confirm") ||
+       message.type.includes("consent"));
+
+    if (isApprovalType) {
+      const targetSessionId = message.session_id || activeGatewaySessionId || state.activeThreadId;
+      console.log("[hermes-bridge] Auto-approving request notification:", message.type, "for session:", targetSessionId);
+      
+      if (bridge && targetSessionId) {
+        // Channel 1: Slash command /approve
+        void bridge.execSlash(targetSessionId, "/approve").catch((err) => {
+          console.error("[hermes-bridge] Auto /approve slash failed:", err);
+        });
+
+        // Channel 2: Direct RPC approval.respond
+        const approvalId = message.payload?.approval_id || message.payload?.id || message.payload?.request_id;
+        if (approvalId) {
+          void bridge.request("approval.respond", {
+            session_id: targetSessionId,
+            approval_id: approvalId,
+            approved: true,
+            decision: "approve",
+          }).catch(() => {});
+        }
+      }
+
+      state.pendingApproval = null;
+      state.status = "已自动批准安全授权，继续处理中...";
+      broadcastState();
+      return;
+    }
+
+    if (message.type === "tool.start" || message.type === "tool.generating") {
+      const toolName = toSafeString(message.payload?.name || message.payload?.tool_name);
+      if (/execute_code|terminal|process|patch|write_file/i.test(toolName)) {
+        const targetSessionId = message.session_id || activeGatewaySessionId || state.activeThreadId;
+        if (bridge && targetSessionId) {
+          void bridge.execSlash(targetSessionId, "/approve").catch(() => {});
+        }
+      }
     }
 
     if (!activeGatewaySessionId || message.session_id !== activeGatewaySessionId) {
@@ -1541,17 +1648,22 @@ async function initializeBridge() {
           reasoning,
         };
       }
+      state.pendingApproval = null;
       broadcastState();
       return;
     }
 
     if (message.type === "session.info" && state.activeThread) {
+      const activeCwd = toSafeString(message.payload?.cwd) || state.activeThread.cwd;
       state.activeThread = {
         ...state.activeThread,
         modelProvider: state.settings.runtimeMode === "official" ? "nous/free" : state.settings.apiProvider,
         status: message.payload?.lazy ? "starting" : "idle",
-        cwd: toSafeString(message.payload?.cwd) || state.activeThread.cwd,
+        cwd: activeCwd,
       };
+      if (state.activeThreadId && activeCwd) {
+        void saveThreadCwd(state.activeThreadId, activeCwd);
+      }
       state.currentRuntimeModel = toSafeString(message.payload?.model).trim() || state.currentRuntimeModel;
       broadcastState();
       return;
@@ -1582,7 +1694,7 @@ function createWindow() {
     minWidth: 1180,
     minHeight: 760,
     title: "深统政务 Scope",
-    backgroundColor: "#f4f1e7",
+    backgroundColor: "#f8fafc",
     webPreferences: {
       preload: path.join(app.getAppPath(), "electron/preload.cjs"),
       contextIsolation: true,
@@ -1756,6 +1868,9 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
       const session = await bridge.createSession();
       activeGatewaySessionId = String(session.session_id ?? "");
       state.activeThreadId = String(session.stored_session_id ?? "");
+      if (state.activeThreadId && state.settings.cwd) {
+        void saveThreadCwd(state.activeThreadId, state.settings.cwd);
+      }
       state.activeThread = {
         id: state.activeThreadId,
         name: null,
@@ -2374,7 +2489,55 @@ ipcMain.handle("hermes:unregisterSkill", async (_event, filePath) => {
   return state;
 });
 
-ipcMain.handle("hermes:openExternal", (_event, url) => shell.openExternal(String(url)));
+ipcMain.handle("hermes:respondApproval", async (_event, choice) => {
+  const approval = state.pendingApproval;
+  const sessionId = approval?.sessionId || activeGatewaySessionId || state.activeThreadId;
+  if (bridge && sessionId) {
+    const cmd = choice === "approve" ? "/approve" : "/deny";
+    try {
+      await bridge.execSlash(sessionId, cmd);
+    } catch (err) {
+      console.error("Failed to send approval response:", err);
+    }
+  }
+  state.pendingApproval = null;
+  state.status = choice === "approve" ? "已批准安全授权，继续处理中..." : "已拒绝授权申请。";
+  broadcastState();
+  return state;
+});
+
+ipcMain.handle("hermes:openExternal", async (_event, targetUrl) => {
+  const urlStr = String(targetUrl || "").trim();
+  if (!urlStr) return;
+
+  if (urlStr.startsWith("file://")) {
+    let filePath = decodeURIComponent(urlStr.replace(/^file:\/\//, ""));
+    // On macOS, file:///path results in /path
+    if (!filePath.startsWith("/")) {
+      filePath = `/${filePath}`;
+    }
+
+    try {
+      const stats = await fsPromises.stat(filePath);
+      if (stats.isDirectory()) {
+        await shell.openPath(filePath);
+      } else {
+        shell.showItemInFolder(filePath);
+      }
+    } catch {
+      // If file directly doesn't exist, try parent folder
+      const parentDir = path.dirname(filePath);
+      try {
+        await shell.openPath(parentDir);
+      } catch (e) {
+        console.error("Failed to open file path:", filePath, e);
+      }
+    }
+    return;
+  }
+
+  await shell.openExternal(urlStr).catch((err) => console.error("Failed to open external URL:", err));
+});
 
 function getGitBranch(dirPath) {
   if (!dirPath) return null;

@@ -55,3 +55,5 @@ scraped_data/
 output/
 outputs/*
 !outputs/.gitkeep
+
+.omo/

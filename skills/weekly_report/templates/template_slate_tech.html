@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>统计信息化与数字化转型监测仪表盘 (现代板岩版)</title>
+<style>
+  :root {
+    --bg: #f8fafc;
+    --surface: #ffffff;
+    --ink: #0f172a;
+    --ink2: #334155;
+    --muted: #64748b;
+    --faint: #94a3b8;
+    --line: rgba(15, 23, 42, 0.06);
+    --line2: rgba(15, 23, 42, 0.12);
+    
+    /* 核心品牌色 */
+    --brand: #1e3a8a;
+    --brand-glow: rgba(30, 58, 138, 0.15);
+    
+    /* 栏目分类色 */
+    --c-policy: #2563eb;
+    --c-policy-bg: #eff6ff;
+    --c-meet: #059669;
+    --c-meet-bg: #ecfdf5;
+    --c-practice: #d97706;
+    --c-practice-bg: #fffbeb;
+    --c-data: #e11d48;
+    --c-data-bg: #fff1f2;
+    --c-local: #7c3aed;
+    --c-local-bg: #f5f3ff;
+    
+    --r-lg: 16px;
+    --r-md: 12px;
+    --r-sm: 8px;
+    
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --serif: "Noto Serif SC", "Songti SC", Georgia, serif;
+    --mono: "IBM Plex Mono", Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    background: var(--bg);
+    /* 高级光晕背景效果 */
+    background-image: 
+      radial-gradient(1000px 400px at 85% -5%, rgba(37, 99, 235, 0.08), transparent 50%),
+      radial-gradient(800px 350px at 15% 10%, rgba(99, 102, 241, 0.05), transparent 45%);
+    background-attachment: fixed;
+  }
+
+  a { color: inherit; text-decoration: none; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+
+  /* ===== HEADER (HERO) ===== */
+  .hero { padding: 60px 0 32px; position: relative; }
+  .brand { display: inline-flex; align-items: center; gap: 10px; margin-bottom: 24px; }
+  .brand-mark {
+    width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+    background: linear-gradient(135deg, #3b82f6, #1e3a8a); color: #fff; font-weight: 800;
+    font-family: var(--serif); font-size: 18px; box-shadow: 0 8px 20px rgba(37, 99, 235, 0.25);
+  }
+  .brand-tx { font-weight: 700; letter-spacing: 0.5px; font-size: 15px; color: var(--ink); }
+  .brand-tx span { color: var(--muted); font-weight: 400; margin-left: 8px; font-size: 13.5px; }
+  
+  .hero h1 { 
+    font-family: var(--serif); font-weight: 700; font-size: clamp(28px, 4vw, 42px);
+    line-height: 1.2; letter-spacing: -0.5px; color: var(--ink); 
+  }
+  .hero h1 em { 
+    font-style: normal; background: linear-gradient(120deg, var(--c-policy), var(--brand));
+    -webkit-background-clip: text; background-clip: text; color: transparent; 
+  }
+  
+  .hero-meta {
+    margin-top: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  }
+  .pill { 
+    display: inline-flex; align-items: center; gap: 8px; background: var(--surface);
+    border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; font-size: 13.5px;
+    color: var(--ink2); box-shadow: 0 1px 3px rgba(15,23,42,0.02);
+  }
+  .pill b { color: var(--c-policy); font-family: var(--mono); font-size: 15px; }
+  .dotmark { width: 8px; height: 8px; border-radius: 50%; background: #3b82f6; display: inline-block; }
+
+  /* ===== KPI STATS ===== */
+  .stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; margin-top: 32px; }
+  .stat { 
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md);
+    padding: 20px 14px; text-align: center; box-shadow: 0 2px 8px -2px rgba(15,23,42,0.03);
+    transition: transform 0.2s, border-color 0.2s;
+  }
+  .stat:hover { transform: translateY(-2px); border-color: var(--line2); }
+  .stat-n { font-family: var(--mono); font-weight: 700; font-size: 32px; line-height: 1; margin-bottom: 8px; }
+  .stat-l { font-size: 12.5px; color: var(--muted); font-weight: 500; }
+
+  /* ===== STICKY NAV & SEARCH ===== */
+  .nav-bar { 
+    position: sticky; top: 0; z-index: 100; margin-top: 24px; padding: 12px 0;
+    background: rgba(248, 250, 252, 0.85); backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-in { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .nav-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .nav-chip { 
+    display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+    font-size: 13.5px; font-weight: 500; color: var(--ink2); transition: all 0.2s ease; cursor: pointer;
+  }
+  .nav-chip:hover { border-color: var(--line2); transform: translateY(-1px); }
+  .nav-chip.active {
+    background: var(--ink); color: #fff; border-color: var(--ink);
+  }
+  .nav-chip-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .nav-chip-count {
+    font-family: var(--mono); font-size: 11.5px; background: rgba(15,23,42,0.06); 
+    color: var(--muted); border-radius: 999px; padding: 1px 6px; margin-left: 4px;
+  }
+  .nav-chip.active .nav-chip-count {
+    background: rgba(255,255,255,0.2); color: #fff;
+  }
+
+  /* 搜索框设计 */
+  .search-box { position: relative; min-width: 240px; display: flex; align-items: center; }
+  .search-box input {
+    width: 100%; padding: 8px 14px 8px 36px; border-radius: 999px; border: 1px solid var(--line);
+    background: var(--surface); font-size: 13.5px; color: var(--ink); outline: none;
+    transition: all 0.2s;
+  }
+  .search-box input:focus { border-color: var(--muted); box-shadow: 0 0 0 3px rgba(15,23,42,0.05); }
+  .search-icon {
+    position: absolute; left: 14px; color: var(--faint); pointer-events: none;
+    display: flex; align-items: center;
+  }
+
+  /* ===== MAIN CONTENT SECTIONS ===== */
+  main { padding: 32px 0; }
+  .sec { margin-bottom: 48px; scroll-margin-top: 90px; }
+  .sec-head { 
+    display: flex; align-items: center; gap: 16px; padding-bottom: 14px;
+    border-bottom: 2px solid var(--ac); margin-bottom: 24px;
+  }
+  .sec-idx { 
+    font-family: var(--mono); font-weight: 700; font-size: 36px; line-height: 1;
+    color: var(--ac); opacity: 0.95; 
+  }
+  .sec-meta { flex: 1; }
+  .sec-title { font-family: var(--serif); font-weight: 700; font-size: 22px; color: var(--ink); }
+  .sec-en { font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+  .sec-ct { 
+    font-family: var(--mono); font-size: 12px; font-weight: 600; color: #fff; background: var(--ac);
+    padding: 4px 12px; border-radius: 999px; 
+  }
+  .sec-desc { font-size: 13.5px; color: var(--muted); margin: -16px 0 20px; line-height: 1.6; }
+
+  /* ===== GRID & CARD ===== */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; }
+  .card { 
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
+    padding: 22px 20px 18px; display: flex; flex-direction: column; position: relative;
+    overflow: hidden; transition: transform 0.25s, box-shadow 0.25s, border-color 0.25s;
+  }
+  .card::before { 
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+    background: var(--ac); opacity: 0.9; 
+  }
+  .card:hover { 
+    transform: translateY(-4px); 
+    box-shadow: 0 16px 36px -4px rgba(15, 23, 42, 0.08);
+    border-color: var(--ac);
+  }
+  .card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .num { 
+    font-family: var(--mono); font-weight: 700; font-size: 14px; color: var(--ac);
+    background: var(--tint); border-radius: 6px; padding: 2px 8px; 
+  }
+  .date { font-size: 12.5px; color: var(--muted); font-weight: 500; }
+  .card-title { font-size: 16px; font-weight: 600; line-height: 1.45; color: var(--ink); margin-bottom: 12px; }
+  .card-title a { transition: color 0.15s; }
+  .card-title a:hover { color: var(--ac); }
+  .card-sum { font-size: 13.5px; color: var(--ink2); line-height: 1.65; flex: 1; margin-bottom: 16px; }
+  
+  .card-foot { 
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding-top: 14px; border-top: 1px solid var(--line); 
+  }
+  .chip { 
+    font-size: 12px; font-weight: 500; color: var(--ac); background: var(--tint); border-radius: 999px;
+    padding: 4px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;
+  }
+  .go { 
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 13.5px; font-weight: 600; color: var(--ac); white-space: nowrap; transition: opacity 0.15s;
+  }
+  .go:hover { opacity: 0.8; }
+  .go-arr { transition: transform 0.2s; }
+  .go:hover .go-arr { transform: translateX(2px); }
+
+  .empty { 
+    grid-column: 1 / -1; text-align: center; color: var(--faint); padding: 40px;
+    background: var(--surface); border: 1px dashed var(--line2); border-radius: var(--r-md);
+    font-size: 14px;
+  }
+
+  /* ===== FOOTER ===== */
+  footer { border-top: 1px solid var(--line); margin-top: 40px; padding: 40px 0 60px; color: var(--muted); }
+  .foot-h { font-family: var(--serif); font-size: 18px; color: var(--ink); margin-bottom: 8px; font-weight: 700; }
+  .foot-sum { font-size: 14px; margin-bottom: 24px; }
+  .foot-sum b { color: var(--brand); font-family: var(--mono); }
+  
+  .src-title { font-size: 13px; font-weight: 600; color: var(--ink2); margin-bottom: 12px; }
+  .src-list { display: flex; flex-wrap: wrap; gap: 8px; }
+  .src-chip { 
+    font-size: 12px; color: var(--muted); background: var(--surface);
+    border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px;
+    transition: all 0.2s;
+  }
+  .src-chip:hover { border-color: var(--line2); color: var(--ink2); }
+  .src-chip.dim { opacity: 0.4; }
+  
+  .foot-note { 
+    margin-top: 28px; font-size: 12.5px; color: var(--faint); line-height: 1.8; max-width: 900px;
+  }
+  .foot-note b { color: var(--ink2); }
+
+  /* ===== RESPONSIVE ===== */
+  @media (max-width: 960px) {
+    .stats { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .stat { padding: 16px 10px; }
+    .stat-n { font-size: 26px; }
+  }
+  @media (max-width: 640px) {
+    .hero { padding: 40px 0 20px; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .nav-in { flex-direction: column; align-items: stretch; }
+    .search-box { width: 100%; }
+    .sec-idx { font-size: 30px; }
+    .sec-title { font-size: 18px; }
+    .chip { max-width: 130px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="brand">
+      <div class="brand-mark">统</div>
+      <div class="brand-tx">统计信息化动态监测<span>政务数据 · 数字转型专题</span></div>
+    </div>
+    <h1>统计信息化与<em>数字化转型</em>动态监测</h1>
+    <div class="hero-meta">
+      <span class="pill"><span class="dotmark"></span>2026年7月10日</span>
+      <span class="pill">共 <b>9</b> 条动态</span>
+      <span class="pill">覆盖 18 家统计局官网"工作动态"</span>
+    </div>
+    
+    <!-- KPI 统计栏 -->
+    <div class="stats">
+      <div class="stat"><div class="stat-n" style="color:var(--brand)">9</div><div class="stat-l">全部动态</div></div>
+      <div class="stat"><div class="stat-n" style="color:var(--c-policy)">0</div><div class="stat-l">政策文件与规划</div></div>
+      <div class="stat"><div class="stat-n" style="color:var(--c-meet)">0</div><div class="stat-l">领导活动与会议</div></div>
+      <div class="stat"><div class="stat-n" style="color:var(--c-practice)">4</div><div class="stat-l">数字化转型实践</div></div>
+      <div class="stat"><div class="stat-n" style="color:var(--c-data)">4</div><div class="stat-l">数据要素与共享</div></div>
+      <div class="stat"><div class="stat-n" style="color:var(--c-local)">1</div><div class="stat-l">地方动态与交流</div></div>
+    </div>
+  </div>
+</header>
+
+<!-- 置顶导航与搜索过滤区 -->
+<nav class="nav-bar">
+  <div class="wrap">
+    <div class="nav-in">
+      <div class="nav-chips">
+        <div class="nav-chip active" data-target="all">
+          全部栏目<span class="nav-chip-count">9</span>
+        </div>
+        <div class="nav-chip" data-target="sec-policy">
+          <span class="nav-chip-dot" style="background:var(--c-policy)"></span>
+          1. 政策规划<span class="nav-chip-count">0</span>
+        </div>
+        <div class="nav-chip" data-target="sec-meet">
+          <span class="nav-chip-dot" style="background:var(--c-meet)"></span>
+          2. 会议调研<span class="nav-chip-count">0</span>
+        </div>
+        <div class="nav-chip" data-target="sec-practice">
+          <span class="nav-chip-dot" style="background:var(--c-practice)"></span>
+          3. 转型实践<span class="nav-chip-count">4</span>
+        </div>
+        <div class="nav-chip" data-target="sec-data">
+          <span class="nav-chip-dot" style="background:var(--c-data)"></span>
+          4. 数据共享<span class="nav-chip-count">4</span>
+        </div>
+        <div class="nav-chip" data-target="sec-local">
+          <span class="nav-chip-dot" style="background:var(--c-local)"></span>
+          5. 地方动态<span class="nav-chip-count">1</span>
+        </div>
+      </div>
+      
+      <!-- 搜索框 -->
+      <div class="search-box">
+        <span class="search-icon">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        </span>
+        <input type="text" id="search-input" placeholder="输入关键词检索动态...">
+      </div>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap">
+  <main>
+    <!-- ==================== 01 政策文件与规划 ==================== -->
+    <section class="sec" id="sec-policy" style="--ac: var(--c-policy); --acfg: var(--c-policy); --tint: var(--c-policy-bg)">
+      <div class="sec-head">
+        <span class="sec-idx">01</span>
+        <div class="sec-meta">
+          <h2 class="sec-title">政策文件与规划</h2>
+          <span class="sec-en">Policy &amp; Planning</span>
+        </div>
+        <span class="sec-ct">0 条</span>
+      </div>
+      <div class="sec-desc">各级政府出台的数字化政策、统计改革标准与中长期信息化规划方案。</div>
+      <div class="grid">
+        <div class="empty">本监测周期内未发现相关动态。</div>
+      </div>
+    </section>
+
+    <!-- ==================== 02 领导活动与会议 ==================== -->
+    <section class="sec" id="sec-meet" style="--ac: var(--c-meet); --acfg: var(--c-meet); --tint: var(--c-meet-bg)">
+      <div class="sec-head">
+        <span class="sec-idx">02</span>
+        <div class="sec-meta">
+          <h2 class="sec-title">领导活动与会议</h2>
+          <span class="sec-en">Meetings &amp; Leadership</span>
+        </div>
+        <span class="sec-ct">0 条</span>
+      </div>
+      <div class="sec-desc">主要领导调研统计信息化工作、专项推进会、数字政府合作签约等。</div>
+      <div class="grid">
+        <div class="empty">本监测周期内未发现相关动态。</div>
+      </div>
+    </section>
+
+    <!-- ==================== 03 数字化转型实践 ==================== -->
+    <section class="sec" id="sec-practice" style="--ac: var(--c-practice); --acfg: var(--c-practice); --tint: var(--c-practice-bg)">
+      <div class="sec-head">
+        <span class="sec-idx">03</span>
+        <div class="sec-meta">
+          <h2 class="sec-title">数字化转型实践</h2>
+          <span class="sec-en">Digital Transformation Practice</span>
+        </div>
+        <span class="sec-ct">4 条</span>
+      </div>
+      <div class="sec-desc">统计业务流程再造、云平台部署、前沿科技（如AI智能体）与统计业务的融合。</div>
+      <div class="grid">
+        
+        <article class="card" style="--ac: var(--c-practice); --tint: var(--c-practice-bg)">
+          <div class="card-top">
+            <span class="num">01</span>
+            <span class="date">2026年7月1日</span>
+          </div>
+          <h3 class="card-title">
+            <a href="https://www.stats.gov.cn/xw/tjxw/tzgg/202607/t20260701_1964049.html" target="_blank" rel="noopener noreferrer">关于2026年第二季度政府网站与政务新媒体检查情况的通报</a>
+          </h3>
+          <p class="card-sum">通报第二季度政府网站与政务新媒体检查结果，重点指出加强日常监管、提升平台规范化水平，保障信息公开和交互的稳定性。</p>
+          <div class="card-foot">
+            <span class="chip" title="国家统计局">国家统计局</span>
+            <a class="go" href="https://www.stats.gov.cn/xw/tjxw/tzgg/202607/t20260701_1964049.html" target="_blank" rel="noopener noreferrer">
+              原文
+              <svg class="go-arr" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </a>
+          </div>
+        </article>
+
+        <article class="card" style="--ac: var(--c-practice); --tint: var(--c-practice-bg)">
+          <div class="card-top">
+            <span class="num">02</span>
+            <span class="date">2026年5月25日</span>
+          </div>
+          <h3 class="card-title">
+            <a href="https://tjj.cq.gov.cn/zwxx_233/bmdt/202605/t20260525_15700303.html" target="_blank" rel="noopener noreferrer">市统计局全力推进统计政务新媒体建设</a>
+          </h3>
+          <p class="card-sum">重庆市局多措并举推进官方新媒体矩阵，旨在通过数字化传播手段拓展政务公开阵地，提供更生动的统计图解和科普内容。</p>
+          <div class="card-foot">
+            <span class="chip" title="重庆市统计局">重庆市统计局</span>
+            <a class="go" href="https://tjj.cq.gov.cn/zwxx_233/bmdt/202605/t20260525_15700303.html" target="_blank" rel="noopener noreferrer">
+              原文
+              <svg class="go-arr" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </a>
+          </div>
+        </article>
+
+        <article class="card" style="--ac: var(--c-practice); --tint: var(--c-practice-bg)">
+          <div class="card-top">
+            <span class="num">03</span>
+            <span class="date">2026年6月1日</span>
+          </div>
+          <h3 class="card-title">
+            <a href="http://tjj.gz.gov.cn/news_newtjdt/gzdt/content/post_10835943.html" target="_blank" rel="noopener noreferrer">解码AI智能体新赛道 提升统计前沿感知力</a>
+          </h3>
+          <p class="card-sum">广州市统计局举办2026年首期大讲堂，特邀人工智能专家围绕大语言模型、智能代理开发等方向为干部员工做技术赋能专题授课。</p>
+          <div class="card-foot">
+            <span class="chip" title="广州市统计局">广州市统计局</span>
+            <a class="go" href="http://tjj.gz.gov.cn/news_newtjdt/gzdt/content/post_10835943.html" target="_blank" rel="noopener noreferrer">
+              原文
+              <svg class="go-arr" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </a>
+          </div>
+        </article>
+
+        <article class="card" style="--ac: var(--c-practice); --tint: var(--c-practice-bg)">
+          <div class="card-top">
+            <span class="num">04</span>
+            <span class="date">2026年6月4日</span>
+          </div>
+          <h3 class="card-title">
+            <a href="https://stats.tj.gov.cn/sy_51953/202606/t20260604_7312061.html" target="_blank" rel="noopener noreferrer">科技赋能创未来——市统计局赴2026世界智能产业博览会开展党日活动</a>
+          </h3>
+          <p class="card-sum">天津局党员干部实地观摩世界智能大会，深入了解智能传感器、大数据安全防护及数字孪生平台在政务工作中的前沿应用场景。</p>
+          <div class="card-foot">
+            <span class="chip" title="天津市统计局">天津市统计局</span>
+            <a class="go" href="https://stats.tj.gov.cn/sy_51953/202606/t20260604_7312061.html" target="_blank" rel="noopener noreferrer">
+              原文
+              <svg class="go-arr" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </a>
+          </div>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- ==================== 04 数据要素与共享 ==================== -->
+    <section class="sec" id="sec-data" style="--ac: var(--c-data); --acfg: var(--c-data); --tint: var(--c-data-bg)">
+      <div class="sec-head">
+        <span class="sec-idx">04</span>
+        <div class="sec-meta">
+          <h2 class="sec-title">数据要素与共享</h2>
+          <span class="sec-en">Data Factor &amp; Sharing</span>
+        </div>
+        <span class="sec-ct">4 条</span>
+      </div>
+      <div class="sec-desc">跨部门数据汇聚、全国五普/四农普数据互通、企业数据资产入表及试点测算。</div>
+      <div class="grid">
+        
+        <article class="card" style="--ac: var(--c-data); --tint: var(--c-data-bg)">
+          <div class="card-top">
+            <span class="num">05</span>
+            <span class="date">2026年7月1日</span>
+          </div>
+          <h3 class="card-title">
+            <a href="http://stats.gd.gov.cn/gdys/content/post_4920019.html" target="_blank" rel="noopener noreferrer">聚力数据共享 夯实普查根基——珠海市农普办召开数据共享协调会议</a>
+          </h3>
+          <p class="card-sum">珠海市农普办联合交通、农业等部门召开专题协调会议，商讨通过省数据共享平台打通数据壁垒，提高农普清查阶段底册精确度。</p>
+          <div class="card-foot">
+            <span class="chip" title="广东省统计局">广东省统计局</span>
+            <a class="go" href="http://stats.gd.gov.cn/gdys/content/post_4920019.html" target="_blank" rel="noopener noreferrer">
+              原文
+              <svg class="go-arr" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </a>
+          </div>
+        </article>
+
+        <article class="card" style="--ac: var(--c-data); --tint: var(--c-data-bg)">
+          <div class="card-top">
+            <span class="num">06</span>
+            <span class="date">2026年6月30日</span>
+          </div>
+          <h3 class="card-title">
+            <a href="http://stats.gd.gov.cn/gdys/content/post_4920017.html" target="_blank" rel="noopener noreferrer">湛江市局扎实推进企业数据支出统计试点工作</a>
+          </h3>
+          <p class="card-sum">湛江市作为试点地区，重点推进企业数据支出成本归集方法验证，探索解决“数据要素如何衡量与资本化入账”的核心难题。</p>
+          <div class="card-foot">
+            <span class="chip" title="广东省统计局">广东省统计局</span>
+            <a class="go" href="http://stats.gd.gov.cn/gdys/content/post_4920017.html" target="_blank" rel="noopener noreferrer">
+              原文
+              <svg class="go-arr" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </a>
+          </div>
+        </article>
+
+        <article class="card" style="--ac: var(--c-data); --tint: var(--c-data-bg)">
+          <div class="card-top">
+            <span class="num">07</span>
+            <span class="date">2026年6月25日</span>
+          </div>
+          <h3 class="card-title">
+            <a href="http://stats.gd.gov.cn/gdys/content/post_4916553.html" target="_blank" rel="noopener noreferrer">部门联动共享数据 抓实农普清查摸底</a>
+          </h3>
+          <p class="card-sum">韶关市农普办实地走访市场监管、税务等单位，对接多维度行政登记底册，构建一站式农普摸底共享数据网。</p>
+          <div class="card-foot">
+            <span class="chip" title="广东省统计局">广东省统计局</span>
+            <a class="go" href="http://stats.gd.gov.cn/gdys/content/post_4916553.html" target="_blank" rel="noopener noreferrer">
+              原文
+              <svg class="go-arr" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </a>
+          </div>
+        </article>
+
+        <article class="card" style="--ac: var(--c-data); --tint: var(--c-data-bg)">
+          <div class="card-top">
+            <span class="num">08</span>
+            <span class="date">2026年6月18日</span>
+          </div>
+          <h3 class="card-title">
+            <a href="http://stats.gd.gov.cn/gzys/content/post_4913248.html" target="_blank" rel="noopener noreferrer">聚焦统计改革 赋能创新发展——省局举办全省企业数据支出统计试点调查培训班</a>
+          </h3>
+          <p class="card-sum">广东省局在全省范围内铺开试点业务培训，围绕统计口径、数据采集路径与数据安全审计规则进行技术交底和落地指导。</p>
+          <div class="card-foot">
+            <span class="chip" title="广东省统计局">广东省统计局</span>
+            <a class="go" href="http://stats.gd.gov.cn/gzys/content/post_4913248.html" target="_blank" rel="noopener noreferrer">
+              原文
+              <svg class="go-arr" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </a>
+          </div>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- ==================== 05 地方动态与交流 ==================== -->
+    <section class="sec" id="sec-local" style="--ac: var(--c-local); --acfg: var(--c-local); --tint: var(--c-local-bg)">
+      <div class="sec-head">
+        <span class="sec-idx">05</span>
+        <div class="sec-meta">
+          <h2 class="sec-title">地方动态与交流</h2>
+          <span class="sec-en">Local Dynamics &amp; Exchange</span>
+        </div>
+        <span class="sec-ct">1 条</span>
+      </div>
+      <div class="sec-desc">地市及县区统计局工作互访、基层技术创新试点经验推广。</div>
+      <div class="grid">
+        
+        <article class="card" style="--ac: var(--c-local); --tint: var(--c-local-bg)">
+          <div class="card-top">
+            <span class="num">09</span>
+            <span class="date">2026年7月6日</span>
+          </div>
+          <h3 class="card-title">
+            <a href="https://tjj.sh.gov.cn/tjxw/20260706/475e0bb7a92142798529c4ae9dca0369.html" target="_blank" rel="noopener noreferrer">辽宁省统计局、数据和政务服务局一行来沪调研交流</a>
+          </h3>
+          <p class="card-sum">两地围绕“跨省数字政务一体化”和“统计大数据宏观经济趋势推算”等高价值课题展开多轮务实会谈，达成深度共享意向。</p>
+          <div class="card-foot">
+            <span class="chip" title="上海市统计局">上海市统计局</span>
+            <a class="go" href="https://tjj.sh.gov.cn/tjxw/20260706/475e0bb7a92142798529c4ae9dca0369.html" target="_blank" rel="noopener noreferrer">
+              原文
+              <svg class="go-arr" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </a>
+          </div>
+        </article>
+
+      </div>
+    </section>
+  </main>
+
+  <!-- 页脚 -->
+  <footer>
+    <div class="foot-h">统计信息化动态监测仪表盘</div>
+    <div class="foot-sum">本期共监测收录 <b>9</b> 条核心动态，覆盖政策、会议、实践、共享、地方五大业务板块。</div>
+    
+    <div class="src-title">监测数据源清单（已覆盖 18 家省部级统计官网“工作动态”与“新闻中心”栏目）</div>
+    <div class="src-list">
+      <span class="src-chip">国家统计局</span>
+      <span class="src-chip dim">北京市统计局</span>
+      <span class="src-chip">上海市统计局</span>
+      <span class="src-chip">天津市统计局</span>
+      <span class="src-chip">重庆市统计局</span>
+      <span class="src-chip">广东省统计局</span>
+      <span class="src-chip dim">浙江省统计局</span>
+      <span class="src-chip dim">江苏省统计局</span>
+      <span class="src-chip">广州市统计局</span>
+      <span class="src-chip dim">杭州市统计局</span>
+      <span class="src-chip dim">南京市统计局</span>
+      <span class="src-chip dim">成都市统计局</span>
+      <span class="src-chip dim">武汉市统计局</span>
+      <span class="src-chip dim">青岛市统计局</span>
+      <span class="src-chip dim">厦门市统计局</span>
+      <span class="src-chip dim">宁波市统计局</span>
+      <span class="src-chip dim">苏州市统计局</span>
+    </div>
+    
+    <div class="foot-note">
+      <b>使用说明：</b>本仪表盘数据抓取自各级统计局官网，经由预设规则和关键词技术过滤后生成。点击“原文”链接即可在新窗口打开源网站页面查看完整内容。<br>
+      <b>免责声明：</b>数据版权归原统计局官方所有，本监测仅作内部工作交流及形势跟踪使用。
+    </div>
+  </footer>
+</div>
+
+<script>
+  // ================= 搜索与筛选交互 JS =================
+  document.addEventListener('DOMContentLoaded', () => {
+    const searchInput = document.getElementById('search-input');
+    const chips = document.querySelectorAll('.nav-chip');
+    const sections = document.querySelectorAll('.sec');
+    
+    let activeCategory = 'all';
+    
+    // 过滤主函数
+    function applyFilter() {
+      const query = searchInput.value.toLowerCase().trim();
+      
+      sections.forEach(sec => {
+        const secId = sec.id;
+        const secCards = sec.querySelectorAll('.card');
+        let visibleCountInSec = 0;
+        
+        secCards.forEach(card => {
+          const cardText = card.textContent.toLowerCase();
+          const matchesSearch = cardText.includes(query);
+          
+          if (matchesSearch) {
+            card.style.display = '';
+            visibleCountInSec++;
+          } else {
+            card.style.display = 'none';
+          }
+        });
+        
+        // 处理 Empty 占位状态
+        let emptyMsg = sec.querySelector('.empty-message');
+        if (visibleCountInSec === 0 && secCards.length > 0) {
+          if (!emptyMsg) {
+            emptyMsg = document.createElement('div');
+            emptyMsg.className = 'empty empty-message';
+            emptyMsg.textContent = '该栏目下没有找到匹配的动态内容。';
+            sec.querySelector('.grid').appendChild(emptyMsg);
+          }
+        } else if (emptyMsg) {
+          emptyMsg.remove();
+        }
+        
+        // 栏目过滤判定
+        if (activeCategory === 'all' || secId === activeCategory) {
+          sec.style.display = '';
+        } else {
+          sec.style.display = 'none';
+        }
+      });
+    }
+
+    // 搜索输入监听
+    searchInput.addEventListener('input', applyFilter);
+
+    // 栏目导航点击监听
+    chips.forEach(chip => {
+      chip.addEventListener('click', () => {
+        chips.forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        activeCategory = chip.getAttribute('data-target');
+        applyFilter();
+        
+        // 如果是点击具体某个栏目，视口平滑滚动到该栏目
+        if (activeCategory !== 'all') {
+          const targetSec = document.getElementById(activeCategory);
+          if (targetSec) {
+            targetSec.scrollIntoView({ behavior: 'smooth' });
+          }
+        }
+      });
+    });
+  });
+</script>
+</body>
+</html>
