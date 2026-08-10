@@ -51,12 +51,13 @@ function buildOutputInstructions(cwd, defaultOutputDir = "outputs") {
     : path.resolve(cwd, defaultOutputDir);
 
   return (
-    `【文件存储与对话规范】\n` +
-    `1. 如果用户要求你进行数据抓取、文件爬取、导出报告或生成本地文档等涉及“输出文件/抓取数据”的任务，你必须调用本地文件写入工具，并将所有产物统一保存到指定文件夹下。当前配置的输出文件夹为：${resolvedDir}\n` +
-    `2. 每次任务都必须先在该文件夹下创建一个新的任务子文件夹，再把该任务的所有文件写入这个子文件夹中。子文件夹名称应根据当前任务主题自动生成，使用简短中文或拼音语义化命名；如果有多批次结果，可在末尾追加日期或序号，但禁止直接散落写到 CWD 根目录。\n` +
-    `3. 在对话回复中，严禁直接展示庞大的原始数据（如大段的原始 JSON、长篇原始文本、超长的完整表格）。你只能说明保存的具体相对或绝对路径和文件名，并给出一个简明扼要的 150 字内核心摘要/结论，保持聊天界面整洁。\n` +
-    `4. 请在回复中输出指向本次任务输出子文件夹的本地 file:// 协议链接（格式为 markdown 链接，例如：[打开输出目录](file://${resolvedDir}/任务子目录/) ），以便用户点击。\n` +
-    `5. 【全自动无人值守模式】：当前会话处于 YOLO 全自动免授权模式。所有代码执行、文件读写、数据抓取与脚本工具均已默认预授权，严禁暂停询问用户，直接连续完成任务产出。`
+    `【TRAE Solo / Autonomous Agent 全自主执行规范】\n` +
+    `1. 【对话上下文隔离与独立评估】：每个新的对话任务均为独立的全新上下文环境。请完全基于用户当前输入的 Prompt 和 Skill 标准配置文件进行独立评估与执行，严禁强行沿用或继承历史对话中的旧限制/旧习惯（例如：“上次对话说只抓国家统计局”等旧约束在新的对话中自动失效，除非用户在本次对话中明确再次要求）。\n` +
+    `2. 【自主闭环执行】：你是一个具备完全自主能力的 Agent（类似于 TRAE Solo / Codex / Antigravity）。面对用户的开发、分析、数据抓取与报告生成任务，你必须自主调用本地工具（文件读写、代码修改、终端执行、网络检索），一站式完成从需求分析、代码编写到真实验证的全流程，严禁中途停下询问用户许可。\n` +
+    `3. 【根因排错与闭环验证】：若脚本执行或终端报错，必须主动读取错误 Log / 堆栈信息，分析根本原因并修补代码，重新运行直至完全成功。切勿吞掉报错，严禁在未验证成功前宣布完成。\n` +
+    `4. 【文件产出与统一存储】：所有抓取的数据、生成的 HTML 仪表盘、分析周报、代码产物等，统一存入目标输出目录：${resolvedDir}。每次任务必须在该目录下按主题创建语义化子目录（如 统计局周报_20260806/）。\n` +
+    `5. 【清爽回复与链接展示】：聊天界面严禁直接粘贴超长原始 JSON 或冗长数据原文。聊天框中只提供 150-200 字的精炼高管级结论，并附带指向产物目录/文件的 markdown 链接（例如：[打开输出文件](file://${resolvedDir}/子目录/文件名)）。\n` +
+    `6. 【YOLO 无人值守模式】：当前已开启全自动免授权模式，所有敏感操作（代码执行、patch、脚本运行）自动授权，连续推进直到任务圆满达成。`
   );
 }
 
@@ -1380,13 +1381,21 @@ async function loadActiveThread(threadId) {
     activeGatewaySessionId = String(result.session_id ?? "");
 
     state.activeThreadId = String(result.session_key ?? threadId);
-    const threadCwd = result.info?.cwd ?? result.cwd ?? state.settings.cwd;
+    const savedCwd = getThreadCwd(state.activeThreadId);
+    const threadCwd = toSafeString(result.info?.cwd || result.cwd || savedCwd || state.settings.cwd).trim();
     if (state.activeThreadId && threadCwd) {
       await saveThreadCwd(state.activeThreadId, threadCwd);
     }
-    state.activeThread =
-      state.threads.find((thread) => thread.id === state.activeThreadId) ??
-      mapStoredSession(
+    state.settings.cwd = threadCwd;
+
+    const existingThreadIndex = state.threads.findIndex((thread) => thread.id === state.activeThreadId);
+    let activeThreadObj = existingThreadIndex !== -1 ? state.threads[existingThreadIndex] : null;
+
+    if (activeThreadObj) {
+      activeThreadObj = { ...activeThreadObj, cwd: threadCwd };
+      state.threads[existingThreadIndex] = activeThreadObj;
+    } else {
+      activeThreadObj = mapStoredSession(
         {
           id: state.activeThreadId,
           title: result.info?.title ?? "",
@@ -1396,6 +1405,8 @@ async function loadActiveThread(threadId) {
         },
         state.settings
       );
+    }
+    state.activeThread = activeThreadObj;
     state.currentRuntimeModel = toSafeString(result.info?.model).trim() || null;
     state.messages = mapGatewayMessages(result.messages);
     state.activeDraft = null;
@@ -1615,7 +1626,19 @@ async function initializeBridge() {
     }
 
     if (message.type === "message.delta" && state.activeDraft) {
-      state.activeDraft.text += toSafeString(message.payload?.text);
+      const delta = toSafeString(message.payload?.text);
+      state.activeDraft.text += delta;
+
+      if (!state.activeDraft.segments) {
+        state.activeDraft.segments = [{ reasoning: state.activeDraft.reasoning || "", text: "" }];
+      }
+      let lastSeg = state.activeDraft.segments[state.activeDraft.segments.length - 1];
+      if (!lastSeg) {
+        lastSeg = { reasoning: "", text: "" };
+        state.activeDraft.segments.push(lastSeg);
+      }
+      lastSeg.text += delta;
+
       broadcastState();
       return;
     }
@@ -1623,10 +1646,21 @@ async function initializeBridge() {
     if (message.type === "reasoning.delta" && state.activeDraft) {
       const delta = toSafeString(message.payload?.text);
       state.reasoningTrace = `${state.reasoningTrace ?? ""}${delta}`;
-      state.activeDraft = {
-        ...state.activeDraft,
-        reasoning: `${state.activeDraft.reasoning ?? ""}${delta}`,
-      };
+      state.activeDraft.reasoning = `${state.activeDraft.reasoning ?? ""}${delta}`;
+
+      if (!state.activeDraft.segments) {
+        state.activeDraft.segments = [{ reasoning: "", text: "" }];
+      }
+      let lastSeg = state.activeDraft.segments[state.activeDraft.segments.length - 1];
+      if (!lastSeg) {
+        lastSeg = { reasoning: "", text: "" };
+        state.activeDraft.segments.push(lastSeg);
+      } else if (lastSeg.text && lastSeg.text.trim().length > 0) {
+        lastSeg = { reasoning: "", text: "" };
+        state.activeDraft.segments.push(lastSeg);
+      }
+      lastSeg.reasoning = (lastSeg.reasoning || "") + delta;
+
       broadcastState();
       return;
     }
@@ -1643,10 +1677,7 @@ async function initializeBridge() {
       const reasoning = toSafeString(message.payload?.reasoning).trim();
       if (reasoning) {
         state.reasoningTrace = reasoning;
-        state.activeDraft = {
-          ...state.activeDraft,
-          reasoning,
-        };
+        state.activeDraft.reasoning = reasoning;
       }
       state.pendingApproval = null;
       broadcastState();
@@ -1898,6 +1929,7 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
       threadId: state.activeThreadId ?? activeGatewaySessionId,
       text: "",
       reasoning: "",
+      segments: [{ reasoning: "", text: "" }],
     };
     broadcastState();
 
@@ -2265,6 +2297,16 @@ ipcMain.handle("hermes:updateSettings", async (_event, nextSettings) => {
   const reconciled = await reconcileOfficialModeSettings(merged, state.official);
   merged = reconciled.settings;
   state.settings = merged;
+  if (state.activeThreadId && merged.cwd !== undefined) {
+    await saveThreadCwd(state.activeThreadId, merged.cwd);
+    if (state.activeThread) {
+      state.activeThread = { ...state.activeThread, cwd: merged.cwd };
+    }
+    const idx = state.threads.findIndex(t => t.id === state.activeThreadId);
+    if (idx !== -1) {
+      state.threads[idx] = { ...state.threads[idx], cwd: merged.cwd };
+    }
+  }
   state.skills = merged.registeredSkills || [];
   state.official = reconciled.official;
   await saveSettings(merged);
@@ -2511,27 +2553,36 @@ ipcMain.handle("hermes:openExternal", async (_event, targetUrl) => {
   if (!urlStr) return;
 
   if (urlStr.startsWith("file://")) {
-    let filePath = decodeURIComponent(urlStr.replace(/^file:\/\//, ""));
-    // On macOS, file:///path results in /path
-    if (!filePath.startsWith("/")) {
-      filePath = `/${filePath}`;
+    let rawPath = decodeURIComponent(urlStr.replace(/^file:\/\//, ""));
+    const baseDir = state.activeThread?.cwd || state.settings?.cwd || process.cwd();
+
+    let filePath = rawPath;
+    if (!path.isAbsolute(filePath)) {
+      filePath = path.resolve(baseDir, filePath);
     }
 
     try {
-      const stats = await fsPromises.stat(filePath);
-      if (stats.isDirectory()) {
-        await shell.openPath(filePath);
-      } else {
-        shell.showItemInFolder(filePath);
-      }
-    } catch {
-      // If file directly doesn't exist, try parent folder
-      const parentDir = path.dirname(filePath);
+      let stats;
       try {
-        await shell.openPath(parentDir);
-      } catch (e) {
-        console.error("Failed to open file path:", filePath, e);
+        stats = await fs.stat(filePath);
+      } catch {
+        if (!path.extname(filePath)) {
+          await fs.mkdir(filePath, { recursive: true });
+          stats = await fs.stat(filePath);
+        }
       }
+
+      if (stats && stats.isDirectory()) {
+        await shell.openPath(filePath);
+      } else if (stats) {
+        shell.showItemInFolder(filePath);
+      } else {
+        const parentDir = path.dirname(filePath);
+        await fs.mkdir(parentDir, { recursive: true });
+        await shell.openPath(parentDir);
+      }
+    } catch (e) {
+      console.error("Failed to open file path:", filePath, e);
     }
     return;
   }

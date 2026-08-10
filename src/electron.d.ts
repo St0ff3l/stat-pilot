@@ -82,6 +82,7 @@ declare global {
       threadId: string;
       text: string;
       reasoning?: string;
+      segments?: Array<{ reasoning?: string; text?: string }>;
     } | null;
     busy: boolean;
     skills: Array<{ name: string; description: string; path: string }>;

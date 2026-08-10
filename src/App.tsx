@@ -1,4 +1,4 @@
-import { Component, useEffect, useMemo, useRef, useState, type ReactNode, type ErrorInfo } from "react";
+import React, { Component, useEffect, useMemo, useRef, useState, type ReactNode, type ErrorInfo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -113,9 +113,17 @@ function MessageBody({ role, text }: { role: HermesChatMessage["role"]; text: st
 
 function TraceBlock({ text, open = false, title = "思考过程" }: { text: string; open?: boolean; title?: string }) {
   const safeText = text ?? "";
+  const detailsRef = useRef<HTMLDetailsElement | null>(null);
+
+  useEffect(() => {
+    if (detailsRef.current) {
+      detailsRef.current.open = open;
+    }
+  }, [open]);
+
   if (!safeText.trim()) return null;
   return (
-    <details className="trace-block" open={open}>
+    <details ref={detailsRef} className="trace-block" open={open}>
       <summary>{title}</summary>
       <div className="message-markdown">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -210,6 +218,52 @@ function extractDigestItems(text: string): DigestItem[] {
       title: rawTitle,
       organization,
       publish_time: pubTime,
+      summary,
+      link,
+      category: "工作动态",
+    });
+  }
+
+  // 3. Try parsing text structured with "标题[:：]"
+  const titleRegex = /(?:标题|Title)[:：]\s*([^\n]+)/g;
+  let tMatch: RegExpExecArray | null;
+
+  while ((tMatch = titleRegex.exec(text)) !== null) {
+    const rawTitle = tMatch[1].trim().replace(/^["'《]|["'》]$/g, "");
+    if (!rawTitle || rawTitle.includes("info_digest_html") || rawTitle.includes("weekly_report")) {
+      continue;
+    }
+
+    const restText = text.slice(tMatch.index + tMatch[0].length);
+    const nextMatch = restText.search(/(?:标题|Title)[:：]|###|\n---\n/);
+    const block = nextMatch !== -1 ? restText.slice(0, nextMatch) : restText;
+
+    let time = "";
+    const timeMatch = block.match(/(?:时间|发布时间|日期)[:：]\s*([^\n]+)/);
+    if (timeMatch) time = timeMatch[1].trim();
+
+    let summary = "";
+    const summaryMatch = block.match(/(?:核心内容|主要内容|摘要|简介|内容|关键词)[:：]\s*([^\n]+)/);
+    if (summaryMatch) {
+      summary = summaryMatch[1].trim();
+    } else {
+      const firstLine = block.split("\n").map(l => l.trim()).find(l => l.length > 5 && !l.startsWith("链接") && !l.startsWith("来源"));
+      summary = firstLine || "";
+    }
+
+    let link = "";
+    const linkMatch = block.match(/(https?:\/\/[^\s)\\]]+)/);
+    if (linkMatch) link = linkMatch[1];
+
+    let organization = "国家统计局";
+    const orgMatch = block.match(/(?:来源|单位|发布方)[:：]\s*([^\n]+)/);
+    if (orgMatch) organization = orgMatch[1].trim();
+
+    items.push({
+      id: link || `${rawTitle}_${items.length}`,
+      title: rawTitle,
+      organization,
+      publish_time: time,
       summary,
       link,
       category: "工作动态",
@@ -608,6 +662,27 @@ function App() {
     const filesFromMessages: string[] = [];
     const activeCwd = state?.activeThread?.cwd || state?.settings?.cwd || "";
 
+    const expandPath = (rawPath: string) => {
+      let cleaned = rawPath.trim().replace(/^[`'"]|[`'"]$/g, "");
+      let homeDir = "/Users/stoffel";
+      const homeMatch = activeCwd.match(/^(\/Users\/[^\/]+)/);
+      if (homeMatch) homeDir = homeMatch[1];
+
+      if (cleaned.startsWith("~/")) {
+        cleaned = homeDir + cleaned.slice(1);
+      } else if (!cleaned.startsWith("/")) {
+        cleaned = activeCwd ? (activeCwd.endsWith("/") ? activeCwd + cleaned : activeCwd + "/" + cleaned) : cleaned;
+      }
+
+      const braceMatch = cleaned.match(/^([^{}\n]+)\.\{([a-zA-Z0-9,]+)\}$/);
+      if (braceMatch) {
+        const base = braceMatch[1];
+        const exts = braceMatch[2].split(",");
+        return exts.map((ext) => `${base}.${ext.trim()}`);
+      }
+      return [cleaned];
+    };
+
     (state?.messages || []).forEach((msg) => {
       if (msg.role !== "assistant") return;
       const text = msg.text || "";
@@ -620,29 +695,40 @@ function App() {
           try {
             let pathName = decodeURIComponent(fileUrl.replace(/^file:\/\/\/?/, "/"));
             if (!pathName.startsWith("/")) pathName = "/" + pathName;
-            filesFromMessages.push(pathName);
+            filesFromMessages.push(...expandPath(pathName));
           } catch {
             // ignore
           }
         }
       }
 
-      // 2. Extract folder headers like 📁 产出文件 （ /Users/... ）
+      // 2. Extract explicit saved file headers like 文件已保存： ~/Downloads/scope 测试/国家统计局周报_20260806.{txt,json,html}
+      const savedMatches = text.matchAll(/(?:文件已保存|文件保存于|保存至|产出文件|文件产出)[:：]\s*([^\n]+)/gi);
+      for (const sm of savedMatches) {
+        const line = sm[1].trim();
+        const codeInLine = line.match(/`([^`\n]+)`/);
+        const pathStr = codeInLine ? codeInLine[1] : line.split(/\s+/)[0];
+        if (pathStr) {
+          filesFromMessages.push(...expandPath(pathStr));
+        }
+      }
+
+      // 3. Extract folder headers like 📁 产出文件 （ /Users/... ）
       let folderPath = activeCwd;
       const folderMatch = text.match(/📁\s*产出文件\s*[\(（]\s*([^\)）\n]+)\s*[\)）]/);
       if (folderMatch) {
         folderPath = folderMatch[1].trim();
       }
 
-      // 3. Extract backticked file names ending with file extensions
-      const codeMatches = text.matchAll(/`([^`\n]+\.(html|json|csv|xlsx|pdf|docx|txt|png|jpg|jpeg|zip|py|sh|md))`/gi);
+      // 4. Extract backticked file names ending with file extensions or brace expansions
+      const codeMatches = text.matchAll(/`([^`\n]+\.(?:html|json|csv|xlsx|pdf|docx|txt|png|jpg|jpeg|zip|py|sh|md|\{[a-zA-Z0-9,]+\}))`/gi);
       for (const m of codeMatches) {
         const rawName = m[1].trim();
-        if (rawName.startsWith("/")) {
-          filesFromMessages.push(rawName);
+        if (rawName.startsWith("/") || rawName.startsWith("~/")) {
+          filesFromMessages.push(...expandPath(rawName));
         } else if (folderPath) {
           const combined = folderPath.endsWith("/") ? folderPath + rawName : folderPath + "/" + rawName;
-          filesFromMessages.push(combined);
+          filesFromMessages.push(...expandPath(combined));
         }
       }
     });
@@ -900,7 +986,7 @@ function App() {
     setState(nextState);
   }
 
-  const currentCwd = state?.settings.cwd || "";
+  const currentCwd = state?.activeThread?.cwd || state?.settings.cwd || "";
   const currentFolderName = currentCwd ? currentCwd.split(/[/\\]/).filter(Boolean).pop() || currentCwd : "选择项目";
 
   const orderedThreads = [...(state?.threads ?? [])].sort((a, b) => b.updatedAt - a.updatedAt);
@@ -1404,8 +1490,12 @@ function App() {
                   <div className="trae-hero-container">
                     <div className="trae-hero-badge">
                       <svg className="w-4 h-4 text-blue-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                        <polyline points="9 11 12 14 15 11" />
+                        <circle cx="12" cy="12" r="6.5" strokeWidth="1.8" />
+                        <circle cx="12" cy="12" r="2" fill="currentColor" />
+                        <line x1="12" y1="1.5" x2="12" y2="4.5" strokeWidth="1.8" />
+                        <line x1="12" y1="19.5" x2="12" y2="22.5" strokeWidth="1.8" />
+                        <line x1="1.5" y1="12" x2="4.5" y2="12" strokeWidth="1.8" />
+                        <line x1="19.5" y1="12" x2="22.5" y2="12" strokeWidth="1.8" />
                       </svg>
                       <span>深圳市统计局 · 智能工作台</span>
                     </div>
@@ -1499,111 +1589,82 @@ function App() {
                   }
 
                   // Assistant turn group
-                  if (isThisGroupStreaming && state?.activeDraft) {
-                    const stepMsgs = group.messages;
-                    const activeReasoning = state.activeDraft.reasoning?.trim() || "";
-                    const activeText = state.activeDraft.text || "";
-
-                    const stepParts: string[] = [];
-                    stepMsgs.forEach((m, idx) => {
-                      let part = `**步骤 ${idx + 1}**`;
-                      if (m.reasoning?.trim()) {
-                        part += `\n*思考*: ${m.reasoning.trim()}`;
-                      }
-                      if (m.text?.trim()) {
-                        part += `\n${m.text.trim()}`;
-                      }
-                      stepParts.push(part);
-                    });
-
-                    let combinedTrace = stepParts.join("\n\n---\n\n");
-                    if (activeReasoning) {
-                      if (combinedTrace) combinedTrace += "\n\n---\n\n";
-                      combinedTrace += `**当前思考**\n${activeReasoning}`;
-                    }
-
-                    const title = stepMsgs.length > 0
-                      ? `执行中 (${stepMsgs.length + 1} 个步骤)`
-                      : "思考中…";
-
-                    return (
-                      <article key={group.id} className="bubble assistant streaming">
-                        <div className="bubble-head">
-                          <strong>深统 Scope</strong>
-                          <span>处理中</span>
-                        </div>
-                        {combinedTrace ? (
-                          <TraceBlock text={combinedTrace} open={true} title={title} />
-                        ) : null}
-                        <MessageBody role="assistant" text={activeText || "…"} />
-                      </article>
-                    );
-                  }
-
-                  // Completed assistant group
                   const historyMsgs = group.messages;
-                  if (historyMsgs.length === 1) {
-                    const msg = historyMsgs[0];
-                    const digestItems = extractDigestItems(msg.text);
-                    return (
-                      <article key={group.id} className="bubble assistant">
-                        <div className="bubble-head">
-                          <strong>深统 Scope</strong>
-                          {msg.phase ? <span>{msg.phase}</span> : null}
-                        </div>
-                        {msg.reasoning?.trim() ? (
-                          <TraceBlock text={msg.reasoning} open={false} />
-                        ) : null}
-                        <MessageBody role="assistant" text={msg.text} />
-                        <CheckableItemSection
-                          items={digestItems}
-                          selectedMap={selectedDigestItems}
-                          onToggleItem={handleToggleDigestItem}
-                          onToggleAll={handleToggleAllDigestItems}
-                        />
-                      </article>
-                    );
-                  }
+                  const activeSegments = isThisGroupStreaming
+                    ? (state?.activeDraft?.segments && state.activeDraft.segments.length > 0
+                        ? state.activeDraft.segments
+                        : [{ reasoning: state?.activeDraft?.reasoning, text: state?.activeDraft?.text }])
+                    : [];
 
-                  // Multiple assistant messages in one turn
-                  const finalMsg = historyMsgs[historyMsgs.length - 1];
-                  const stepMsgs = historyMsgs.slice(0, -1);
-
-                  const stepParts: string[] = [];
-                  stepMsgs.forEach((m, idx) => {
-                    let part = `**步骤 ${idx + 1}**`;
-                    if (m.reasoning?.trim()) {
-                      part += `\n*思考*: ${m.reasoning.trim()}`;
-                    }
-                    if (m.text?.trim()) {
-                      part += `\n${m.text.trim()}`;
-                    }
-                    stepParts.push(part);
-                  });
-
-                  let combinedTrace = stepParts.join("\n\n---\n\n");
-                  if (finalMsg.reasoning?.trim()) {
-                    if (combinedTrace) combinedTrace += "\n\n---\n\n";
-                    combinedTrace += `**最终思考**\n${finalMsg.reasoning.trim()}`;
-                  }
-
-                  const finalText = finalMsg.text?.trim() || stepMsgs[stepMsgs.length - 1]?.text || "(已完成)";
-                  const digestItems = extractDigestItems(finalText);
+                  // Extract digest items from final text if available
+                  let fullTurnAnswerText = isThisGroupStreaming
+                    ? (state?.activeDraft?.text || "")
+                    : (historyMsgs.length > 0 ? (historyMsgs[historyMsgs.length - 1].text?.trim() || "") : "");
+                  const digestItems = extractDigestItems(fullTurnAnswerText);
 
                   return (
-                    <article key={group.id} className="bubble assistant">
+                    <article key={group.id} className={`bubble assistant ${isThisGroupStreaming ? "streaming" : ""}`}>
                       <div className="bubble-head">
                         <strong>深统 Scope</strong>
-                        {finalMsg.phase ? <span>{finalMsg.phase}</span> : null}
                       </div>
-                      {combinedTrace ? (
-                        <TraceBlock
-                          text={combinedTrace}
-                          open={false}
-                          title={`思考与执行过程 (${stepMsgs.length} 个步骤)`}
-                        />
+
+                      {/* Chronological Interleaved rendering: 思考一段 -> 输出/动作一段 */}
+                      {historyMsgs.map((m, idx) => {
+                        const isLastHistoryMsg = idx === historyMsgs.length - 1;
+
+                        return (
+                          <React.Fragment key={m.id || idx}>
+                            {/* 思考一段 */}
+                            {m.reasoning?.trim() ? (
+                              <TraceBlock
+                                text={m.reasoning.trim()}
+                                open={isThisGroupStreaming && isLastHistoryMsg && activeSegments.length === 0}
+                                title={isThisGroupStreaming && isLastHistoryMsg && activeSegments.length === 0 ? "思考中…" : "思考过程"}
+                              />
+                            ) : null}
+
+                            {/* 输出 / 动作一段 */}
+                            {m.text?.trim() ? (
+                              <MessageBody role="assistant" text={m.text.trim()} />
+                            ) : null}
+                          </React.Fragment>
+                        );
+                      })}
+
+                      {/* Real-time Streaming Active Draft Segments: 思考一段 -> 实时输出 */}
+                      {isThisGroupStreaming && activeSegments.map((seg, segIdx) => {
+                        const isLastSeg = segIdx === activeSegments.length - 1;
+                        const segReasoning = seg.reasoning?.trim() || "";
+                        const segText = seg.text || "";
+
+                        return (
+                          <React.Fragment key={segIdx}>
+                            {segReasoning ? (
+                              <TraceBlock
+                                text={segReasoning}
+                                open={isLastSeg}
+                                title={isLastSeg ? "思考中…" : "思考过程"}
+                              />
+                            ) : null}
+                            {segText ? (
+                              <MessageBody role="assistant" text={segText} />
+                            ) : null}
+                          </React.Fragment>
+                        );
+                      })}
+
+                      {/* Streaming loading indicator while generating response */}
+                      {isThisGroupStreaming ? (
+                        <div className="streaming-loading-bar">
+                          <span className="streaming-loading-dot" />
+                          <span>
+                            {state?.status && state.status !== "Running..." && state.status !== "Ready."
+                              ? state.status
+                              : "正在思考与处理中…"}
+                          </span>
+                        </div>
                       ) : null}
-                      <MessageBody role="assistant" text={finalText} />
+
                       <CheckableItemSection
                         items={digestItems}
                         selectedMap={selectedDigestItems}
@@ -1618,12 +1679,34 @@ function App() {
                   <article className="bubble assistant streaming">
                     <div className="bubble-head">
                       <strong>深统 Scope</strong>
-                      <span>处理中</span>
                     </div>
-                    {state.activeDraft.reasoning?.trim() ? (
-                      <TraceBlock text={state.activeDraft.reasoning} open={true} title="思考中…" />
-                    ) : null}
-                    <MessageBody role="assistant" text={state.activeDraft.text || "…"} />
+                    {((state.activeDraft.segments && state.activeDraft.segments.length > 0)
+                      ? state.activeDraft.segments
+                      : [{ reasoning: state.activeDraft.reasoning, text: state.activeDraft.text }]
+                    ).map((seg, segIdx, arr) => {
+                      const isLastSeg = segIdx === arr.length - 1;
+                      const segReasoning = seg.reasoning?.trim() || "";
+                      const segText = seg.text || "";
+
+                      return (
+                        <React.Fragment key={segIdx}>
+                          {segReasoning ? (
+                            <TraceBlock text={segReasoning} open={isLastSeg} title={isLastSeg ? "思考中…" : "思考过程"} />
+                          ) : null}
+                          {segText ? (
+                            <MessageBody role="assistant" text={segText} />
+                          ) : null}
+                        </React.Fragment>
+                      );
+                    })}
+                    <div className="streaming-loading-bar">
+                      <span className="streaming-loading-dot" />
+                      <span>
+                        {state?.status && state.status !== "Running..." && state.status !== "Ready."
+                          ? state.status
+                          : "正在思考与处理中…"}
+                      </span>
+                    </div>
                   </article>
                 ) : null}
               </>
@@ -1782,13 +1865,13 @@ function App() {
                     type="button"
                     className="trae-selector-pill"
                     onClick={() => setIsFolderMenuOpen((prev) => !prev)}
-                    title={state?.settings.cwd || "选择项目工作区（可选）"}
+                    title={currentCwd || "选择项目工作区（可选）"}
                   >
                     <svg className="w-3.5 h-3.5 text-slate-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
                     </svg>
                     <span className="truncate" style={{ maxWidth: "220px" }}>
-                      {state?.settings.cwd ? currentFolderName : "选择文件夹（可选）"}
+                      {currentCwd ? currentFolderName : "选择文件夹（可选）"}
                     </span>
                     {activeBranch && (
                       <span style={{ opacity: 0.75, fontStyle: "italic", fontSize: "11px", flexShrink: 0 }}>
@@ -1813,7 +1896,7 @@ function App() {
                         </button>
                       </div>
                       <div style={{ padding: "6px 8px", fontSize: "11px", color: "#475569", wordBreak: "break-all", background: "#f8fafc", borderRadius: "8px", marginBottom: "4px" }}>
-                        {state?.settings.cwd || "未选择项目工作区"}
+                        {currentCwd || "未选择项目工作区"}
                       </div>
 
                       {recentFolders.length > 0 && (
@@ -1823,7 +1906,7 @@ function App() {
                             <button
                               key={folder.path}
                               type="button"
-                              className={`trae-popover-item ${folder.path === state?.settings.cwd ? "active" : ""}`}
+                              className={`trae-popover-item ${folder.path === currentCwd ? "active" : ""}`}
                               onClick={() => void handleSwitchWorkspaceFolder(folder.path)}
                             >
                               <span className="truncate flex items-center gap-1.5">
@@ -1832,7 +1915,7 @@ function App() {
                                 </svg>
                                 {folder.name}
                               </span>
-                              {folder.path === state?.settings.cwd && <span style={{ color: "#2563eb" }}>✓</span>}
+                              {folder.path === currentCwd && <span style={{ color: "#2563eb" }}>✓</span>}
                             </button>
                           ))}
                         </>
@@ -1848,7 +1931,7 @@ function App() {
                           <span>+ 选择本地项目文件夹...</span>
                         </button>
 
-                        {!!state?.settings.cwd && (
+                        {!!currentCwd && (
                           <button
                             type="button"
                             className="trae-popover-item"
@@ -1894,12 +1977,12 @@ function App() {
             </div>
           </div>
 
-          <div className="composer-bottom-info flex items-center justify-between max-w-[960px] w-full mx-auto px-1 pt-1 text-[11px] text-slate-400 select-none">
-            <span className="flex items-center gap-1.5 font-medium text-slate-400">
+          <div className="composer-bottom-info">
+            <span className="flex items-center gap-1.5 font-medium text-slate-500">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
               深统 Scope 智能工作台
             </span>
-            <span>Shift + Enter 换行 · Enter 发送</span>
+            <span className="text-slate-400">Shift + Enter 换行 · Enter 发送</span>
           </div>
         </footer>
       </main>
@@ -1984,21 +2067,17 @@ function App() {
               className="right-sidebar-open-dir-button"
               style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}
               onClick={() => {
-                const targetCwd = state?.settings?.cwd;
+                const targetCwd = state?.activeThread?.cwd || state?.settings?.cwd || "";
                 const defaultOutputDir = state?.settings?.defaultOutputDir || "outputs";
-                if (targetCwd) {
-                  const isAbsolute = defaultOutputDir.startsWith("/") || defaultOutputDir.includes(":");
-                  const resolvedPath = isAbsolute ? defaultOutputDir : `${targetCwd}/${defaultOutputDir}`;
-                  void window.hermesDesktop.openExternal(`file://${resolvedPath}`);
-                } else {
-                  const firstFile = threadFiles[0];
-                  if (firstFile) {
-                    const parts = firstFile.split(/[/\\]/);
-                    parts.pop();
-                    const dirPath = parts.join("/");
-                    void window.hermesDesktop.openExternal(`file://${dirPath}`);
-                  }
+                let resolvedPath = defaultOutputDir;
+                if (targetCwd && !defaultOutputDir.startsWith("/") && !defaultOutputDir.includes(":")) {
+                  resolvedPath = `${targetCwd}/${defaultOutputDir}`;
+                } else if (!targetCwd && threadFiles[0]) {
+                  const parts = threadFiles[0].split(/[/\\]/);
+                  parts.pop();
+                  resolvedPath = parts.join("/") || defaultOutputDir;
                 }
+                void window.hermesDesktop.openExternal(`file://${resolvedPath}`);
               }}
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -2048,13 +2127,18 @@ function App() {
             <button
               className="toast-open-dir-button"
               onClick={() => {
+                const targetCwd = state?.activeThread?.cwd || state?.settings?.cwd || "";
+                const defaultOutputDir = state?.settings?.defaultOutputDir || "outputs";
+                let resolvedPath = defaultOutputDir;
                 const firstFile = state.lastGeneratedFiles?.[0];
                 if (firstFile) {
                   const parts = firstFile.split(/[/\\]/);
                   parts.pop();
-                  const dirPath = parts.join("/");
-                  void window.hermesDesktop.openExternal(`file://${dirPath}`);
+                  resolvedPath = parts.join("/") || defaultOutputDir;
+                } else if (targetCwd && !defaultOutputDir.startsWith("/") && !defaultOutputDir.includes(":")) {
+                  resolvedPath = `${targetCwd}/${defaultOutputDir}`;
                 }
+                void window.hermesDesktop.openExternal(`file://${resolvedPath}`);
               }}
             >
               打开输出目录
