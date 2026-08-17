@@ -24,6 +24,12 @@ INSTALL_ARGS=(
 if [[ -n "$HERMES_COMMIT" ]]; then
   INSTALL_ARGS+=(--commit "$HERMES_COMMIT")
 fi
+if [[ "$SKIP_SETUP" == "1" ]]; then
+  INSTALL_ARGS+=(--skip-setup)
+fi
+if [[ "$NON_INTERACTIVE" == "1" ]]; then
+  INSTALL_ARGS+=(--non-interactive)
+fi
 
 curl -fsSL "$INSTALLER_URL" | bash -s -- "${INSTALL_ARGS[@]}"
 

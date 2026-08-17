@@ -29,9 +29,6 @@ try {
     Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath
 
     $installerArgs = @(
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
-        "-File", $installerPath,
         "-SkipSetup",
         "-NonInteractive",
         "-HermesHome", $hermesHome,
@@ -42,7 +39,7 @@ try {
         $installerArgs += @("-Commit", $env:HERMES_COMMIT)
     }
 
-    & powershell.exe @installerArgs
+    & $installerPath @installerArgs
     if ($LASTEXITCODE -ne 0) {
         throw "Hermes Windows installer failed with exit code $LASTEXITCODE."
     }

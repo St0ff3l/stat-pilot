@@ -7,6 +7,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDir, "..");
 const APP_NAME = "sz-gov-scope";
 const CHINESE_SENTINEL = "Return ONLY the title text in Chinese";
+const TITLE_PROMPT_ASSIGNMENT = /_TITLE_PROMPT\s*=\s*\([\s\S]*?\n\)\n/;
 const ORIGINAL_TITLE_PROMPT = `_TITLE_PROMPT = (
     "Generate a short, descriptive title (3-7 words) for a conversation that starts with the "
     "following exchange. The title should capture the main topic or intent. "
@@ -74,19 +75,21 @@ async function patchFile({ label, filePath, optional }) {
     return;
   }
 
-  if (content.includes(CHINESE_SENTINEL)) {
-    console.log(`OK ${label}: already patched`);
+  if (content.includes(CHINESE_SENTINEL) || (content.includes("_TITLE_PROMPT") && content.includes("中文"))) {
+    console.log(`OK ${label}: already uses a Chinese title prompt`);
     return;
   }
 
-  if (!content.includes(ORIGINAL_TITLE_PROMPT)) {
+  if (!content.includes(ORIGINAL_TITLE_PROMPT) && !TITLE_PROMPT_ASSIGNMENT.test(content)) {
     console.error(`Unexpected title_generator.py format in ${label}: ${filePath}`);
     console.error("Hermes upstream may have changed. Please review and update scripts/patch-hermes-runtime.mjs.");
     process.exitCode = 1;
     return;
   }
 
-  const updated = content.replace(ORIGINAL_TITLE_PROMPT, CHINESE_TITLE_PROMPT);
+  const updated = content.includes(ORIGINAL_TITLE_PROMPT)
+    ? content.replace(ORIGINAL_TITLE_PROMPT, CHINESE_TITLE_PROMPT)
+    : content.replace(TITLE_PROMPT_ASSIGNMENT, `${CHINESE_TITLE_PROMPT}\n`);
   await fs.writeFile(filePath, updated, "utf8");
   console.log(`Patched ${label}: ${filePath}`);
 }
