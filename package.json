@@ -72,6 +72,8 @@
         "to": ".runtime",
         "filter": [
           "**/*",
+          "!**/.git",
+          "!**/.git/**",
           "!**/node_modules/electron/dist/Electron.app/**"
         ]
       },
@@ -83,6 +85,10 @@
         ]
       },
       {
+        "from": "public/sz-logo.png",
+        "to": "app-icon.png"
+      },
+      {
         "from": "skills",
         "to": "skills",
         "filter": [
@@ -91,6 +97,7 @@
       }
     ],
     "mac": {
+      "icon": "src/assets/sz-logo.icns",
       "target": [
         "dmg"
       ],

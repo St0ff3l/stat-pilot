@@ -29,6 +29,26 @@ function getBundledAppAssetRoot() {
   return path.resolve(process.cwd());
 }
 
+function getAppIconPath() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "app-icon.png")
+    : path.resolve(process.cwd(), "public/sz-logo.png");
+}
+
+function applyPlatformIcon() {
+  const iconPath = getAppIconPath();
+
+  if (process.platform === "darwin" && app.dock) {
+    try {
+      app.dock.setIcon(iconPath);
+    } catch (error) {
+      console.warn("Unable to apply the macOS Dock icon:", error);
+    }
+  }
+
+  return iconPath;
+}
+
 function getRuntimeRoot() {
   return path.join(app.getPath("userData"), RUNTIME_DIRNAME);
 }
@@ -1797,12 +1817,15 @@ async function initializeBridge() {
 }
 
 function createWindow() {
+  const appIconPath = getAppIconPath();
+
   mainWindow = new BrowserWindow({
     width: 1480,
     height: 940,
     minWidth: 1180,
     minHeight: 760,
     title: "深统政务Scope",
+    icon: appIconPath,
     backgroundColor: "#f8fafc",
     webPreferences: {
       preload: path.join(app.getAppPath(), "electron/preload.cjs"),
@@ -1887,6 +1910,8 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  app.setName("深统政务Scope");
+  applyPlatformIcon();
   createWindow();
   await initializeBridge();
 

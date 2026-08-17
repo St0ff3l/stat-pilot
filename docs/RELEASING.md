@@ -24,6 +24,8 @@ git push origin v0.1.0
 4. 上传 macOS、Windows、Linux 安装包；
 5. 创建或更新 GitHub Release，并附带 `SHA256SUMS.txt`。
 
+Hermes 引导会下载源码归档并在临时目录建立本地镜像，再执行归档内的官方安装脚本；构建过程不依赖对上游仓库执行 Git clone，也不会把临时镜像放进最终安装包。
+
 `package.json` 的版本号必须与标签一致，例如 `package.json` 为 `0.1.0` 时使用 `v0.1.0`。
 
 ## 手动构建
@@ -50,7 +52,7 @@ npm run dist:win
 
 ## Runtime 版本固定
 
-为了让发布可复现，可以在 GitHub Repository Variables 中设置 `HERMES_COMMIT`。工作流会把它传给 Hermes 安装脚本；不设置时使用 Hermes `main` 分支的最新版本。
+为了让发布可复现，可以在 GitHub Repository Variables 中设置 `HERMES_COMMIT`。工作流会下载该 ref 对应的 Hermes 源码归档；不设置时使用 Hermes `main` 分支的最新版本。
 
 ## 签名
 
