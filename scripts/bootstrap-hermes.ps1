@@ -45,12 +45,14 @@ function Prepare-LocalHermesRepository {
     $sourceRef = if ($env:HERMES_COMMIT) { $env:HERMES_COMMIT } else { $hermesBranch }
 
     if (-not (Test-Path (Join-Path $installDir ".git"))) {
-        $archiveUrl = if ($hermesSourceUrl -and -not $env:HERMES_COMMIT) {
+        $usingProjectSource = [bool]($hermesSourceUrl -and -not $env:HERMES_COMMIT)
+        $archiveUrl = if ($usingProjectSource) {
             $hermesSourceUrl
         } else {
             "https://codeload.github.com/NousResearch/hermes-agent/zip/$sourceRef"
         }
-        $archivePath = Join-Path $bootstrapTempRoot "hermes-source.zip"
+        $archiveFileName = if ($usingProjectSource) { "hermes-source.tar.gz" } else { "hermes-source.zip" }
+        $archivePath = Join-Path $bootstrapTempRoot $archiveFileName
         $extractPath = Join-Path $bootstrapTempRoot "extract"
 
         Write-Host "Downloading Hermes source archive (no upstream git clone)..."
@@ -59,7 +61,15 @@ function Prepare-LocalHermesRepository {
             $archiveParams.Headers = @{ Authorization = "Bearer $hermesGithubToken" }
         }
         Invoke-WebRequest @archiveParams
-        Expand-Archive -Path $archivePath -DestinationPath $extractPath -Force
+        New-Item -ItemType Directory -Force -Path $extractPath | Out-Null
+        if ($usingProjectSource) {
+            & tar.exe -xzf $archivePath -C $extractPath
+            if ($LASTEXITCODE -ne 0) {
+                throw "Unable to extract the Hermes source tarball."
+            }
+        } else {
+            Expand-Archive -Path $archivePath -DestinationPath $extractPath -Force
+        }
 
         $extractedDir = Get-ChildItem -LiteralPath $extractPath -Directory | Select-Object -First 1
         if (-not $extractedDir) {
