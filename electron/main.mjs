@@ -1,5 +1,5 @@
 import { randomUUID, randomBytes } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import net from "node:net";
 import { spawn, execSync } from "node:child_process";
@@ -61,14 +61,35 @@ function getRuntimeHomeDir() {
   return path.join(getRuntimeRoot(), "hermes-home");
 }
 
+function getRuntimeEnvironmentDir(installDir = getRuntimeInstallDir()) {
+  const candidates = [path.join(installDir, ".venv"), path.join(installDir, "venv")];
+  const pythonRelativePath = process.platform === "win32" ? "Scripts/python.exe" : "bin/python";
+  const entryPointRelativePath = process.platform === "win32" ? "Scripts/hermes.exe" : "bin/hermes";
+  return (
+    candidates.find(
+      (candidate) =>
+        existsSync(path.join(candidate, pythonRelativePath)) &&
+        existsSync(path.join(candidate, entryPointRelativePath))
+    ) ??
+    candidates.find((candidate) => existsSync(candidate)) ??
+    candidates[0]
+  );
+}
+
 function getRuntimePythonPath(installDir = getRuntimeInstallDir()) {
-  const pythonRelativePath = process.platform === "win32" ? ".venv/Scripts/python.exe" : ".venv/bin/python";
-  return path.join(installDir, pythonRelativePath);
+  const environmentDir = getRuntimeEnvironmentDir(installDir);
+  return path.join(
+    environmentDir,
+    process.platform === "win32" ? "Scripts/python.exe" : "bin/python"
+  );
 }
 
 function getRuntimeEntryPointPath(installDir = getRuntimeInstallDir()) {
-  const hermesRelativePath = process.platform === "win32" ? ".venv/Scripts/hermes.exe" : ".venv/bin/hermes";
-  return path.join(installDir, hermesRelativePath);
+  const environmentDir = getRuntimeEnvironmentDir(installDir);
+  return path.join(
+    environmentDir,
+    process.platform === "win32" ? "Scripts/hermes.exe" : "bin/hermes"
+  );
 }
 
 function getRuntimeGuardPath(installDir = getRuntimeInstallDir()) {
@@ -435,6 +456,50 @@ async function pathExists(targetPath) {
   }
 }
 
+async function repairPortablePythonRuntime(runtimeRoot) {
+  const metadataPath = path.join(runtimeRoot, "portable-python.json");
+  const metadataText = await readTextIfExists(metadataPath);
+  if (!metadataText) {
+    return;
+  }
+
+  let metadata;
+  try {
+    metadata = JSON.parse(metadataText);
+  } catch {
+    console.warn(`Ignoring malformed portable Python metadata: ${metadataPath}`);
+    return;
+  }
+
+  const pythonHomeRelative = toSafeString(metadata.pythonHome).trim();
+  if (!pythonHomeRelative) {
+    return;
+  }
+
+  const pythonHome = path.resolve(runtimeRoot, pythonHomeRelative);
+  if (!(await pathExists(pythonHome))) {
+    console.warn(`Portable Python home is missing from Hermes runtime: ${pythonHome}`);
+    return;
+  }
+
+  for (const environmentName of [".venv", "venv"]) {
+    const environmentDir = path.join(getRuntimeInstallDir(), environmentName);
+    const configPath = path.join(environmentDir, "pyvenv.cfg");
+    if (!(await pathExists(configPath))) {
+      continue;
+    }
+
+    const content = await fs.readFile(configPath, "utf8");
+    const homeLine = `home = ${pythonHome}`;
+    const updated = /^home\s*=.*$/m.test(content)
+      ? content.replace(/^home\s*=.*$/m, homeLine)
+      : `${homeLine}\n${content}`;
+    if (updated !== content) {
+      await fs.writeFile(configPath, updated, "utf8");
+    }
+  }
+}
+
 async function readTextIfExists(targetPath) {
   try {
     return await fs.readFile(targetPath, "utf8");
@@ -714,6 +779,11 @@ async function ensureEmbeddedRuntimeInstalled() {
       },
     });
   }
+
+  // The bundled runtime is copied to userData on first launch. Rewrite the
+  // venv metadata to that new location so Python does not keep the CI
+  // runner's absolute interpreter path.
+  await repairPortablePythonRuntime(runtimeRoot);
 
   await fs.mkdir(getRuntimeHomeDir(), { recursive: true });
   if (process.platform !== "win32") {

@@ -12,9 +12,20 @@ NON_INTERACTIVE="${HERMES_NON_INTERACTIVE:-0}"
 HERMES_COMMIT="${HERMES_COMMIT:-}"
 HERMES_GITHUB_TOKEN="${HERMES_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
 HERMES_SOURCE_URL="${HERMES_SOURCE_URL:-}"
+HERMES_PYTHON_VERSION="${HERMES_PYTHON_VERSION:-3.11}"
+PORTABLE_PYTHON_ROOT="${HERMES_PORTABLE_PYTHON_ROOT:-$RUNTIME_ROOT/python}"
 HERMES_ARCHIVE_BOOTSTRAPPED=0
 HERMES_BOOTSTRAP_TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/sz-gov-hermes.XXXXXX")"
 trap 'rm -rf "$HERMES_BOOTSTRAP_TEMP_ROOT"' EXIT
+
+# Keep the interpreter and its standard library inside the runtime that will
+# be copied into the Electron app. Without these settings uv may reuse a
+# machine-local Python (for example /opt/anaconda3/bin/python3), leaving an
+# absolute symlink and an unusable pyvenv.cfg in the packaged app.
+export HERMES_PYTHON_VERSION
+export UV_PYTHON_INSTALL_DIR="$PORTABLE_PYTHON_ROOT"
+export UV_MANAGED_PYTHON=1
+unset UV_PYTHON
 
 mkdir -p "$RUNTIME_ROOT"
 
@@ -120,6 +131,22 @@ fi
 bash "$INSTALLER_PATH" "${INSTALL_ARGS[@]}"
 
 git -C "$INSTALL_DIR" remote set-url origin "https://github.com/NousResearch/hermes-agent.git" >/dev/null 2>&1 || true
+
+UV_PATH="$HERMES_HOME/bin/uv"
+if [[ ! -x "$UV_PATH" ]]; then
+  UV_PATH="$(command -v uv || true)"
+fi
+if [[ -z "$UV_PATH" || ! -x "$UV_PATH" ]]; then
+  echo "Managed uv was not found after Hermes installation; cannot prepare portable Python."
+  exit 1
+fi
+
+echo "Ensuring portable Python $HERMES_PYTHON_VERSION is bundled with Hermes..."
+"$UV_PATH" python install "$HERMES_PYTHON_VERSION" --install-dir "$PORTABLE_PYTHON_ROOT" --no-bin
+HERMES_RUNTIME_ROOT="$RUNTIME_ROOT" \
+  HERMES_INSTALL_DIR="$INSTALL_DIR" \
+  HERMES_PYTHON_VERSION="$HERMES_PYTHON_VERSION" \
+  node "$PROJECT_ROOT/scripts/prepare-portable-hermes-runtime.mjs"
 
 echo "Applying local Hermes runtime patches..."
 node "$PROJECT_ROOT/scripts/patch-hermes-runtime.mjs"

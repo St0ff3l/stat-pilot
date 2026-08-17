@@ -23,7 +23,21 @@ $hermesGithubToken = if ($env:HERMES_GITHUB_TOKEN) {
     $env:GITHUB_TOKEN
 }
 $hermesSourceUrl = $env:HERMES_SOURCE_URL
+$hermesPythonVersion = if ($env:HERMES_PYTHON_VERSION) { $env:HERMES_PYTHON_VERSION } else { "3.11" }
+$portablePythonRoot = if ($env:HERMES_PORTABLE_PYTHON_ROOT) {
+    $env:HERMES_PORTABLE_PYTHON_ROOT
+} else {
+    Join-Path $runtimeRoot "python"
+}
 $bootstrapTempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("sz-gov-hermes-{0}" -f [guid]::NewGuid())
+
+# Force uv to use a Python installation stored next to the bundled Hermes
+# runtime. Otherwise a runner-local Python can leave absolute links and a
+# machine-specific pyvenv.cfg in the packaged Electron app.
+$env:HERMES_PYTHON_VERSION = $hermesPythonVersion
+$env:UV_PYTHON_INSTALL_DIR = $portablePythonRoot
+$env:UV_MANAGED_PYTHON = "1"
+$env:UV_PYTHON = $null
 
 New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
 
@@ -131,6 +145,32 @@ try {
     }
 
     & git -C $installDir remote set-url origin "https://github.com/NousResearch/hermes-agent.git" 2>$null
+
+    $uvPath = Join-Path $hermesHome "bin\uv.exe"
+    if (-not (Test-Path $uvPath)) {
+        $uvCommand = Get-Command uv -ErrorAction SilentlyContinue
+        if ($uvCommand) {
+            $uvPath = $uvCommand.Source
+        }
+    }
+    if (-not (Test-Path $uvPath)) {
+        throw "Managed uv was not found after Hermes installation; cannot prepare portable Python."
+    }
+
+    Write-Host "Ensuring portable Python $hermesPythonVersion is bundled with Hermes..."
+    $previousEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $uvPath python install $hermesPythonVersion --install-dir $portablePythonRoot --no-bin
+    $uvExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousEap
+    if ($uvExitCode -ne 0) {
+        throw "Portable Python installation failed with exit code $uvExitCode."
+    }
+
+    & node (Join-Path $projectRoot "scripts/prepare-portable-hermes-runtime.mjs")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Portable Hermes runtime preparation failed with exit code $LASTEXITCODE."
+    }
 
     Write-Host "Applying local Hermes runtime patches..."
     & node (Join-Path $projectRoot "scripts/patch-hermes-runtime.mjs")
