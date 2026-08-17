@@ -8,6 +8,8 @@ const packageMetadata = JSON.parse(
 ) as { version: string };
 
 export default defineConfig({
+  // Electron loads the packaged renderer through file://, so assets must be relative.
+  base: "./",
   plugins: [react(), tailwindcss()],
   define: {
     __APP_VERSION__: JSON.stringify(packageMetadata.version),

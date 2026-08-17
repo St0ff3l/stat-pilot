@@ -94,7 +94,9 @@
         "dmg"
       ],
       "artifactName": "${productName}-${version}-macOS-${arch}.${ext}",
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "identity": "-",
+      "hardenedRuntime": false
     },
     "win": {
       "target": [

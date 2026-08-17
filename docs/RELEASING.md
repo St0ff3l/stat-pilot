@@ -54,4 +54,6 @@ npm run dist:win
 
 ## 签名
 
-当前工作流先生成未签名安装包。正式对外发布时，再在 GitHub Secrets 中配置 macOS 证书/公证信息和 Windows 代码签名证书，避免系统安全提示影响安装体验。
+macOS 构建使用 ad-hoc 签名（`identity: "-"`），用于保证 App 包完整性，不需要 Apple Developer 证书。它不是 Developer ID 签名，也不能替代 notarization；从互联网下载时，macOS 仍可能显示“无法验证开发者”。
+
+正式对外发布时，需在 GitHub Secrets 中配置 Developer ID 证书、公证信息和 Windows 代码签名证书，才能减少系统安全提示。
