@@ -16,7 +16,7 @@ $hermesHome = if ($env:HERMES_HOME) {
 } else {
     Join-Path $runtimeRoot "hermes-home"
 }
-$installerUrl = "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1"
+$installerUrl = "https://api.github.com/repos/NousResearch/hermes-agent/contents/scripts/install.ps1?ref=main"
 $installerPath = Join-Path ([System.IO.Path]::GetTempPath()) ("hermes-install-{0}.ps1" -f [guid]::NewGuid())
 $hermesGithubToken = if ($env:HERMES_GITHUB_TOKEN) {
     $env:HERMES_GITHUB_TOKEN
@@ -40,9 +40,10 @@ try {
     $requestParams = @{
         Uri = $installerUrl
         OutFile = $installerPath
+        Headers = @{ Accept = "application/vnd.github.raw" }
     }
     if ($hermesGithubToken) {
-        $requestParams.Headers = @{ Authorization = "Bearer $hermesGithubToken" }
+        $requestParams.Headers.Authorization = "Bearer $hermesGithubToken"
     }
 
     $downloaded = $false

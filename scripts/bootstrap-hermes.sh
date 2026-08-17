@@ -6,7 +6,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNTIME_ROOT="${HERMES_RUNTIME_ROOT:-$PROJECT_ROOT/.runtime}"
 INSTALL_DIR="${HERMES_INSTALL_DIR:-$RUNTIME_ROOT/hermes-agent}"
 HERMES_HOME="${HERMES_HOME:-$RUNTIME_ROOT/hermes-home}"
-INSTALLER_URL="https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh"
+INSTALLER_URL="https://api.github.com/repos/NousResearch/hermes-agent/contents/scripts/install.sh?ref=main"
 SKIP_SETUP="${HERMES_SKIP_SETUP:-0}"
 NON_INTERACTIVE="${HERMES_NON_INTERACTIVE:-0}"
 HERMES_COMMIT="${HERMES_COMMIT:-}"
@@ -40,7 +40,9 @@ CURL_ARGS=(
   --retry 5
   --retry-delay 10
   --retry-max-time 300
+  --retry-all-errors
 )
+CURL_ARGS+=(--header "Accept: application/vnd.github.raw")
 if [[ -n "$HERMES_GITHUB_TOKEN" ]]; then
   CURL_ARGS+=(--header "Authorization: Bearer $HERMES_GITHUB_TOKEN")
   export GIT_CONFIG_COUNT=1
