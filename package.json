@@ -100,8 +100,7 @@
       "target": [
         "nsis"
       ],
-      "artifactName": "${productName}-${version}-Windows-${arch}.${ext}",
-      "publisherName": "SZ Gov Scope"
+      "artifactName": "${productName}-${version}-Windows-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
