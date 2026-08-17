@@ -21,6 +21,14 @@ function getBundledRuntimeRoot() {
   return path.resolve(process.cwd(), ".runtime");
 }
 
+function getBundledAppAssetRoot() {
+  if (app.isPackaged) {
+    return process.resourcesPath;
+  }
+
+  return path.resolve(process.cwd());
+}
+
 function getRuntimeRoot() {
   return path.join(app.getPath("userData"), RUNTIME_DIRNAME);
 }
@@ -33,22 +41,60 @@ function getRuntimeHomeDir() {
   return path.join(getRuntimeRoot(), "hermes-home");
 }
 
+function getRuntimePythonPath(installDir = getRuntimeInstallDir()) {
+  const pythonRelativePath = process.platform === "win32" ? "venv/Scripts/python.exe" : "venv/bin/python";
+  return path.join(installDir, pythonRelativePath);
+}
+
+function getRuntimeEntryPointPath(installDir = getRuntimeInstallDir()) {
+  const hermesRelativePath = process.platform === "win32" ? "venv/Scripts/hermes.exe" : "venv/bin/hermes";
+  return path.join(installDir, hermesRelativePath);
+}
+
+function getRuntimeGuardPath(installDir = getRuntimeInstallDir()) {
+  return path.join(installDir, process.platform === "win32" ? "hermes.cmd" : "hermes");
+}
+
 function getOfficialHermesHomeDir() {
   return path.join(app.getPath("home"), OFFICIAL_HERMES_DIRNAME);
 }
 
 function getDefaultHermesBinaryPath() {
-  return path.join(getRuntimeInstallDir(), "hermes");
+  return process.platform === "win32"
+    ? getRuntimeEntryPointPath()
+    : getRuntimeGuardPath();
 }
 
 function getLegacyProjectRuntimeRoot() {
   return path.resolve(process.cwd(), ".runtime");
 }
 
-function buildOutputInstructions(cwd, defaultOutputDir = "outputs") {
+const FALLBACK_SOURCE_ATTRIBUTION_RULE =
+  "所有抓取、汇总、报告和事实问答都必须标明具体来源；网页、本地文件、用户提供内容、当前对话和模型推断都要区分标注；无法核验时写‘来源：未提供/待核验’，严禁编造来源。";
+
+async function loadSourceAttributionRule() {
+  const appRoot = getBundledAppAssetRoot();
+  const candidates = [
+    path.resolve(appRoot, "rules/source_attribution.md"),
+    path.resolve(app.getAppPath(), "rules/source_attribution.md"),
+    path.resolve(process.cwd(), "rules/source_attribution.md"),
+  ];
+
+  for (const rulePath of candidates) {
+    const content = await fs.readFile(rulePath, "utf8").catch(() => "");
+    if (content.trim()) {
+      return content.trim();
+    }
+  }
+
+  return FALLBACK_SOURCE_ATTRIBUTION_RULE;
+}
+
+async function buildOutputInstructions(cwd, defaultOutputDir = "outputs") {
   const resolvedDir = path.isAbsolute(defaultOutputDir)
     ? defaultOutputDir
     : path.resolve(cwd, defaultOutputDir);
+  const sourceAttributionRule = await loadSourceAttributionRule();
 
   return (
     `【TRAE Solo / Autonomous Agent 全自主执行规范】\n` +
@@ -57,7 +103,8 @@ function buildOutputInstructions(cwd, defaultOutputDir = "outputs") {
     `3. 【根因排错与闭环验证】：若脚本执行或终端报错，必须主动读取错误 Log / 堆栈信息，分析根本原因并修补代码，重新运行直至完全成功。切勿吞掉报错，严禁在未验证成功前宣布完成。\n` +
     `4. 【文件产出与统一存储】：所有抓取的数据、生成的 HTML 仪表盘、分析周报、代码产物等，统一存入目标输出目录：${resolvedDir}。每次任务必须在该目录下按主题创建语义化子目录（如 统计局周报_20260806/）。\n` +
     `5. 【清爽回复与链接展示】：聊天界面严禁直接粘贴超长原始 JSON 或冗长数据原文。聊天框中只提供 150-200 字的精炼高管级结论，并附带指向产物目录/文件的 markdown 链接（例如：[打开输出文件](file://${resolvedDir}/子目录/文件名)）。\n` +
-    `6. 【YOLO 无人值守模式】：当前已开启全自动免授权模式，所有敏感操作（代码执行、patch、脚本运行）自动授权，连续推进直到任务圆满达成。`
+    `6. 【全局来源标注规则】：以下规则是本应用默认系统规则，优先于普通输出习惯，必须在每次回复、抓取、汇总、报告和事实问答中执行：\n${sourceAttributionRule}\n` +
+    `7. 【YOLO 无人值守模式】：当前已开启全自动免授权模式，所有敏感操作（代码执行、patch、脚本运行）自动授权，连续推进直到任务圆满达成。`
   );
 }
 
@@ -92,7 +139,7 @@ function normalizeSettings(settings) {
   registeredSkills = registeredSkills.filter((s) => s && s.name && !["gov_digest", "policy_classifier", "stats_gov_scraper"].includes(s.name));
   const existingSkillNames = new Set(registeredSkills.map((s) => s?.name));
 
-  const appRoot = app ? app.getAppPath() : process.cwd();
+  const appRoot = getBundledAppAssetRoot();
   const defaultSkillsList = [
     {
       name: "info_digest_html",
@@ -230,12 +277,24 @@ async function syncRegisteredSkills(settings) {
         }
       }
 
-      // Create symlink
+      // Prefer junctions on Windows because directory symlinks often require
+      // Developer Mode or elevated privileges. Fall back to a copy if the
+      // platform still refuses the link.
       try {
-        await fs.symlink(skillFolder, targetPath, "dir");
+        await fs.symlink(skillFolder, targetPath, process.platform === "win32" ? "junction" : "dir");
         console.log(`Created symlink for skill ${skill.name} -> ${skillFolder}`);
       } catch (err) {
-        console.error(`Failed to create symlink for skill ${skill.name}:`, err);
+        if (process.platform !== "win32") {
+          console.error(`Failed to create symlink for skill ${skill.name}:`, err);
+          continue;
+        }
+
+        try {
+          await fs.cp(skillFolder, targetPath, { recursive: true, force: true });
+          console.log(`Copied skill ${skill.name} -> ${targetPath}`);
+        } catch (copyError) {
+          console.error(`Failed to link or copy skill ${skill.name}:`, copyError);
+        }
       }
     }
   } catch (err) {
@@ -549,6 +608,10 @@ async function reconcileOfficialModeSettings(settings, officialState) {
 }
 
 async function updateLegacyHermesWrapper(runtimeBin) {
+  if (process.platform === "win32") {
+    return;
+  }
+
   const wrapperPath = path.join(app.getPath("home"), ".local", "bin", "hermes");
   const wrapperDir = path.dirname(wrapperPath);
   const desired = [
@@ -568,6 +631,10 @@ async function updateLegacyHermesWrapper(runtimeBin) {
 }
 
 async function cleanupHermesWrapper(extraTargets = []) {
+  if (process.platform === "win32") {
+    return;
+  }
+
   const wrapperPath = path.join(app.getPath("home"), ".local", "bin", "hermes");
   const content = await readTextIfExists(wrapperPath);
   if (!content) {
@@ -594,12 +661,14 @@ async function cleanupHermesWrapper(extraTargets = []) {
 async function ensureEmbeddedRuntimeInstalled() {
   const installDir = getRuntimeInstallDir();
   const runtimeRoot = getRuntimeRoot();
-  const runtimeBin = getDefaultHermesBinaryPath();
+  const runtimePython = getRuntimePythonPath(installDir);
+  const runtimeEntryPoint = getRuntimeEntryPointPath(installDir);
+  const runtimeGuard = getRuntimeGuardPath(installDir);
   const sourceRoot = getBundledRuntimeRoot();
 
   const installed =
-    (await pathExists(runtimeBin)) &&
-    (await pathExists(path.join(installDir, "venv", "bin", "python")));
+    (await pathExists(runtimePython)) &&
+    (await pathExists(runtimeEntryPoint));
 
   if (!installed) {
     const sourceExists = await pathExists(sourceRoot);
@@ -627,20 +696,30 @@ async function ensureEmbeddedRuntimeInstalled() {
   }
 
   await fs.mkdir(getRuntimeHomeDir(), { recursive: true });
-  await lockRuntimeToElectron(runtimeBin);
-  await updateLegacyHermesWrapper(runtimeBin);
+  if (process.platform !== "win32") {
+    await lockRuntimeToElectron(runtimeGuard);
+    await updateLegacyHermesWrapper(runtimeGuard);
+  }
 
   return buildRuntimeInfo(true);
 }
 
 async function uninstallEmbeddedRuntime() {
   const runtimeRoot = getRuntimeRoot();
-  await cleanupHermesWrapper([path.join(runtimeRoot, "hermes-agent", "venv", "bin", "hermes")]);
+  const runtimeInstallDir = path.join(runtimeRoot, "hermes-agent");
+  await cleanupHermesWrapper([
+    getRuntimeEntryPointPath(runtimeInstallDir),
+    getRuntimeGuardPath(runtimeInstallDir),
+  ]);
   await fs.rm(runtimeRoot, { recursive: true, force: true });
   return buildRuntimeInfo(false);
 }
 
 async function lockRuntimeToElectron(runtimeBin) {
+  if (process.platform === "win32") {
+    return;
+  }
+
   const guardedLauncher = [
     "#!/usr/bin/env python3",
     "import os",
@@ -751,9 +830,8 @@ function buildHermesEnv(settings, launchConfig = null, sessionToken = "") {
 }
 
 function resolveBackendLaunch() {
-  const hermesBin = path.resolve(getDefaultHermesBinaryPath());
-  const installDir = path.dirname(hermesBin);
-  const venvPython = path.join(installDir, "venv", "bin", "python");
+  const installDir = getRuntimeInstallDir();
+  const venvPython = getRuntimePythonPath(installDir);
   const webDist = path.join(installDir, "hermes_cli", "web_dist");
 
   return {
@@ -1176,7 +1254,7 @@ class HermesGatewayBridge {
       cwd,
       cols: 120,
       yolo: true,
-      developerInstructions: buildOutputInstructions(cwd, this.settings.defaultOutputDir),
+      developerInstructions: await buildOutputInstructions(cwd, this.settings.defaultOutputDir),
     });
   }
 
@@ -1186,7 +1264,7 @@ class HermesGatewayBridge {
       session_id: threadId,
       cols: 120,
       yolo: true,
-      developerInstructions: buildOutputInstructions(cwd, this.settings.defaultOutputDir),
+      developerInstructions: await buildOutputInstructions(cwd, this.settings.defaultOutputDir),
     });
   }
 
@@ -2681,4 +2759,3 @@ ipcMain.handle("hermes:selectWorkspaceFolder", async () => {
     branch,
   };
 });
-

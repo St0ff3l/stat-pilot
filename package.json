@@ -10,10 +10,13 @@
     "dev:electron": "electron .",
     "build": "tsc -b && vite build",
     "dist:mac": "npm run build && electron-builder --mac dmg",
+    "dist:win": "npm run build && electron-builder --win nsis",
+    "dist:linux": "npm run build && electron-builder --linux deb",
     "hermes:patch": "node scripts/patch-hermes-runtime.mjs",
     "hermes:bootstrap": "bash scripts/bootstrap-hermes.sh",
     "hermes:bootstrap:quick": "HERMES_NON_INTERACTIVE=1 bash scripts/bootstrap-hermes.sh",
     "hermes:bootstrap:skip-setup": "HERMES_SKIP_SETUP=1 bash scripts/bootstrap-hermes.sh",
+    "hermes:bootstrap:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-hermes.ps1",
     "lint": "eslint .",
     "preview": "vite preview",
     "start": "electron ."
@@ -57,6 +60,8 @@
       "dist/**",
       "electron/**",
       "server/**",
+      "rules/**",
+      "skills/**",
       "src/electron.d.ts",
       "package.json"
     ],
@@ -68,13 +73,49 @@
           "**/*",
           "!**/node_modules/electron/dist/Electron.app/**"
         ]
+      },
+      {
+        "from": "rules",
+        "to": "rules",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "skills",
+        "to": "skills",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "mac": {
       "target": [
         "dmg"
       ],
+      "artifactName": "${productName}-${version}-macOS-${arch}.${ext}",
       "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "${productName}-${version}-Windows-${arch}.${ext}",
+      "publisherName": "SZ Gov Scope"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "linux": {
+      "target": [
+        "deb"
+      ],
+      "artifactName": "${productName}-${version}-Linux-${arch}.${ext}",
+      "category": "Utility",
+      "maintainer": "SZ Gov Scope"
     }
   }
 }

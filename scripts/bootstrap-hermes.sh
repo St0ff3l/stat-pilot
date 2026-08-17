@@ -9,6 +9,7 @@ HERMES_HOME="${HERMES_HOME:-$RUNTIME_ROOT/hermes-home}"
 INSTALLER_URL="https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh"
 SKIP_SETUP="${HERMES_SKIP_SETUP:-0}"
 NON_INTERACTIVE="${HERMES_NON_INTERACTIVE:-0}"
+HERMES_COMMIT="${HERMES_COMMIT:-}"
 
 mkdir -p "$RUNTIME_ROOT"
 
@@ -16,9 +17,15 @@ echo "Installing Hermes Agent into:"
 echo "  install dir: $INSTALL_DIR"
 echo "  hermes home: $HERMES_HOME"
 
-curl -fsSL "$INSTALLER_URL" | bash -s -- \
-  --dir "$INSTALL_DIR" \
+INSTALL_ARGS=(
+  --dir "$INSTALL_DIR"
   --hermes-home "$HERMES_HOME"
+)
+if [[ -n "$HERMES_COMMIT" ]]; then
+  INSTALL_ARGS+=(--commit "$HERMES_COMMIT")
+fi
+
+curl -fsSL "$INSTALLER_URL" | bash -s -- "${INSTALL_ARGS[@]}"
 
 echo "Applying local Hermes runtime patches..."
 node "$PROJECT_ROOT/scripts/patch-hermes-runtime.mjs"

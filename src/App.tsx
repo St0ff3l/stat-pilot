@@ -1116,6 +1116,7 @@ function App() {
             <div className="brand-title">
               <p className="eyebrow">深圳市统计局</p>
               <h1>深统政务 Scope</h1>
+              <span className="app-version">v{__APP_VERSION__}</span>
             </div>
           </div>
           <div className="empty-state">
@@ -1147,6 +1148,7 @@ function App() {
           <div className="brand-title">
             <p className="eyebrow">深圳市统计局</p>
             <h1>深统政务 Scope</h1>
+            <span className="app-version">v{__APP_VERSION__}</span>
           </div>
           <button
             className="ghost-button-icon"

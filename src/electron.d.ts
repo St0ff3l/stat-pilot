@@ -1,4 +1,6 @@
 declare global {
+  const __APP_VERSION__: string;
+
   type HermesThreadSummary = {
     id: string;
     name: string | null;

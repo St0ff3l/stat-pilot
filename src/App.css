@@ -49,6 +49,10 @@ body {
   @apply m-0 text-[1.02rem] font-bold tracking-tight text-sidebar-text leading-tight;
 }
 
+.app-version {
+  @apply mt-1 text-[0.66rem] font-medium tracking-[0.08em] text-slate-400;
+}
+
 .eyebrow {
   @apply m-0 mb-0.5 uppercase tracking-widest text-[0.65rem] font-semibold text-accent;
 }
@@ -1778,5 +1782,4 @@ body {
   background: linear-gradient(135deg, #1d4ed8, #1e40af);
   box-shadow: 0 4px 10px rgba(37, 99, 235, 0.35);
 }
-
 
