@@ -56,6 +56,7 @@ jobs:
 
     env:
       HERMES_COMMIT: ${{ vars.HERMES_COMMIT }}
+      HERMES_GITHUB_TOKEN: ${{ github.token }}
 
     steps:
       - name: Check out source

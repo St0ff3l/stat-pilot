@@ -18,6 +18,11 @@ $hermesHome = if ($env:HERMES_HOME) {
 }
 $installerUrl = "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1"
 $installerPath = Join-Path ([System.IO.Path]::GetTempPath()) ("hermes-install-{0}.ps1" -f [guid]::NewGuid())
+$hermesGithubToken = if ($env:HERMES_GITHUB_TOKEN) {
+    $env:HERMES_GITHUB_TOKEN
+} else {
+    $env:GITHUB_TOKEN
+}
 
 New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
 
@@ -26,7 +31,38 @@ Write-Host "  install dir: $installDir"
 Write-Host "  hermes home: $hermesHome"
 
 try {
-    Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath
+    if ($hermesGithubToken) {
+        $env:GIT_CONFIG_COUNT = "1"
+        $env:GIT_CONFIG_KEY_0 = "http.https://github.com/.extraheader"
+        $env:GIT_CONFIG_VALUE_0 = "AUTHORIZATION: bearer $hermesGithubToken"
+    }
+
+    $requestParams = @{
+        Uri = $installerUrl
+        OutFile = $installerPath
+    }
+    if ($hermesGithubToken) {
+        $requestParams.Headers = @{ Authorization = "Bearer $hermesGithubToken" }
+    }
+
+    $downloaded = $false
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        try {
+            Invoke-WebRequest @requestParams
+            $downloaded = $true
+            break
+        } catch {
+            if ($attempt -eq 5) {
+                throw
+            }
+            $delay = [math]::Min(60, 5 * [math]::Pow(2, $attempt - 1))
+            Write-Host "Hermes installer download failed; retrying in $delay seconds..."
+            Start-Sleep -Seconds $delay
+        }
+    }
+    if (-not $downloaded) {
+        throw "Hermes installer download failed."
+    }
 
     $installerParams = @{
         SkipSetup = $true

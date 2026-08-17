@@ -10,6 +10,7 @@ INSTALLER_URL="https://raw.githubusercontent.com/NousResearch/hermes-agent/main/
 SKIP_SETUP="${HERMES_SKIP_SETUP:-0}"
 NON_INTERACTIVE="${HERMES_NON_INTERACTIVE:-0}"
 HERMES_COMMIT="${HERMES_COMMIT:-}"
+HERMES_GITHUB_TOKEN="${HERMES_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
 
 mkdir -p "$RUNTIME_ROOT"
 
@@ -31,7 +32,23 @@ if [[ "$NON_INTERACTIVE" == "1" ]]; then
   INSTALL_ARGS+=(--non-interactive)
 fi
 
-curl -fsSL "$INSTALLER_URL" | bash -s -- "${INSTALL_ARGS[@]}"
+CURL_ARGS=(
+  --fail
+  --silent
+  --show-error
+  --location
+  --retry 5
+  --retry-delay 10
+  --retry-max-time 300
+)
+if [[ -n "$HERMES_GITHUB_TOKEN" ]]; then
+  CURL_ARGS+=(--header "Authorization: Bearer $HERMES_GITHUB_TOKEN")
+  export GIT_CONFIG_COUNT=1
+  export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+  export GIT_CONFIG_VALUE_0="AUTHORIZATION: bearer $HERMES_GITHUB_TOKEN"
+fi
+
+curl "${CURL_ARGS[@]}" "$INSTALLER_URL" | bash -s -- "${INSTALL_ARGS[@]}"
 
 echo "Applying local Hermes runtime patches..."
 node "$PROJECT_ROOT/scripts/patch-hermes-runtime.mjs"
