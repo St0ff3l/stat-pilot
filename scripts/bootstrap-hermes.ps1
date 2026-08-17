@@ -22,6 +22,7 @@ $hermesGithubToken = if ($env:HERMES_GITHUB_TOKEN) {
 } else {
     $env:GITHUB_TOKEN
 }
+$hermesSourceUrl = $env:HERMES_SOURCE_URL
 $bootstrapTempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("sz-gov-hermes-{0}" -f [guid]::NewGuid())
 
 New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
@@ -44,7 +45,11 @@ function Prepare-LocalHermesRepository {
     $sourceRef = if ($env:HERMES_COMMIT) { $env:HERMES_COMMIT } else { $hermesBranch }
 
     if (-not (Test-Path (Join-Path $installDir ".git"))) {
-        $archiveUrl = "https://codeload.github.com/NousResearch/hermes-agent/zip/$sourceRef"
+        $archiveUrl = if ($hermesSourceUrl -and -not $env:HERMES_COMMIT) {
+            $hermesSourceUrl
+        } else {
+            "https://codeload.github.com/NousResearch/hermes-agent/zip/$sourceRef"
+        }
         $archivePath = Join-Path $bootstrapTempRoot "hermes-source.zip"
         $extractPath = Join-Path $bootstrapTempRoot "extract"
 

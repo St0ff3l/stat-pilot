@@ -11,6 +11,7 @@ SKIP_SETUP="${HERMES_SKIP_SETUP:-0}"
 NON_INTERACTIVE="${HERMES_NON_INTERACTIVE:-0}"
 HERMES_COMMIT="${HERMES_COMMIT:-}"
 HERMES_GITHUB_TOKEN="${HERMES_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
+HERMES_SOURCE_URL="${HERMES_SOURCE_URL:-}"
 HERMES_ARCHIVE_BOOTSTRAPPED=0
 HERMES_BOOTSTRAP_TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/sz-gov-hermes.XXXXXX")"
 trap 'rm -rf "$HERMES_BOOTSTRAP_TEMP_ROOT"' EXIT
@@ -43,8 +44,6 @@ prepare_local_hermes_repository() {
     echo "Using the existing Hermes source checkout and a local-only git remote."
   else
     HERMES_ARCHIVE_BOOTSTRAPPED=1
-    local archive_url_api="https://api.github.com/repos/NousResearch/hermes-agent/tarball/${source_ref}"
-    local archive_url_codeload="https://codeload.github.com/NousResearch/hermes-agent/tar.gz/${source_ref}"
     local archive_args=(
       --fail
       --silent
@@ -61,9 +60,15 @@ prepare_local_hermes_repository() {
     fi
 
     echo "Downloading Hermes source archive (no upstream git clone)..."
-    if ! curl "${archive_args[@]}" "$archive_url_api"; then
-      echo "GitHub API archive download failed; trying codeload fallback..."
-      curl "${archive_args[@]}" "$archive_url_codeload"
+    if [[ -n "$HERMES_SOURCE_URL" && -z "$HERMES_COMMIT" ]]; then
+      curl "${archive_args[@]}" "$HERMES_SOURCE_URL"
+    else
+      local archive_url_api="https://api.github.com/repos/NousResearch/hermes-agent/tarball/${source_ref}"
+      local archive_url_codeload="https://codeload.github.com/NousResearch/hermes-agent/tar.gz/${source_ref}"
+      if ! curl "${archive_args[@]}" "$archive_url_api"; then
+        echo "GitHub API archive download failed; trying codeload fallback..."
+        curl "${archive_args[@]}" "$archive_url_codeload"
+      fi
     fi
 
     mkdir -p "$archive_dir"

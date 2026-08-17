@@ -57,6 +57,7 @@ jobs:
     env:
       HERMES_COMMIT: ${{ vars.HERMES_COMMIT }}
       HERMES_GITHUB_TOKEN: ${{ github.token }}
+      HERMES_SOURCE_URL: https://github.com/${{ github.repository }}/releases/download/hermes-runtime-0.16.0/hermes-agent-source-0.16.0.tar.gz
 
     steps:
       - name: Check out source
