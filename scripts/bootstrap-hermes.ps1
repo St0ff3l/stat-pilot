@@ -32,9 +32,11 @@ Write-Host "  hermes home: $hermesHome"
 
 try {
     if ($hermesGithubToken) {
-        $env:GIT_CONFIG_COUNT = "1"
-        $env:GIT_CONFIG_KEY_0 = "http.https://github.com/.extraheader"
-        $env:GIT_CONFIG_VALUE_0 = "AUTHORIZATION: bearer $hermesGithubToken"
+        $env:GIT_CONFIG_COUNT = "2"
+        $env:GIT_CONFIG_KEY_0 = "url.https://x-access-token:$hermesGithubToken@github.com/.insteadOf"
+        $env:GIT_CONFIG_VALUE_0 = "https://github.com/"
+        $env:GIT_CONFIG_KEY_1 = "http.https://github.com/.extraheader"
+        $env:GIT_CONFIG_VALUE_1 = "AUTHORIZATION: bearer $hermesGithubToken"
     }
 
     $requestParams = @{

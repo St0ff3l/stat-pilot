@@ -45,9 +45,11 @@ CURL_ARGS=(
 CURL_ARGS+=(--header "Accept: application/vnd.github.raw")
 if [[ -n "$HERMES_GITHUB_TOKEN" ]]; then
   CURL_ARGS+=(--header "Authorization: Bearer $HERMES_GITHUB_TOKEN")
-  export GIT_CONFIG_COUNT=1
-  export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
-  export GIT_CONFIG_VALUE_0="AUTHORIZATION: bearer $HERMES_GITHUB_TOKEN"
+  export GIT_CONFIG_COUNT=2
+  export GIT_CONFIG_KEY_0="url.https://x-access-token:${HERMES_GITHUB_TOKEN}@github.com/.insteadOf"
+  export GIT_CONFIG_VALUE_0="https://github.com/"
+  export GIT_CONFIG_KEY_1="http.https://github.com/.extraheader"
+  export GIT_CONFIG_VALUE_1="AUTHORIZATION: bearer $HERMES_GITHUB_TOKEN"
 fi
 
 curl "${CURL_ARGS[@]}" "$INSTALLER_URL" | bash -s -- "${INSTALL_ARGS[@]}"
