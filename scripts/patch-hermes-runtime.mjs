@@ -8,6 +8,7 @@ const projectRoot = path.resolve(scriptDir, "..");
 const APP_NAME = "sz-gov-scope";
 const CHINESE_SENTINEL = "Return ONLY the title text in Chinese";
 const TITLE_PROMPT_ASSIGNMENT = /_TITLE_PROMPT\s*=\s*\([\s\S]*?\n\)\n/;
+const MODERN_LANGUAGE_RULE_ASSIGNMENT = /_LANGUAGE_RULE_MATCH_USER\s*=\s*["'][^"'\r\n]*["']/;
 const ORIGINAL_TITLE_PROMPT = `_TITLE_PROMPT = (
     "Generate a short, descriptive title (3-7 words) for a conversation that starts with the "
     "following exchange. The title should capture the main topic or intent. "
@@ -72,6 +73,28 @@ async function patchFile({ label, filePath, optional }) {
     console.error(`Missing ${label}: ${filePath}`);
     console.error("Run `npm run hermes:bootstrap` first so the runtime is installed locally.");
     process.exitCode = 1;
+    return;
+  }
+
+  if (content.includes("_TITLE_PROMPT_TEMPLATE")) {
+    if (content.includes("title in Chinese")) {
+      console.log(`OK ${label}: already uses a Chinese title language rule`);
+      return;
+    }
+
+    if (!MODERN_LANGUAGE_RULE_ASSIGNMENT.test(content)) {
+      console.error(`Unexpected modern title_generator.py format in ${label}: ${filePath}`);
+      console.error("Hermes upstream may have changed. Please review and update scripts/patch-hermes-runtime.mjs.");
+      process.exitCode = 1;
+      return;
+    }
+
+    const updated = content.replace(
+      MODERN_LANGUAGE_RULE_ASSIGNMENT,
+      '_LANGUAGE_RULE_MATCH_USER = "- Write the title in Chinese."'
+    );
+    await fs.writeFile(filePath, updated, "utf8");
+    console.log(`Patched ${label}: pinned modern title language to Chinese`);
     return;
   }
 

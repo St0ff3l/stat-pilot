@@ -62,7 +62,7 @@ jobs:
 
       - name: Bootstrap Hermes Runtime on Windows
         if: matrix.runtime_bootstrap == 'windows'
-        run: npm run hermes:bootstrap:windows
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-hermes.ps1
 
       - name: Build renderer and server bundles
         run: npm run build
