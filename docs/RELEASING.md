@@ -1,6 +1,6 @@
-# 发布 SZ Gov Scope
+# 发布 深统政务Scope
 
-SZ Gov Scope 将 Hermes Runtime 和项目 Skill 一起打进安装包。由于 Hermes 的 Python 虚拟环境包含平台相关文件，必须在对应的 GitHub Actions Runner 上分别构建四个目标：
+深统政务Scope 将 Hermes Runtime 和项目 Skill 一起打进安装包。由于 Hermes 的 Python 虚拟环境包含平台相关文件，必须在对应的 GitHub Actions Runner 上分别构建四个目标：
 
 - macOS：`macos-14`，生成 Apple Silicon `.dmg`；
 - macOS Intel：`macos-15-intel`，生成 Intel `.dmg`；

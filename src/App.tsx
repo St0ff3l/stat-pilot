@@ -1,6 +1,7 @@
 import React, { Component, useEffect, useMemo, useRef, useState, type ReactNode, type ErrorInfo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import szLogo from "./assets/sz-logo.png";
 
 function formatRelativeTime(value: number): string {
   const date = new Date(value * 1000);
@@ -1113,15 +1114,18 @@ function App() {
         <aside className="sidebar">
           <div className="sidebar-resizer" onMouseDown={startResizing} />
           <div className="brand">
-            <div className="brand-title">
-              <p className="eyebrow">深圳市统计局</p>
-              <h1>深统政务 Scope</h1>
-              <span className="app-version">v{__APP_VERSION__}</span>
+            <div className="brand-main">
+              <img className="brand-logo" src={szLogo} alt="" />
+              <div className="brand-title">
+                <p className="eyebrow">深圳市统计局</p>
+                <h1>深统政务Scope</h1>
+                <span className="app-version">v{__APP_VERSION__}</span>
+              </div>
             </div>
           </div>
           <div className="empty-state">
             <strong>正在启动</strong>
-            <p>正在连接并启动本地深统政务 Scope 后台...</p>
+            <p>正在连接并启动本地深统政务Scope后台...</p>
           </div>
         </aside>
         <main className="chat">
@@ -1145,10 +1149,13 @@ function App() {
       <aside className="sidebar">
         <div className="sidebar-resizer" onMouseDown={startResizing} />
         <div className="brand">
-          <div className="brand-title">
-            <p className="eyebrow">深圳市统计局</p>
-            <h1>深统政务 Scope</h1>
-            <span className="app-version">v{__APP_VERSION__}</span>
+          <div className="brand-main">
+            <img className="brand-logo" src={szLogo} alt="" />
+            <div className="brand-title">
+              <p className="eyebrow">深圳市统计局</p>
+              <h1>深统政务Scope</h1>
+              <span className="app-version">v{__APP_VERSION__}</span>
+            </div>
           </div>
           <button
             className="ghost-button-icon"
@@ -1502,7 +1509,7 @@ function App() {
                       <span>深圳市统计局 · 智能工作台</span>
                     </div>
 
-                    <h2 className="trae-hero-title">深统政务 Scope</h2>
+          <h2 className="trae-hero-title">深统政务Scope</h2>
                     <p className="trae-hero-subtitle">
                       高效检索政务统计数据、自动化分析公文报告、智能代码生成与数据洞察
                     </p>

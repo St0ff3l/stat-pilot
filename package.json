@@ -52,7 +52,8 @@
   },
   "build": {
     "appId": "com.stoffel.szgovscope",
-    "productName": "SZ Gov Scope",
+    "productName": "深统政务Scope",
+    "icon": "src/assets/sz-logo.png",
     "directories": {
       "output": "release"
     },
@@ -116,7 +117,7 @@
       ],
       "artifactName": "${productName}-${version}-Linux-${arch}.${ext}",
       "category": "Utility",
-      "maintainer": "SZ Gov Scope"
+      "maintainer": "深统政务Scope"
     }
   }
 }

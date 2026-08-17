@@ -1802,7 +1802,7 @@ function createWindow() {
     height: 940,
     minWidth: 1180,
     minHeight: 760,
-    title: "深统政务 Scope",
+    title: "深统政务Scope",
     backgroundColor: "#f8fafc",
     webPreferences: {
       preload: path.join(app.getAppPath(), "electron/preload.cjs"),
