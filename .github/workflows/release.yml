@@ -24,21 +24,25 @@ jobs:
             runtime_bootstrap: unix
             builder_args: --mac dmg --arm64
             artifact_name: installers-macos-arm64
+            artifact_path: release/*.dmg
           - name: macOS x64
             os: macos-15-intel
             runtime_bootstrap: unix
             builder_args: --mac dmg --x64
             artifact_name: installers-macos-x64
+            artifact_path: release/*.dmg
           - name: Windows x64
             os: windows-2022
             runtime_bootstrap: windows
             builder_args: --win nsis --x64
             artifact_name: installers-windows-x64
+            artifact_path: release/*.exe
           - name: Linux x64 deb
             os: ubuntu-22.04
             runtime_bootstrap: unix
             builder_args: --linux deb --x64
             artifact_name: installers-linux-x64-deb
+            artifact_path: release/*.deb
 
     env:
       HERMES_COMMIT: ${{ vars.HERMES_COMMIT }}
@@ -85,7 +89,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: release/*
+          path: ${{ matrix.artifact_path }}
           if-no-files-found: error
 
   release:
