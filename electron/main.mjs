@@ -42,12 +42,12 @@ function getRuntimeHomeDir() {
 }
 
 function getRuntimePythonPath(installDir = getRuntimeInstallDir()) {
-  const pythonRelativePath = process.platform === "win32" ? "venv/Scripts/python.exe" : "venv/bin/python";
+  const pythonRelativePath = process.platform === "win32" ? ".venv/Scripts/python.exe" : ".venv/bin/python";
   return path.join(installDir, pythonRelativePath);
 }
 
 function getRuntimeEntryPointPath(installDir = getRuntimeInstallDir()) {
-  const hermesRelativePath = process.platform === "win32" ? "venv/Scripts/hermes.exe" : "venv/bin/hermes";
+  const hermesRelativePath = process.platform === "win32" ? ".venv/Scripts/hermes.exe" : ".venv/bin/hermes";
   return path.join(installDir, hermesRelativePath);
 }
 

@@ -36,8 +36,23 @@ curl -fsSL "$INSTALLER_URL" | bash -s -- "${INSTALL_ARGS[@]}"
 echo "Applying local Hermes runtime patches..."
 node "$PROJECT_ROOT/scripts/patch-hermes-runtime.mjs"
 
-HERMES_BIN="${HERMES_BIN:-$INSTALL_DIR/hermes}"
-if [[ ! -x "$HERMES_BIN" ]]; then
+if [[ -n "${HERMES_BIN:-}" && ! -x "$HERMES_BIN" ]]; then
+  HERMES_BIN=""
+fi
+
+if [[ -z "${HERMES_BIN:-}" ]]; then
+  for candidate in \
+    "$INSTALL_DIR/.venv/bin/hermes" \
+    "$INSTALL_DIR/venv/bin/hermes" \
+    "$INSTALL_DIR/hermes"; do
+    if [[ -x "$candidate" ]]; then
+      HERMES_BIN="$candidate"
+      break
+    fi
+  done
+fi
+
+if [[ -z "${HERMES_BIN:-}" ]]; then
   if command -v hermes >/dev/null 2>&1; then
     HERMES_BIN="$(command -v hermes)"
   else

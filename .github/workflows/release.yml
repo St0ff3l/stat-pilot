@@ -58,7 +58,7 @@ jobs:
 
       - name: Bootstrap Hermes Runtime on macOS/Linux
         if: matrix.runtime_bootstrap == 'unix'
-        run: npm run hermes:bootstrap:quick
+        run: npm run hermes:bootstrap:skip-setup
 
       - name: Bootstrap Hermes Runtime on Windows
         if: matrix.runtime_bootstrap == 'windows'

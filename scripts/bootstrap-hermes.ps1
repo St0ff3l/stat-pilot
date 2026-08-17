@@ -28,18 +28,18 @@ Write-Host "  hermes home: $hermesHome"
 try {
     Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath
 
-    $installerArgs = @(
-        "-SkipSetup",
-        "-NonInteractive",
-        "-HermesHome", $hermesHome,
-        "-InstallDir", $installDir
-    )
-
-    if ($env:HERMES_COMMIT) {
-        $installerArgs += @("-Commit", $env:HERMES_COMMIT)
+    $installerParams = @{
+        SkipSetup = $true
+        NonInteractive = $true
+        HermesHome = $hermesHome
+        InstallDir = $installDir
     }
 
-    & $installerPath @installerArgs
+    if ($env:HERMES_COMMIT) {
+        $installerParams.Commit = $env:HERMES_COMMIT
+    }
+
+    & $installerPath @installerParams
     if ($LASTEXITCODE -ne 0) {
         throw "Hermes Windows installer failed with exit code $LASTEXITCODE."
     }
