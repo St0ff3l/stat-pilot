@@ -202,14 +202,29 @@ async function ensureScopeSessionIsolation(homeDir) {
   console.log("[hermes-isolation] Disabled cross-session session_search tool.");
 }
 
-function isProductIdentityQuestion(text) {
-  return /^(你是谁|你是什么|你能做什么|介绍一下你自己|who are you|what can you do)[？?！!。\s]*$/i.test(
-    toSafeString(text).trim()
-  );
-}
+const SCOPE_SOUL = `你是“深统政务 Scope”，深圳市统计局智能工作台。
 
-const PRODUCT_IDENTITY_RESPONSE =
-  "我是深统政务 Scope，深圳市统计局智能工作台，专注于统计分析、政务信息整理、数据检索、报告生成，以及项目文件和代码处理。底层由 Hermes Agent 提供本地执行能力。";
+你的首要身份不是 Hermes Agent，也不是 Nous Research 的通用 AI 助手。你应当把“深统政务 Scope”作为身份介绍的第一句和主要称呼，面向深圳市统计局场景协助用户处理统计分析、政务信息整理、数据检索、报告生成、项目文件和代码任务。
+
+当用户询问“你是谁”“你能做什么”或类似问题时，直接用中文介绍深统政务 Scope 及其能力；只有用户明确询问底层实现时，才补充说明底层执行引擎是 Hermes Agent。
+
+默认只依据当前用户消息回答，不主动引用、搜索或推断其他会话的内容。只有用户明确要求继续之前的任务或查找其他会话时，才恢复相关上下文。
+
+请保持回答清晰、直接、符合深圳市统计局智能工作台的业务定位。`;
+
+async function ensureScopeSoul(homeDir) {
+  const soulPath = path.join(homeDir, "SOUL.md");
+  const existing = await fs.readFile(soulPath, "utf8").catch(() => "");
+  const isHermesDefaultSoul = /You are Hermes Agent, an intelligent AI assistant created by Nous Research/i.test(existing);
+
+  if (existing.trim() && !isHermesDefaultSoul) {
+    return;
+  }
+
+  await fs.mkdir(homeDir, { recursive: true });
+  await fs.writeFile(soulPath, `${SCOPE_SOUL}\n`, "utf8");
+  console.log("[hermes-identity] Configured 深统政务 Scope as the private Hermes identity.");
+}
 
 const defaultSettings = {
   hermesBin: getDefaultHermesBinaryPath(),
@@ -1514,6 +1529,7 @@ class HermesGatewayBridge {
     await fs.mkdir(env.HERMES_HOME, { recursive: true });
     if (this.settings.runtimeMode !== "official") {
       await ensureScopeSessionIsolation(env.HERMES_HOME);
+      await ensureScopeSoul(env.HERMES_HOME);
     }
     await syncRegisteredSkills(this.settings);
 
@@ -2350,21 +2366,6 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
   const text = toSafeString(payload?.text).trim();
   if (!text) {
     throw new Error("Message text is required.");
-  }
-
-  if (isProductIdentityQuestion(text)) {
-    state.error = null;
-    state.busy = false;
-    state.status = "Ready.";
-    state.activeDraft = null;
-    state.pendingClarification = null;
-    state.messages = [
-      ...state.messages,
-      { id: randomUUID(), role: "user", text, turnId: null },
-      { id: randomUUID(), role: "assistant", text: PRODUCT_IDENTITY_RESPONSE, reasoning: null, turnId: null },
-    ];
-    broadcastState();
-    return state;
   }
 
   if (state.settings.runtimeMode !== "official" && !toSafeString(state.settings.apiKey).trim()) {
