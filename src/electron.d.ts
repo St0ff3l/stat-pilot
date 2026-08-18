@@ -95,6 +95,12 @@ declare global {
       description: string;
       patternKey: string;
     } | null;
+    pendingClarification?: {
+      sessionId: string;
+      requestId?: string | null;
+      question: string;
+      choices?: string[] | null;
+    } | null;
   };
 
   interface Window {
@@ -116,6 +122,7 @@ declare global {
       registerSkillFile: () => Promise<HermesAppState>;
       unregisterSkill: (path: string) => Promise<HermesAppState>;
       respondApproval: (choice: "approve" | "deny") => Promise<HermesAppState>;
+      respondClarification: (answer: string) => Promise<HermesAppState>;
     };
   }
 }

@@ -119,9 +119,19 @@ function Prepare-LocalHermesRepository {
     Write-Host "Configured Hermes installer to update from the local source mirror."
 }
 
+function Remove-MacOSMetadata {
+    $metadataFiles = Get-ChildItem -LiteralPath $runtimeRoot -Recurse -Force -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name.StartsWith("._") -or $_.Name -eq ".DS_Store" }
+    if ($metadataFiles) {
+        $metadataFiles | Remove-Item -Force -ErrorAction SilentlyContinue
+        Write-Host "Removed $($metadataFiles.Count) macOS metadata files from $runtimeRoot"
+    }
+}
+
 try {
     New-Item -ItemType Directory -Force -Path $bootstrapTempRoot | Out-Null
     Prepare-LocalHermesRepository
+    Remove-MacOSMetadata
 
     $installerParams = @{
         SkipSetup = $true

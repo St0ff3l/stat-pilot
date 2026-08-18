@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld("hermesDesktop", {
   registerSkillFile: () => ipcRenderer.invoke("hermes:registerSkillFile"),
   unregisterSkill: (path) => ipcRenderer.invoke("hermes:unregisterSkill", path),
   respondApproval: (choice) => ipcRenderer.invoke("hermes:respondApproval", choice),
+  respondClarification: (answer) => ipcRenderer.invoke("hermes:respondClarification", answer),
   onState: (handler) => {
     const listener = (_event, nextState) => handler(nextState);
     ipcRenderer.on("hermes:state", listener);
