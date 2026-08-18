@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -47,10 +48,48 @@ if (!venvDir) {
   );
 }
 
-if (!(await exists(path.join(runtimeRoot, "portable-python.json")))) {
+const metadataPath = path.join(runtimeRoot, "portable-python.json");
+if (!(await exists(metadataPath))) {
   throw new Error(
     `Bundled Hermes runtime is missing portable-python.json: ${runtimeRoot}`
   );
 }
 
-console.log(`Bundled Hermes runtime verified for ${process.platform}: ${venvDir}`);
+let metadata;
+try {
+  metadata = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+} catch (error) {
+  throw new Error(`Bundled Hermes runtime has invalid portable-python.json: ${error.message}`);
+}
+
+const portablePythonRelativePath = String(metadata.pythonExecutable || "").trim();
+if (!portablePythonRelativePath) {
+  throw new Error(`Bundled Hermes runtime has no portable Python executable: ${metadataPath}`);
+}
+
+const portablePythonPath = path.resolve(runtimeRoot, portablePythonRelativePath);
+const portableRelativePath = path.relative(runtimeRoot, portablePythonPath);
+if (
+  path.isAbsolute(portableRelativePath) ||
+  portableRelativePath.startsWith(`..${path.sep}`) ||
+  !(await exists(portablePythonPath))
+) {
+  throw new Error(
+    `Bundled Hermes runtime portable Python is missing or outside the runtime: ${portablePythonRelativePath}`
+  );
+}
+
+const pythonCheck = spawnSync(
+  portablePythonPath,
+  ["-c", "import sys; print(sys.executable); print(sys.version)"],
+  { cwd: path.join(runtimeRoot, "hermes-agent"), encoding: "utf8" }
+);
+if (pythonCheck.error || pythonCheck.status !== 0) {
+  throw new Error(
+    `Bundled portable Python verification failed: ${pythonCheck.error?.message || pythonCheck.stderr?.trim() || `exit code ${pythonCheck.status}`}`
+  );
+}
+
+console.log(
+  `Bundled Hermes runtime verified for ${process.platform}: ${venvDir}; portable Python ${portablePythonPath}`
+);
