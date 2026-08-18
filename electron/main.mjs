@@ -179,7 +179,7 @@ async function buildOutputInstructions(cwd, defaultOutputDir = "outputs") {
 const defaultSettings = {
   hermesBin: getDefaultHermesBinaryPath(),
   runtimeMode: "private",
-  model: "deepseek-chat",
+  model: "",
   cwd: "",
   defaultOutputDir: "outputs",
   apiProvider: "deepseek",
@@ -982,6 +982,8 @@ async function lockRuntimeToElectron(runtimeBin) {
 function buildHermesEnv(settings, launchConfig = null, sessionToken = "") {
   const env = { ...process.env };
   env.PYTHONUNBUFFERED = "1";
+  env.PYTHONUTF8 = "1";
+  env.PYTHONIOENCODING = "utf-8";
   const provider = toSafeString(settings.apiProvider).trim() || "deepseek";
   const isOfficialMode = settings.runtimeMode === "official";
 

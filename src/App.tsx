@@ -29,21 +29,23 @@ const PROVIDER_PRESET_MODELS: Record<string, Array<{ id: string; label: string; 
     { id: "deepseek-v4-pro", label: "deepseek-v4-pro", desc: "DeepSeek-V4 Pro 旗舰" },
   ],
   openai: [
-    { id: "gpt-4o", label: "gpt-4o", desc: "GPT-4o 旗舰多模态" },
-    { id: "gpt-4o-mini", label: "gpt-4o-mini", desc: "GPT-4o Mini 轻量快速" },
-    { id: "o1", label: "o1", desc: "OpenAI o1 深度推理" },
-    { id: "o3-mini", label: "o3-mini", desc: "OpenAI o3-mini 高效推理" },
+    { id: "gpt-5.5", label: "gpt-5.5", desc: "GPT-5.5 最新旗舰" },
+    { id: "gpt-5.4", label: "gpt-5.4", desc: "GPT-5.4 专业工作" },
+    { id: "gpt-5.4-mini", label: "gpt-5.4-mini", desc: "GPT-5.4 Mini 高性价比" },
+    { id: "gpt-5.4-nano", label: "gpt-5.4-nano", desc: "GPT-5.4 Nano 快速低成本" },
   ],
   openrouter: [
-    { id: "deepseek/deepseek-chat", label: "deepseek-chat", desc: "DeepSeek V3 (OpenRouter)" },
-    { id: "deepseek/deepseek-r1", label: "deepseek-r1", desc: "DeepSeek R1 (OpenRouter)" },
-    { id: "openai/gpt-4o", label: "gpt-4o", desc: "GPT-4o (OpenRouter)" },
-    { id: "anthropic/claude-3.5-sonnet", label: "claude-3.5-sonnet", desc: "Claude 3.5 Sonnet (OpenRouter)" },
+    { id: "deepseek/deepseek-v4-flash", label: "deepseek-v4-flash", desc: "DeepSeek V4 Flash 快速" },
+    { id: "deepseek/deepseek-v4-pro", label: "deepseek-v4-pro", desc: "DeepSeek V4 Pro 旗舰" },
+    { id: "openai/gpt-5.5", label: "gpt-5.5", desc: "GPT-5.5 最新旗舰" },
+    { id: "anthropic/claude-sonnet-4.6", label: "claude-sonnet-4.6", desc: "Claude Sonnet 4.6" },
+    { id: "google/gemini-3.1-pro-preview", label: "gemini-3.1-pro", desc: "Gemini 3.1 Pro Preview" },
   ],
   custom: [
-    { id: "deepseek-chat", label: "deepseek-chat", desc: "DeepSeek-V3 (兼容接口)" },
-    { id: "deepseek-reasoner", label: "deepseek-reasoner", desc: "DeepSeek-R1 (兼容接口)" },
-    { id: "gpt-4o", label: "gpt-4o", desc: "GPT-4o (兼容接口)" },
+    { id: "gpt-5.5", label: "gpt-5.5", desc: "GPT-5.5 (兼容接口)" },
+    { id: "gpt-5.4", label: "gpt-5.4", desc: "GPT-5.4 (兼容接口)" },
+    { id: "deepseek-v4-flash", label: "deepseek-v4-flash", desc: "DeepSeek V4 Flash (兼容接口)" },
+    { id: "deepseek-v4-pro", label: "deepseek-v4-pro", desc: "DeepSeek V4 Pro (兼容接口)" },
   ],
 };
 
@@ -584,7 +586,7 @@ function App() {
   const [draftSettings, setDraftSettings] = useState<HermesAppState["settings"]>({
     hermesBin: "hermes",
     runtimeMode: "private",
-    model: "deepseek-chat",
+    model: "",
     cwd: "",
     defaultOutputDir: "outputs",
     apiProvider: "deepseek",
@@ -617,7 +619,7 @@ function App() {
       const initialModel = initial.settings.runtimeMode === "official"
         ? initial.official.defaultModel
         : initial.settings.model;
-      setHeaderModelSelection(initialModel || "deepseek-chat");
+      setHeaderModelSelection(initialModel || "");
       headerModelDirtyRef.current = false;
       setDraftSettings(withDisplayModel(initial));
 
@@ -627,7 +629,7 @@ function App() {
           const nextModel = nextState.settings.runtimeMode === "official"
             ? nextState.official.defaultModel
             : nextState.settings.model;
-          setHeaderModelSelection(nextModel || "deepseek-chat");
+          setHeaderModelSelection(nextModel || "");
         }
         setDraftSettings(withDisplayModel(nextState));
       });
@@ -749,7 +751,8 @@ function App() {
 
   useEffect(() => {
     const isModelSwitching = !!state?.busy && !!state?.status && state.status.includes("切换模型");
-    if (!isModelSwitching) {
+    const isBusy = isModelSwitching || !!settingsBusyText;
+    if (!isBusy) {
       setBusyElapsedSeconds(0);
       return;
     }
@@ -761,7 +764,7 @@ function App() {
     }, 250);
 
     return () => window.clearInterval(timer);
-  }, [state?.busy, state?.status]);
+  }, [state?.busy, state?.status, settingsBusyText]);
 
   // Reset draft settings to current actual saved settings whenever settings modal is opened
   useEffect(() => {
@@ -1318,6 +1321,7 @@ function App() {
                         : "直接在这里选目标模型，然后点击“应用切换”。"
                     }
                   >
+                    {!currentActiveModel && <option value="">未设置模型</option>}
                     {quickModelOptions.map((modelId) => (
                       <option key={modelId} value={modelId}>
                         {modelId}
@@ -1474,7 +1478,7 @@ function App() {
                         <>
                           <div className="step-item">
                             <strong>推荐配置</strong>
-                            <p>如果你在用 DeepSeek，就把 Provider 设成 <b>deepseek</b>，模型填例如 <b>deepseek-chat</b>，再填入对应 API key。</p>
+                            <p>如果你在用 DeepSeek，就把 Provider 设成 <b>deepseek</b>，模型填例如 <b>deepseek-v4-flash</b> 或 <b>deepseek-v4-pro</b>，再填入对应 API key。</p>
                           </div>
                           <div className="step-item">
                             <strong>自定义兼容接口</strong>
@@ -2365,7 +2369,7 @@ function App() {
                                 model: event.target.value,
                               }))
                             }
-                            placeholder={draftSettings.apiProvider === "deepseek" ? "deepseek-chat" : "gpt-4o"}
+                            placeholder="填写模型 ID，例如 gpt-5.5 或 deepseek-v4-flash"
                           />
                           <div className="model-preset-chips">
                             <span className="preset-chips-label">快捷选择预设模型：</span>
@@ -2406,11 +2410,9 @@ function App() {
                             value={draftSettings.apiProvider}
                             onChange={(event) => {
                               const newProvider = event.target.value as HermesAppState["settings"]["apiProvider"];
-                              const defaultModelForProvider = PROVIDER_PRESET_MODELS[newProvider]?.[0]?.id || "deepseek-v4-flash";
                               setDraftSettings((current: HermesAppState["settings"]) => ({
                                 ...current,
                                 apiProvider: newProvider,
-                                model: current.model || defaultModelForProvider,
                                 apiBaseUrl: newProvider === "deepseek" && !current.apiBaseUrl ? "https://api.deepseek.com" : current.apiBaseUrl,
                               }));
                             }}
@@ -2799,7 +2801,7 @@ function App() {
         <BusyOverlay
           title={settingsBusyText}
           detail="正在为您载入后台运行配置，请稍候..."
-          elapsedSeconds={0}
+          elapsedSeconds={busyElapsedSeconds}
         />
       ) : null}
 
