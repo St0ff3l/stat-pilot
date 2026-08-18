@@ -313,60 +313,59 @@ async function syncRegisteredSkills(settings) {
         continue;
       }
 
-      // Check if target already exists (could be a symlink, directory, or file)
-      let exists = false;
-      let isSymlink = false;
       try {
-        const stat = await fs.lstat(targetPath);
-        exists = true;
-        isSymlink = stat.isSymbolicLink();
-      } catch {
-        // targetPath does not exist
-      }
-
-      if (exists) {
-        if (isSymlink) {
-          // Check if symlink target is correct
-          try {
-            const currentTarget = await fs.readlink(targetPath);
-            if (path.resolve(currentTarget) === path.resolve(skillFolder)) {
-              // Target is already correct, no need to recreate
-              continue;
-            }
-          } catch {
-            // failed to read symlink target, recreate it
-          }
-          await fs.unlink(targetPath);
-        } else {
-          // It exists but is a real file or directory (e.g. a built-in skill has the same name).
-          // We shouldn't overwrite a built-in directory! Let's log a warning.
-          console.warn(`Cannot symlink skill ${skill.name} to ${targetPath} because a real file/folder already exists there.`);
-          continue;
-        }
-      }
-
-      // Prefer junctions on Windows because directory symlinks often require
-      // Developer Mode or elevated privileges. Fall back to a copy if the
-      // platform still refuses the link.
-      try {
-        await fs.symlink(skillFolder, targetPath, process.platform === "win32" ? "junction" : "dir");
-        console.log(`Created symlink for skill ${skill.name} -> ${skillFolder}`);
-      } catch (err) {
-        if (process.platform !== "win32") {
-          console.error(`Failed to create symlink for skill ${skill.name}:`, err);
-          continue;
-        }
-
-        try {
-          await fs.cp(skillFolder, targetPath, { recursive: true, force: true });
-          console.log(`Copied skill ${skill.name} -> ${targetPath}`);
-        } catch (copyError) {
-          console.error(`Failed to link or copy skill ${skill.name}:`, copyError);
-        }
+        // Hermes expects UTF-8, but Windows skills are often saved as GBK.
+        // Materialize a normalized copy so discovery cannot crash on decoding.
+        await fs.rm(targetPath, { recursive: true, force: true });
+        await copySkillFolderAsUtf8(skillFolder, targetPath);
+        console.log(`Copied and normalized skill ${skill.name} -> ${targetPath}`);
+      } catch (copyError) {
+        console.error(`Failed to copy and normalize skill ${skill.name}:`, copyError);
       }
     }
   } catch (err) {
     console.error("Failed to sync registered skills:", err);
+  }
+}
+
+const TEXT_SKILL_EXTENSIONS = new Set([
+  ".cjs", ".css", ".csv", ".html", ".ini", ".js", ".json", ".md", ".py",
+  ".toml", ".ts", ".tsx", ".txt", ".xml", ".yaml", ".yml",
+]);
+
+function decodeSkillText(buffer, filePath) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch {
+    try {
+      return new TextDecoder("gb18030").decode(buffer);
+    } catch (error) {
+      throw new Error(`无法读取技能文件 ${filePath}：文件不是 UTF-8 或 GB18030 编码。`, { cause: error });
+    }
+  }
+}
+
+function shouldNormalizeSkillFile(filePath) {
+  return TEXT_SKILL_EXTENSIONS.has(path.extname(filePath).toLowerCase()) ||
+    path.basename(filePath).toLowerCase() === "skill.md";
+}
+
+async function copySkillFolderAsUtf8(sourceDir, targetDir) {
+  await fs.mkdir(targetDir, { recursive: true });
+  const entries = await fs.readdir(sourceDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const sourcePath = path.join(sourceDir, entry.name);
+    const targetPath = path.join(targetDir, entry.name);
+    if (entry.isDirectory()) {
+      await copySkillFolderAsUtf8(sourcePath, targetPath);
+    } else if (entry.isFile()) {
+      const buffer = await fs.readFile(sourcePath);
+      if (shouldNormalizeSkillFile(sourcePath)) {
+        await fs.writeFile(targetPath, decodeSkillText(buffer, sourcePath), "utf8");
+      } else {
+        await fs.writeFile(targetPath, buffer);
+      }
+    }
   }
 }
 
@@ -2872,9 +2871,12 @@ ipcMain.handle("hermes:registerSkillFile", async () => {
   const filePath = filePaths[0];
   let content = "";
   try {
-    content = await fs.readFile(filePath, "utf8");
+    content = decodeSkillText(await fs.readFile(filePath), filePath);
   } catch (error) {
     console.error("Failed to read selected skill file:", error);
+    state.error = error instanceof Error ? error.message : "无法读取技能文件。";
+    state.status = state.error;
+    broadcastState();
     return state;
   }
 
