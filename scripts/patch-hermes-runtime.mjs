@@ -61,6 +61,16 @@ const patchTargets = [
   },
 ];
 
+const utf8DecodeTargets = [
+  "hermes_cli/models.py",
+  "hermes_cli/model_catalog.py",
+  "hermes_cli/webhook.py",
+  "hermes_cli/dashboard_register.py",
+  "hermes_cli/copilot_auth.py",
+  "hermes_cli/tools_config.py",
+  "hermes_cli/nous_account.py",
+];
+
 async function patchFile({ label, filePath, optional }) {
   let content;
   try {
@@ -117,11 +127,36 @@ async function patchFile({ label, filePath, optional }) {
   console.log(`Patched ${label}: ${filePath}`);
 }
 
+async function patchUtf8Decoders() {
+  for (const relativePath of utf8DecodeTargets) {
+    const filePath = path.join(projectRoot, ".runtime", "hermes-agent", relativePath);
+    let content;
+    try {
+      content = await fs.readFile(filePath, "utf8");
+    } catch {
+      console.log(`Skipped UTF-8 decoder patch: ${filePath}`);
+      continue;
+    }
+
+    const updated = content.replace(
+      /\.read\(\)\.decode\(\)/g,
+      '.read().decode("utf-8", errors="replace")'
+    );
+    if (updated === content) {
+      continue;
+    }
+
+    await fs.writeFile(filePath, updated, "utf8");
+    console.log(`Patched UTF-8 decoder tolerance: ${relativePath}`);
+  }
+}
+
 async function main() {
   console.log("Applying Hermes runtime patches...");
   for (const target of patchTargets) {
     await patchFile(target);
   }
+  await patchUtf8Decoders();
 }
 
 await main();
