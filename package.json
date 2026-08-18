@@ -1,7 +1,7 @@
 {
   "name": "sz-gov-scope",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
@@ -9,9 +9,10 @@
     "dev:web": "vite --host 127.0.0.1",
     "dev:electron": "electron .",
     "build": "tsc -b && vite build",
-    "dist:mac": "npm run build && electron-builder --mac dmg",
-    "dist:win": "npm run build && electron-builder --win nsis",
-    "dist:linux": "npm run build && electron-builder --linux deb",
+    "dist:mac": "npm run verify:runtime && npm run build && electron-builder --mac dmg",
+    "dist:win": "npm run verify:runtime && npm run build && electron-builder --win nsis",
+    "dist:linux": "npm run verify:runtime && npm run build && electron-builder --linux deb",
+    "verify:runtime": "node scripts/verify-bundled-hermes-runtime.mjs",
     "hermes:patch": "node scripts/patch-hermes-runtime.mjs",
     "hermes:bootstrap": "bash scripts/bootstrap-hermes.sh",
     "hermes:bootstrap:quick": "HERMES_NON_INTERACTIVE=1 bash scripts/bootstrap-hermes.sh",
@@ -74,6 +75,8 @@
           "**/*",
           "!**/.git",
           "!**/.git/**",
+          "!hermes-home",
+          "!hermes-home/**",
           "!**/node_modules/electron/dist/Electron.app/**"
         ]
       },
