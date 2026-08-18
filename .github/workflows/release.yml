@@ -83,6 +83,9 @@ jobs:
       - name: Build renderer and server bundles
         run: npm run build
 
+      - name: Verify bundled Hermes runtime
+        run: npm run verify:runtime
+
       - name: Verify release tag matches package version
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash

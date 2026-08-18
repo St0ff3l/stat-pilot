@@ -456,6 +456,143 @@ async function pathExists(targetPath) {
   }
 }
 
+const RETRYABLE_FILESYSTEM_ERRORS = new Set([
+  "EACCES",
+  "EBUSY",
+  "EMFILE",
+  "ENFILE",
+  "ENOTEMPTY",
+  "EPERM",
+]);
+
+function isRetryableFilesystemError(error) {
+  return RETRYABLE_FILESYSTEM_ERRORS.has(error?.code);
+}
+
+async function removePathWithRetries(targetPath, label = "path") {
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      await fs.rm(targetPath, {
+        recursive: true,
+        force: true,
+        maxRetries: 0,
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableFilesystemError(error) || attempt === 7) {
+        throw error;
+      }
+
+      // Windows Defender, the indexer, and Python child processes can briefly
+      // keep a runtime directory busy after the process has been terminated.
+      await sleep(Math.min(250 * 2 ** attempt, 2000));
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+
+  console.warn(`Unable to remove ${label}: ${targetPath}`);
+}
+
+async function movePathWithRetries(sourcePath, targetPath, label = "path") {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      await fs.rename(sourcePath, targetPath);
+      return;
+    } catch (error) {
+      if (!isRetryableFilesystemError(error) || attempt === 7) {
+        throw error;
+      }
+
+      console.warn(`Waiting to move ${label} on retry ${attempt + 1}:`, error.message);
+      await sleep(Math.min(250 * 2 ** attempt, 2000));
+    }
+  }
+}
+
+async function replaceBundledRuntime(sourceRoot, runtimeRoot) {
+  const stagingRoot = `${runtimeRoot}.installing-${randomUUID()}`;
+  const backupRoot = `${runtimeRoot}.previous-${randomUUID()}`;
+  let existingRuntimeMoved = false;
+
+  try {
+    await removePathWithRetries(stagingRoot, "stale Hermes runtime staging directory");
+    await fs.cp(sourceRoot, stagingRoot, {
+      recursive: true,
+      dereference: true,
+      force: true,
+      errorOnExist: false,
+      filter: (source) => {
+        const relative = path.relative(sourceRoot, source).split(path.sep).join("/");
+        if (relative === "hermes-home" || relative.startsWith("hermes-home/")) {
+          return false;
+        }
+
+        return !relative.includes("node_modules/electron/dist/Electron.app");
+      },
+    });
+
+    // A repair refreshes only the executable runtime. Keep the user's Hermes
+    // home (sessions, auth/config, and local state) across the replacement.
+    const existingHomeDir = path.join(runtimeRoot, "hermes-home");
+    const stagedHomeDir = path.join(stagingRoot, "hermes-home");
+    if (await pathExists(existingHomeDir)) {
+      await fs.cp(existingHomeDir, stagedHomeDir, {
+        recursive: true,
+        dereference: true,
+        force: true,
+        errorOnExist: false,
+      });
+    }
+
+    const stagedInstallDir = path.join(stagingRoot, "hermes-agent");
+    if (
+      !(await pathExists(getRuntimePythonPath(stagedInstallDir))) ||
+      !(await pathExists(getRuntimeEntryPointPath(stagedInstallDir)))
+    ) {
+      throw new Error(`Bundled Hermes runtime is incomplete: ${sourceRoot}`);
+    }
+
+    if (await pathExists(runtimeRoot)) {
+      await movePathWithRetries(runtimeRoot, backupRoot, "the existing Hermes runtime");
+      existingRuntimeMoved = true;
+    }
+
+    await movePathWithRetries(stagingRoot, runtimeRoot, "the new Hermes runtime");
+
+    if (existingRuntimeMoved) {
+      try {
+        await removePathWithRetries(backupRoot, "the previous Hermes runtime");
+      } catch (error) {
+        // The new runtime is already active. Keeping a stale backup is safer
+        // than making a successful repair look like a failed installation.
+        console.warn("Unable to clean up the previous Hermes runtime:", error);
+      }
+    }
+  } catch (error) {
+    try {
+      await removePathWithRetries(stagingRoot, "failed Hermes runtime staging directory");
+    } catch (cleanupError) {
+      console.warn("Unable to clean up failed Hermes runtime staging:", cleanupError);
+    }
+
+    if (existingRuntimeMoved && !(await pathExists(runtimeRoot)) && (await pathExists(backupRoot))) {
+      try {
+        await movePathWithRetries(backupRoot, runtimeRoot, "the previous Hermes runtime backup");
+      } catch (restoreError) {
+        console.error("Unable to restore the previous Hermes runtime:", restoreError);
+      }
+    }
+
+    throw error;
+  }
+}
+
 async function repairPortablePythonRuntime(runtimeRoot) {
   const metadataPath = path.join(runtimeRoot, "portable-python.json");
   const metadataText = await readTextIfExists(metadataPath);
@@ -740,10 +877,10 @@ async function cleanupHermesWrapper(extraTargets = []) {
     return;
   }
 
-  await fs.rm(wrapperPath, { force: true });
+  await removePathWithRetries(wrapperPath, "the legacy Hermes wrapper");
 }
 
-async function ensureEmbeddedRuntimeInstalled() {
+async function ensureEmbeddedRuntimeInstalled({ force = false } = {}) {
   const installDir = getRuntimeInstallDir();
   const runtimeRoot = getRuntimeRoot();
   const runtimePython = getRuntimePythonPath(installDir);
@@ -755,7 +892,7 @@ async function ensureEmbeddedRuntimeInstalled() {
     (await pathExists(runtimePython)) &&
     (await pathExists(runtimeEntryPoint));
 
-  if (!installed) {
+  if (!installed || force) {
     const sourceExists = await pathExists(sourceRoot);
     if (!sourceExists) {
       throw new Error(
@@ -764,20 +901,7 @@ async function ensureEmbeddedRuntimeInstalled() {
     }
 
     await fs.mkdir(app.getPath("userData"), { recursive: true });
-    await fs.rm(runtimeRoot, { recursive: true, force: true });
-    await fs.cp(sourceRoot, runtimeRoot, {
-      recursive: true,
-      dereference: true,
-      force: true,
-      errorOnExist: false,
-      filter: (source) => {
-        const normalized = source.split(path.sep).join("/");
-        if (normalized.includes("/node_modules/electron/dist/Electron.app")) {
-          return false;
-        }
-        return true;
-      },
-    });
+    await replaceBundledRuntime(sourceRoot, runtimeRoot);
   }
 
   // The bundled runtime is copied to userData on first launch. Rewrite the
@@ -801,7 +925,7 @@ async function uninstallEmbeddedRuntime() {
     getRuntimeEntryPointPath(runtimeInstallDir),
     getRuntimeGuardPath(runtimeInstallDir),
   ]);
-  await fs.rm(runtimeRoot, { recursive: true, force: true });
+  await removePathWithRetries(runtimeRoot, "the Hermes runtime");
   return buildRuntimeInfo(false);
 }
 
@@ -986,7 +1110,7 @@ async function waitForBackend(baseUrl, token, timeoutMs = 30000) {
 }
 
 async function terminateProcessTree(proc, label = "child-process") {
-  if (!proc || proc.killed) {
+  if (!proc || proc.killed || proc.exitCode !== null || proc.signalCode !== null) {
     return;
   }
 
@@ -1006,6 +1130,10 @@ async function terminateProcessTree(proc, label = "child-process") {
         windowsHide: true,
       });
       await new Promise((resolve) => killer.once("exit", () => resolve()));
+      // taskkill can report success before the child has fully released its
+      // Python DLLs and site-packages handles. Give Node a bounded wait before
+      // a runtime replacement starts deleting those files.
+      await Promise.race([waitForExit, sleep(3000)]);
     } else {
       try {
         process.kill(-pid, "SIGTERM");
@@ -1218,10 +1346,10 @@ class HermesGatewayBridge {
   }
 
   async dispose() {
+    const pendingStart = this.startPromise;
     this.isStopping = true;
     this.gatewayReady = false;
     this.connection = null;
-    this.startPromise = null;
     this.latestStartupError = null;
 
     await this.client.dispose();
@@ -1230,6 +1358,14 @@ class HermesGatewayBridge {
       const proc = this.proc;
       this.proc = null;
       await terminateProcessTree(proc, "hermes-backend");
+    }
+
+    if (pendingStart) {
+      try {
+        await pendingStart;
+      } catch {
+        // A start interrupted by dispose is expected during repair or exit.
+      }
     }
   }
 
@@ -1254,6 +1390,9 @@ class HermesGatewayBridge {
   async startInternal() {
     this.isStopping = false;
     await ensureEmbeddedRuntimeInstalled();
+    if (this.isStopping) {
+      throw new Error("Hermes startup was cancelled.");
+    }
     const port = await pickPort();
     const token = randomBytes(32).toString("base64url");
     const baseUrl = `http://127.0.0.1:${port}`;
@@ -1992,19 +2131,42 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("before-quit", async () => {
-  if (bridge) {
-    await bridge.dispose();
+let shutdownPromise = null;
+
+function stopBridgeBeforeQuit() {
+  if (shutdownPromise) {
+    return shutdownPromise;
   }
+
+  shutdownPromise = Promise.all([
+    bridge ? bridge.dispose() : Promise.resolve(),
+    activeOfficialLogin?.proc ? cancelOfficialHermesLogin() : Promise.resolve(),
+  ])
+    .catch((error) => {
+      console.error("Failed to stop Hermes before quitting:", error);
+    })
+    .finally(() => {
+      app.quit();
+    });
+
+  return shutdownPromise;
+}
+
+app.on("before-quit", (event) => {
+  if (shutdownPromise) {
+    return;
+  }
+
+  event.preventDefault();
+  void stopBridgeBeforeQuit();
 });
 
-app.on("window-all-closed", async () => {
-  if (bridge) {
-    await bridge.dispose();
-  }
-
+app.on("window-all-closed", () => {
+  // Keep the macOS app and its bridge alive so a later activate event can
+  // reopen the window normally. Windows/Linux quit only after the child has
+  // been fully terminated.
   if (process.platform !== "darwin") {
-    app.quit();
+    void stopBridgeBeforeQuit();
   }
 });
 
@@ -2553,7 +2715,25 @@ ipcMain.handle("hermes:repairRuntime", async () => {
   broadcastState();
 
   try {
-    state.runtime = await ensureEmbeddedRuntimeInstalled();
+    // Stop Hermes before touching its virtual environment. Windows may keep
+    // site-packages handles open for a short time after the child exits.
+    if (activeOfficialLogin?.proc) {
+      await cancelOfficialHermesLogin();
+    }
+
+    if (bridge) {
+      await bridge.dispose();
+    }
+
+    state.runtime = await ensureEmbeddedRuntimeInstalled({ force: true });
+
+    // If startup failed before the bridge object was created, repair should
+    // finish initialization instead of leaving the chat permanently disabled.
+    if (!bridge) {
+      await initializeBridge();
+      return state;
+    }
+
     state.official = await inspectOfficialHermesConfig();
     const reconciled = await reconcileOfficialModeSettings(state.settings, state.official);
     state.settings = reconciled.settings;
@@ -2597,6 +2777,10 @@ ipcMain.handle("hermes:uninstallRuntime", async () => {
   broadcastState();
 
   try {
+    if (activeOfficialLogin?.proc) {
+      await cancelOfficialHermesLogin();
+    }
+
     if (bridge) {
       await bridge.dispose();
     }

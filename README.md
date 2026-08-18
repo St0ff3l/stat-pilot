@@ -24,14 +24,18 @@ The `.runtime/` directory itself stays gitignored. Any project-specific Hermes c
 
 When you package the app, include `.runtime/` alongside the Electron resources so the bundled Hermes binary can be found automatically. This project now does that through `electron-builder` `extraResources`.
 
+The installers produced by the release workflow contain a platform-specific Hermes runtime. On first launch, the app copies that bundled runtime into its private application-data directory; it does not depend on a separately installed `hermes` command. The build excludes the local `.runtime/hermes-home` so personal sessions, login state, and API keys are never bundled. A GitHub **Source code** ZIP does not contain `.runtime`, because that directory is generated and gitignored, so it cannot be used as a ready-to-run installer without running the platform bootstrap first.
+
 On macOS, dragging the `.app` from the `.dmg` into `Applications` does not run installer hooks by itself. Instead, on the first app launch, the Electron main process copies the bundled `.runtime/` from the app's `Resources` directory into the user's private app-data directory and starts Hermes from there automatically.
 
-To build a distributable macOS `.dmg`:
+Release installers are built only by GitHub Actions on the matching target runner. Push a version tag such as `v0.1.0`, or start the `Build and release installers` workflow manually; do not build a Release installer locally. The workflow runs the platform bootstrap, verifies the bundled Hermes runtime, packages the installer, and uploads the artifacts.
+
+For local development only:
 
 ```bash
 npm install
 npm run hermes:bootstrap
-npm run dist:mac
+npm run dev
 ```
 
 ## Desktop settings

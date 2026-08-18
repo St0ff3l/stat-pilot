@@ -20,35 +20,26 @@ git push origin v0.1.0
 
 1. 在目标平台安装对应的 Hermes Runtime；
 2. 构建前端与 Electron 主进程；
-3. 把 `.runtime`、`skills/` 和 `rules/` 一起打包；
-4. 上传 macOS、Windows、Linux 安装包；
-5. 创建或更新 GitHub Release，并附带 `SHA256SUMS.txt`。
+3. 验证目标平台的 `.runtime` 同时包含 Python、Hermes 入口和 `portable-python.json`；
+4. 把 `.runtime`、`skills/` 和 `rules/` 一起打包；
+5. 上传 macOS、Windows、Linux 安装包；
+6. 创建或更新 GitHub Release，并附带 `SHA256SUMS.txt`。
 
 Hermes 引导会下载源码归档并在临时目录建立本地镜像，再执行归档内的官方安装脚本；构建过程不依赖对上游仓库执行 Git clone，也不会把临时镜像放进最终安装包。
 
 `package.json` 的版本号必须与标签一致，例如 `package.json` 为 `0.1.0` 时使用 `v0.1.0`。
 
-## 手动构建
+## CI 构建（唯一发布路径）
 
-需要在目标平台本机执行 Runtime 准备和打包：
+不要在本机运行 `npm run dist:*` 或 `electron-builder`。发布统一由 `.github/workflows/release.yml` 在目标平台 Runner 上完成：
 
-```bash
-# macOS / Linux
-npm ci
-npm run hermes:bootstrap:quick
-npm run dist:mac       # macOS
-npm run dist:linux     # Linux .deb
-```
+1. 推送与 `package.json` 版本一致的 `v*` 标签；或手动启动 `Build and release installers` workflow。
+2. CI 在 macOS、Windows、Linux 三个平台分别安装 Hermes、验证运行时并打包。
+3. CI 上传安装包和 `SHA256SUMS.txt` 到 GitHub Release。
 
-Windows 使用 PowerShell：
+只有 GitHub Release 中的 `.exe`、`.dmg`、`.deb` 安装包包含对应平台的 Hermes；GitHub 的 Source code ZIP 不包含生成的 `.runtime`。打包时会排除 `.runtime/hermes-home`，因此构建机上的会话、登录态和 API key 不会进入安装包。本地打包脚本和 CI 都会在打包前运行 `npm run verify:runtime`，发现运行时缺失或不完整会直接失败。
 
-```powershell
-npm ci
-npm run hermes:bootstrap:windows
-npm run dist:win
-```
-
-默认构建产物位于 `release/`。
+CI 构建产物位于 GitHub Actions artifacts 或 GitHub Release，不在本地生成 `release/`。
 
 ## Runtime 版本固定
 
