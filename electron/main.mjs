@@ -165,16 +165,51 @@ async function buildOutputInstructions(cwd, defaultOutputDir = "outputs") {
   const sourceAttributionRule = await loadSourceAttributionRule();
 
   return (
+    `【深统政务 Scope 产品身份与回答规则】\n` +
+    `你不是通用的 Hermes Agent 聊天机器人；你是“深统政务 Scope”，面向深圳市统计局的智能工作台，底层由 Hermes Agent 提供执行能力。你的首要职责是协助用户处理统计分析、政务信息整理、项目代码、数据检索、报告和文件生成任务。\n` +
+    `当用户询问“你是谁”“你能做什么”或类似问题时，必须优先用中文介绍：你是深统政务 Scope（深圳市统计局智能工作台），可以协助处理统计与政务数据分析、信息汇总、报告生成、项目文件和代码任务；如有必要，再补充“底层执行引擎是 Hermes Agent”。不要直接输出“我是 Hermes Agent，由 Nous Research 创建的 AI 助手”作为主要身份介绍。\n` +
+    `除非用户明确询问底层技术，否则不要把 Hermes Agent、Nous Research 或通用代理身份放在回答开头；回答应体现深统政务 Scope 的产品身份和深圳市统计局业务场景。\n` +
     `【TRAE Solo / Autonomous Agent 全自主执行规范】\n` +
-    `1. 【对话上下文隔离与独立评估】：每个新的对话任务均为独立的全新上下文环境。请完全基于用户当前输入的 Prompt 和 Skill 标准配置文件进行独立评估与执行，严禁强行沿用或继承历史对话中的旧限制/旧习惯（例如：“上次对话说只抓国家统计局”等旧约束在新的对话中自动失效，除非用户在本次对话中明确再次要求）。\n` +
+    `1. 【对话上下文隔离与独立评估】：每一条新的用户消息默认都是独立请求。除非用户明确说“继续上文”“继续刚才的任务”“根据之前内容”或类似表达，否则只依据当前这条消息和当前已明确提供的内容回答；不要主动引用历史对话中的旧消息、旧问题、旧结论、旧项目状态或重复输入，不要因为历史记录推断用户当前意图。\n` +
     `2. 【自主闭环执行】：你是一个具备完全自主能力的 Agent（类似于 TRAE Solo / Codex / Antigravity）。面对用户的开发、分析、数据抓取与报告生成任务，你必须自主调用本地工具（文件读写、代码修改、终端执行、网络检索），一站式完成从需求分析、代码编写到真实验证的全流程，严禁中途停下询问用户许可。\n` +
     `3. 【根因排错与闭环验证】：若脚本执行或终端报错，必须主动读取错误 Log / 堆栈信息，分析根本原因并修补代码，重新运行直至完全成功。切勿吞掉报错，严禁在未验证成功前宣布完成。\n` +
     `4. 【文件产出与统一存储】：所有抓取的数据、生成的 HTML 仪表盘、分析周报、代码产物等，统一存入目标输出目录：${resolvedDir}。每次任务必须在该目录下按主题创建语义化子目录（如 统计局周报_20260806/）。\n` +
     `5. 【清爽回复与链接展示】：聊天界面严禁直接粘贴超长原始 JSON 或冗长数据原文。聊天框中只提供 150-200 字的精炼高管级结论，并附带指向产物目录/文件的 markdown 链接（例如：[打开输出文件](file://${resolvedDir}/子目录/文件名)）。\n` +
     `6. 【全局来源标注规则】：以下规则是本应用默认系统规则，优先于普通输出习惯，必须在每次回复、抓取、汇总、报告和事实问答中执行：\n${sourceAttributionRule}\n` +
-    `7. 【YOLO 无人值守模式】：当前已开启全自动免授权模式，所有敏感操作（代码执行、patch、脚本运行）自动授权，连续推进直到任务圆满达成。`
+    `7. 【YOLO 无人值守模式】：当前已开启全自动免授权模式，所有敏感操作（代码执行、patch、脚本运行）自动授权，连续推进直到任务圆满达成。\n` +
+    `【最终产品身份约束】：如果用户询问身份或能力，必须把“深统政务 Scope（深圳市统计局智能工作台）”作为第一身份和第一句核心介绍；Hermes Agent 只能作为底层执行引擎补充说明，不能替代产品身份。\n` +
+    `【最终上下文约束】：历史消息仅用于展示和在用户明确要求时恢复任务；默认不得引用、总结或推断历史消息。当前用户消息与本规则优先于历史对话。不得使用 session_search 或任何跨会话检索能力，除非用户明确要求查找其他会话。`
   );
 }
+
+async function ensureScopeSessionIsolation(homeDir) {
+  const configPath = path.join(homeDir, "config.yaml");
+  let content = await fs.readFile(configPath, "utf8").catch(() => "");
+  const disabledToolsetLine = "  disabled_toolsets:\n    - session_search";
+
+  if (/^\s*- session_search\s*$/m.test(content)) {
+    return;
+  }
+
+  if (/^agent:\s*$/m.test(content)) {
+    content = content.replace(/^agent:\s*$/m, `agent:\n${disabledToolsetLine}`);
+  } else {
+    content = `agent:\n${disabledToolsetLine}\n\n${content}`;
+  }
+
+  await fs.mkdir(homeDir, { recursive: true });
+  await fs.writeFile(configPath, content, "utf8");
+  console.log("[hermes-isolation] Disabled cross-session session_search tool.");
+}
+
+function isProductIdentityQuestion(text) {
+  return /^(你是谁|你是什么|你能做什么|介绍一下你自己|who are you|what can you do)[？?！!。\s]*$/i.test(
+    toSafeString(text).trim()
+  );
+}
+
+const PRODUCT_IDENTITY_RESPONSE =
+  "我是深统政务 Scope，深圳市统计局智能工作台，专注于统计分析、政务信息整理、数据检索、报告生成，以及项目文件和代码处理。底层由 Hermes Agent 提供本地执行能力。";
 
 const defaultSettings = {
   hermesBin: getDefaultHermesBinaryPath(),
@@ -906,6 +941,31 @@ async function cleanupHermesWrapper(extraTargets = []) {
   await removePathWithRetries(wrapperPath, "the legacy Hermes wrapper");
 }
 
+async function removeAppleDoubleFiles(rootDir) {
+  let removed = 0;
+  async function walk(currentDir) {
+    const entries = await fs.readdir(currentDir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const entryPath = path.join(currentDir, entry.name);
+      if (entry.name.startsWith("._")) {
+        if (entry.isFile() || entry.isSymbolicLink()) {
+          await fs.unlink(entryPath).catch(() => {});
+          removed += 1;
+        }
+        continue;
+      }
+      if (entry.isDirectory()) {
+        await walk(entryPath);
+      }
+    }
+  }
+
+  await walk(rootDir);
+  if (removed > 0) {
+    console.log(`Removed ${removed} AppleDouble metadata files from ${rootDir}`);
+  }
+}
+
 async function ensureEmbeddedRuntimeInstalled({ force = false } = {}) {
   const installDir = getRuntimeInstallDir();
   const runtimeRoot = getRuntimeRoot();
@@ -934,6 +994,7 @@ async function ensureEmbeddedRuntimeInstalled({ force = false } = {}) {
   // venv metadata to that new location so Python does not keep the CI
   // runner's absolute interpreter path.
   await repairPortablePythonRuntime(runtimeRoot);
+  await removeAppleDoubleFiles(runtimeRoot);
 
   await fs.mkdir(getRuntimeHomeDir(), { recursive: true });
   if (process.platform !== "win32") {
@@ -1451,6 +1512,9 @@ class HermesGatewayBridge {
     const env = buildHermesEnv(this.settings, launchConfig, token);
 
     await fs.mkdir(env.HERMES_HOME, { recursive: true });
+    if (this.settings.runtimeMode !== "official") {
+      await ensureScopeSessionIsolation(env.HERMES_HOME);
+    }
     await syncRegisteredSkills(this.settings);
 
     this.proc = spawn(launchConfig.command, args, {
@@ -1624,6 +1688,7 @@ let state = {
   lastUsageModel: null,
   reasoningTrace: null,
   pendingApproval: null,
+  pendingClarification: null,
   settings: { ...defaultSettings },
   runtime: buildRuntimeInfo(false),
   official: {
@@ -1706,8 +1771,12 @@ async function loadActiveThread(threadId) {
     return;
   }
 
+  const previousSessionId = activeGatewaySessionId;
+  const previousTurnWasActive = state.busy || Boolean(state.pendingClarification);
   state.busy = true;
   state.error = null;
+  state.pendingClarification = null;
+  state.pendingApproval = null;
   broadcastState();
 
   try {
@@ -1720,8 +1789,12 @@ async function loadActiveThread(threadId) {
       activeSessionReject = null;
     }
 
-    if (activeGatewaySessionId) {
-      await bridge.closeSession(activeGatewaySessionId);
+    if (previousTurnWasActive && previousSessionId) {
+      await bridge.cancelPrompt(previousSessionId);
+    }
+
+    if (previousSessionId) {
+      await bridge.closeSession(previousSessionId);
     }
 
     const result = await bridge.resumeThread(threadId);
@@ -1768,6 +1841,11 @@ async function loadActiveThread(threadId) {
 }
 
 async function startNewConversation() {
+  const previousSessionId = activeGatewaySessionId;
+  const previousTurnWasActive = state.busy || Boolean(state.pendingClarification);
+
+  state.pendingClarification = null;
+  state.pendingApproval = null;
   if (activeSessionUnsubscribe) {
     activeSessionUnsubscribe();
     activeSessionUnsubscribe = null;
@@ -1777,9 +1855,17 @@ async function startNewConversation() {
     activeSessionReject = null;
   }
 
-  if (bridge && activeGatewaySessionId) {
+  if (bridge && previousTurnWasActive && previousSessionId) {
     try {
-      await bridge.closeSession(activeGatewaySessionId);
+      await bridge.cancelPrompt(previousSessionId);
+    } catch (err) {
+      console.error("Failed to cancel previous session before starting a new conversation:", err);
+    }
+  }
+
+  if (bridge && previousSessionId) {
+    try {
+      await bridge.closeSession(previousSessionId);
     } catch (err) {
       console.error("Failed to close session:", err);
     }
@@ -1916,10 +2002,28 @@ async function initializeBridge() {
       state.status = state.error;
       state.busy = false;
       state.activeDraft = null;
+      state.pendingClarification = null;
       if (/invalid refresh token|refresh_token|agent init failed/i.test(state.error)) {
         activeGatewaySessionId = null;
       }
       broadcastState();
+      return;
+    }
+
+    if (message.type === "clarify.request") {
+      const targetSessionId = message.session_id || activeGatewaySessionId || state.activeThreadId;
+      const payload = message.payload || {};
+      const question = toSafeString(payload.question || payload.prompt || payload.text).trim();
+      if (targetSessionId && question) {
+        state.pendingClarification = {
+          sessionId: String(targetSessionId),
+          requestId: payload.request_id || payload.id || null,
+          question,
+          choices: Array.isArray(payload.choices) ? payload.choices.map((choice) => toSafeString(choice)).filter(Boolean) : null,
+        };
+        state.status = "等待补充信息...";
+        broadcastState();
+      }
       return;
     }
 
@@ -2027,6 +2131,7 @@ async function initializeBridge() {
         state.activeDraft.reasoning = reasoning;
       }
       state.pendingApproval = null;
+      state.pendingClarification = null;
       broadcastState();
       return;
     }
@@ -2247,6 +2352,21 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
     throw new Error("Message text is required.");
   }
 
+  if (isProductIdentityQuestion(text)) {
+    state.error = null;
+    state.busy = false;
+    state.status = "Ready.";
+    state.activeDraft = null;
+    state.pendingClarification = null;
+    state.messages = [
+      ...state.messages,
+      { id: randomUUID(), role: "user", text, turnId: null },
+      { id: randomUUID(), role: "assistant", text: PRODUCT_IDENTITY_RESPONSE, reasoning: null, turnId: null },
+    ];
+    broadcastState();
+    return state;
+  }
+
   if (state.settings.runtimeMode !== "official" && !toSafeString(state.settings.apiKey).trim()) {
     state.error = "Missing API key. Open Settings and configure your model provider first.";
     state.status = state.error;
@@ -2319,6 +2439,22 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
     } catch (err) {
       sendError = err;
       const errMsg = err instanceof Error ? err.message : String(err);
+      if (/agent initialization timed out/i.test(errMsg) && activeGatewaySessionId) {
+        console.warn("[hermes-send] Agent cold start timed out; retrying the same prompt once...");
+        try {
+          state.busy = true;
+          state.error = null;
+          state.status = "首次启动较慢，正在继续初始化...";
+          broadcastState();
+          await sleep(1500);
+          await bridge.sendPrompt(activeGatewaySessionId, text);
+          await waitForSessionCompletion(activeGatewaySessionId);
+          sendError = null;
+        } catch (retryErr) {
+          console.error("[hermes-send] Cold-start retry failed:", retryErr);
+          sendError = retryErr;
+        }
+      }
       if (/invalid refresh token|refresh_token|agent init failed/i.test(errMsg)) {
         console.warn("[hermes-send] Token error on prompt submission. Checking disk for auto-recovery...");
         activeGatewaySessionId = null;
@@ -2384,8 +2520,18 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
     state.status = "Ready.";
   } catch (error) {
     console.error("[hermes-send] failed", error);
-    state.error = error instanceof Error ? error.message : "Failed to send message.";
-    state.status = state.error;
+    const errorMessage = error instanceof Error ? error.message : "Failed to send message.";
+    if (/Conversation was closed|Thread switched|用户已终止对话处理/.test(errorMessage)) {
+      // Switching threads, starting a new conversation, and pressing stop are
+      // intentional cancellations; they must not overwrite the new state with
+      // a stale error from the previous send task.
+      state.error = null;
+      state.status = "Ready.";
+      state.activeDraft = null;
+    } else {
+      state.error = errorMessage;
+      state.status = state.error;
+    }
     if (/invalid refresh token|refresh_token|agent init failed/i.test(state.error)) {
       activeGatewaySessionId = null;
     }
@@ -2948,6 +3094,34 @@ ipcMain.handle("hermes:respondApproval", async (_event, choice) => {
   return state;
 });
 
+ipcMain.handle("hermes:respondClarification", async (_event, answer) => {
+  const pending = state.pendingClarification;
+  const text = toSafeString(answer).trim();
+  if (!pending || !text || !bridge) {
+    return state;
+  }
+
+  try {
+    state.pendingClarification = null;
+    state.status = "已提交补充信息，继续处理中...";
+    state.error = null;
+    broadcastState();
+    if (!pending.requestId) {
+      throw new Error("澄清请求缺少 request_id，无法提交回答。");
+    }
+    await bridge.request("clarify.respond", {
+      request_id: pending.requestId,
+      answer: text,
+    });
+  } catch (err) {
+    state.pendingClarification = pending;
+    state.error = err instanceof Error ? err.message : String(err);
+    state.status = state.error;
+    broadcastState();
+  }
+  return state;
+});
+
 ipcMain.handle("hermes:openExternal", async (_event, targetUrl) => {
   const urlStr = String(targetUrl || "").trim();
   if (!urlStr) return;
@@ -3028,6 +3202,9 @@ ipcMain.handle("hermes:stopMessage", async () => {
   }
   state.busy = false;
   state.activeDraft = null;
+  state.pendingClarification = null;
+  state.pendingApproval = null;
+  state.error = null;
   state.status = "已终止处理。";
   broadcastState();
   return state;

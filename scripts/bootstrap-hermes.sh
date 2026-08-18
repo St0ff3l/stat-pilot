@@ -119,6 +119,19 @@ prepare_local_hermes_repository() {
 
 prepare_local_hermes_repository
 
+remove_macos_metadata() {
+  local removed=0
+  while IFS= read -r -d '' metadata_path; do
+    rm -f "$metadata_path"
+    removed=$((removed + 1))
+  done < <(find "$RUNTIME_ROOT" -type f \( -name '._*' -o -name '.DS_Store' \) -print0)
+  if [[ "$removed" -gt 0 ]]; then
+    echo "Removed $removed macOS metadata files from $RUNTIME_ROOT"
+  fi
+}
+
+remove_macos_metadata
+
 if [[ -n "$HERMES_COMMIT" && "$HERMES_ARCHIVE_BOOTSTRAPPED" != "1" ]]; then
   INSTALL_ARGS+=(--commit "$HERMES_COMMIT")
 fi

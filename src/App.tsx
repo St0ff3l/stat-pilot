@@ -346,6 +346,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeSettingsTab, setActiveSettingsTab] = useState<"runtime" | "chat" | "vision" | "tools">("runtime");
   const [draft, setDraft] = useState("");
+  const [clarificationDraft, setClarificationDraft] = useState("");
   const [isThreadLoading, setIsThreadLoading] = useState(false);
   const [dismissedFiles, setDismissedFiles] = useState<string[] | null>(null);
   const [dismissedError, setDismissedError] = useState<string | null>(null);
@@ -507,8 +508,13 @@ function App() {
 
   async function handleStopMessage() {
     if (!window.hermesDesktop) return;
-    const nextState = await window.hermesDesktop.stopMessage();
-    setState(nextState);
+    try {
+      const nextState = await window.hermesDesktop.stopMessage();
+      setState(nextState);
+    } finally {
+      setIsThreadLoading(false);
+      setClarificationDraft("");
+    }
   }
 
   async function handleSelectWorkspaceFolder() {
@@ -780,12 +786,10 @@ function App() {
     }
 
     setActiveMainTab("chat");
-    setSelectedSkillTag(null);
     setIsThreadLoading(true);
     try {
       const nextState = await window.hermesDesktop.newThread();
       setState(nextState);
-      setDraft("");
     } finally {
       setIsThreadLoading(false);
     }
@@ -797,12 +801,10 @@ function App() {
     }
 
     setActiveMainTab("chat");
-    setSelectedSkillTag(null);
     setIsThreadLoading(true);
     try {
       const nextState = await window.hermesDesktop.selectThread(threadId);
       setState(nextState);
-      setDraft("");
     } finally {
       setIsThreadLoading(false);
     }
@@ -847,6 +849,18 @@ function App() {
         const currentState = await window.hermesDesktop.getState();
         setState(currentState);
       } catch {}
+    }
+  }
+
+  async function respondClarification(answer: string) {
+    const text = answer.trim();
+    if (!text || !window.hermesDesktop?.respondClarification) return;
+    setClarificationDraft("");
+    try {
+      const nextState = await window.hermesDesktop.respondClarification(text);
+      setState(nextState);
+    } catch (e) {
+      console.error("Failed to respond to clarification:", e);
     }
   }
 
@@ -1084,13 +1098,18 @@ function App() {
     state.error.includes("did not become ready") ||
     state.error.includes("Bundled Hermes runtime source not found")
   ));
-  const canSend = !needsProviderSetup && !isHermesMissing && !state?.busy;
   const isInitializing = !!state && !state.error && (
-    state.status.startsWith("Starting") || 
-    state.status.startsWith("Installing")
+    state.status.startsWith("Starting") ||
+    state.status.startsWith("Installing") ||
+    state.status.startsWith("Preparing") ||
+    state.status.startsWith("Connecting") ||
+    !state.runtime.installed
   );
+  const canSend = !needsProviderSetup && !isHermesMissing && !state?.busy && !isThreadLoading && !isInitializing;
 
-  const statusDotClass = isHermesMissing
+  const statusDotClass = isInitializing
+    ? "warning"
+    : isHermesMissing
     ? "error"
     : needsProviderSetup
       ? "warning"
@@ -1098,7 +1117,9 @@ function App() {
         ? "error"
         : "";
 
-  const statusLabel = isHermesMissing
+  const statusLabel = isInitializing
+    ? "加载中..."
+    : isHermesMissing
     ? "运行时未就绪"
     : needsProviderSetup
       ? (isOfficialMode ? "官方账号未登录" : "未配置 API 密钥")
@@ -1358,11 +1379,11 @@ function App() {
           </header>
 
           <section className="message-scroller">
-            {isThreadLoading ? (
+            {isThreadLoading || isInitializing ? (
               <div className="thread-loading-wrapper flex flex-col gap-6 w-full max-w-[860px] mx-auto py-4 px-2 overflow-hidden animate-fade-in">
                 <div className="loading-status-bar flex items-center justify-center gap-2.5 py-1.5 px-4 rounded-full bg-blue-50/90 border border-blue-200/60 w-fit mx-auto shadow-xs text-xs font-medium text-blue-700">
                   <span className="loading-spinner-ring" />
-                  <span>正在同步加载对话历史与结构化数据...</span>
+                  <span>{isInitializing ? "正在加载深统政务 Scope..." : "正在同步加载对话历史与结构化数据..."}</span>
                 </div>
 
                 {/* Assistant Bubble Skeleton */}
@@ -1818,6 +1839,64 @@ function App() {
                     onClick={() => void window.hermesDesktop?.respondApproval?.("deny")}
                   >
                     ✕ 拒绝并终止 (/deny)
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {state?.pendingClarification ? (
+              <div className="composer-clarification-banner">
+                <div className="composer-clarification-title">
+                  <span aria-hidden="true">💬</span>
+                  <strong>需要补充信息</strong>
+                  <button
+                    type="button"
+                    className="composer-clarification-close"
+                    onClick={() => void handleStopMessage()}
+                    title="关闭并终止当前等待"
+                    aria-label="关闭并终止当前等待"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="composer-clarification-question">
+                  {state.pendingClarification.question}
+                </div>
+                {state.pendingClarification.choices?.length ? (
+                  <div className="composer-clarification-choices">
+                    {state.pendingClarification.choices.map((choice) => (
+                      <button
+                        key={choice}
+                        type="button"
+                        className="composer-clarification-choice"
+                        onClick={() => void respondClarification(choice)}
+                      >
+                        {choice}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="composer-clarification-input-row">
+                  <input
+                    value={clarificationDraft}
+                    onChange={(event) => setClarificationDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        void respondClarification(clarificationDraft);
+                      }
+                    }}
+                    placeholder="请补充说明..."
+                    aria-label="补充说明"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    className="composer-clarification-submit"
+                    disabled={!clarificationDraft.trim()}
+                    onClick={() => void respondClarification(clarificationDraft)}
+                  >
+                    发送
                   </button>
                 </div>
               </div>

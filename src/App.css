@@ -1239,6 +1239,42 @@ body {
   @apply bg-white text-amber-900 border border-amber-300 hover:bg-amber-100 active:scale-95;
 }
 
+.composer-clarification-banner {
+  @apply mb-2.5 p-4 bg-gradient-to-br from-blue-50 to-indigo-50/80 border border-blue-200 rounded-xl flex flex-col gap-2.5 shadow-sm w-full max-w-[960px] mx-auto box-border;
+}
+
+.composer-clarification-title {
+  @apply flex items-center gap-2 text-[0.92rem] font-bold text-blue-900;
+}
+
+.composer-clarification-close {
+  @apply ml-auto w-7 h-7 flex items-center justify-center rounded-full text-lg leading-none font-normal text-blue-500 bg-transparent border-none cursor-pointer hover:bg-blue-100 hover:text-blue-800;
+}
+
+.composer-clarification-question {
+  @apply text-[0.84rem] text-slate-700 leading-relaxed whitespace-pre-wrap;
+}
+
+.composer-clarification-choices {
+  @apply flex flex-wrap gap-2;
+}
+
+.composer-clarification-choice {
+  @apply px-3 py-1.5 rounded-lg text-[0.82rem] font-semibold text-blue-700 bg-white border border-blue-200 hover:bg-blue-100 cursor-pointer;
+}
+
+.composer-clarification-input-row {
+  @apply flex items-center gap-2;
+}
+
+.composer-clarification-input-row input {
+  @apply flex-1 min-w-0 px-3 py-2 rounded-lg border border-blue-200 bg-white text-[0.84rem] outline-none focus:border-blue-400;
+}
+
+.composer-clarification-submit {
+  @apply px-4 py-2 rounded-lg text-[0.82rem] font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
 /* Sidebar Actions (Matching Image 2) */
 .sidebar-action-list {
   @apply flex flex-col gap-0.5 my-1;
