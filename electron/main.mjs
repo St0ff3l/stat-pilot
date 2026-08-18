@@ -1,5 +1,5 @@
 import { randomUUID, randomBytes } from "node:crypto";
-import { existsSync, promises as fs } from "node:fs";
+import { existsSync, readFileSync as fsSyncReadFile, promises as fs } from "node:fs";
 import path from "node:path";
 import net from "node:net";
 import { spawn, execSync } from "node:child_process";
@@ -82,6 +82,33 @@ function getRuntimePythonPath(installDir = getRuntimeInstallDir()) {
     environmentDir,
     process.platform === "win32" ? "Scripts/python.exe" : "bin/python"
   );
+}
+
+function getPortablePythonPath(installDir = getRuntimeInstallDir()) {
+  const runtimeRoot = path.dirname(installDir);
+  const metadataPath = path.join(runtimeRoot, "portable-python.json");
+
+  try {
+    const metadata = JSON.parse(fsSyncReadFile(metadataPath, "utf8"));
+    const relativePath = toSafeString(metadata.pythonExecutable).trim();
+    if (!relativePath) {
+      return null;
+    }
+
+    const candidate = path.resolve(runtimeRoot, relativePath);
+    const relativeCandidate = path.relative(runtimeRoot, candidate);
+    if (
+      path.isAbsolute(relativeCandidate) ||
+      relativeCandidate.startsWith(`..${path.sep}`) ||
+      !existsSync(candidate)
+    ) {
+      return null;
+    }
+
+    return candidate;
+  } catch {
+    return null;
+  }
 }
 
 function getRuntimeEntryPointPath(installDir = getRuntimeInstallDir()) {
@@ -1045,13 +1072,25 @@ function buildHermesEnv(settings, launchConfig = null, sessionToken = "") {
 
 function resolveBackendLaunch() {
   const installDir = getRuntimeInstallDir();
+  const environmentDir = getRuntimeEnvironmentDir(installDir);
   const venvPython = getRuntimePythonPath(installDir);
+  // On Windows, uv may generate the venv's python.exe as a trampoline. That
+  // trampoline can retain the build-machine interpreter path after the app is
+  // copied to a user's profile. Launch the portable interpreter directly and
+  // expose Hermes plus the venv packages through PYTHONPATH instead.
+  const command = process.platform === "win32"
+    ? getPortablePythonPath(installDir) || venvPython
+    : venvPython;
+  const pythonPath = [
+    installDir,
+    path.join(environmentDir, "Lib", "site-packages"),
+  ].join(path.delimiter);
   const webDist = path.join(installDir, "hermes_cli", "web_dist");
 
   return {
-    command: venvPython,
+    command,
     argsPrefix: ["-m", "hermes_cli.main"],
-    pythonPath: installDir,
+    pythonPath,
     webDist,
     installDir,
   };
