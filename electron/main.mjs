@@ -1059,6 +1059,12 @@ function buildHermesEnv(settings, launchConfig = null, sessionToken = "") {
   env.PYTHONUNBUFFERED = "1";
   env.PYTHONUTF8 = "1";
   env.PYTHONIOENCODING = "utf-8";
+  // Keep Python, WSL-backed helpers, and other POSIX subprocesses on the same
+  // UTF-8 locale. Without this, Windows can return localized UTF-16/ACP error
+  // text through a UTF-8 pipe, producing replacement characters such as
+  // `w�s�l�` in the conversation.
+  env.LANG = "C.UTF-8";
+  env.LC_ALL = "C.UTF-8";
   const provider = toSafeString(settings.apiProvider).trim() || "deepseek";
   const isOfficialMode = settings.runtimeMode === "official";
 
