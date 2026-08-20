@@ -80,6 +80,11 @@ jobs:
 
       - name: Bootstrap Hermes Runtime on macOS/Linux
         if: matrix.runtime_bootstrap == 'unix'
+        env:
+          # Hermes' installer may use Homebrew for uv/Python dependencies.
+          # GitHub's clean runners can contain an untrusted aws/tap; this is a
+          # disposable CI environment, so allow Homebrew to use the tap.
+          HOMEBREW_NO_REQUIRE_TAP_TRUST: "1"
         run: npm run hermes:bootstrap:skip-setup
 
       - name: Verify Linux ARM64 build environment
