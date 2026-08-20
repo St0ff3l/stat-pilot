@@ -100,6 +100,7 @@ prepare_local_hermes_repository() {
     mv "$extracted_dir" "$INSTALL_DIR"
 
     git -C "$INSTALL_DIR" init -b "$HERMES_BRANCH" >/dev/null
+    find "$INSTALL_DIR" -type f \( -name '._*' -o -name '.DS_Store' \) -delete
     git -C "$INSTALL_DIR" -c user.name="SZ Gov Scope build" -c user.email="build@localhost" add -A
     git -C "$INSTALL_DIR" -c user.name="SZ Gov Scope build" -c user.email="build@localhost" commit -m "Hermes source archive" >/dev/null
     echo "Prepared Hermes source from ref: $source_ref"
