@@ -179,6 +179,9 @@ async function buildOutputInstructions(cwd, defaultOutputDir = "output") {
     console.warn("Unable to create the default output directory:", error.message);
   });
   const sourceAttributionRule = await loadSourceAttributionRule();
+  const platformInstruction = process.platform === "win32"
+    ? `【Windows 终端规则】：当前运行在 Windows。终端命令默认使用 PowerShell 7（pwsh），找不到时使用 Windows PowerShell（powershell.exe）；禁止调用 WSL、wsl.exe、bash、sh 或 Git Bash，命令必须使用 PowerShell 语法。\n`
+    : "";
 
   return (
     `【深统政务 Scope 产品身份与回答规则】\n` +
@@ -192,6 +195,7 @@ async function buildOutputInstructions(cwd, defaultOutputDir = "output") {
     `4. 【文件产出与统一存储】：所有抓取的数据、生成的 HTML 仪表盘、分析周报等产物，统一使用绝对路径存入目标输出目录：${resolvedDir}。未指定工作区文件夹时也必须使用这个目录，禁止把产物直接写入工作区根目录、应用安装目录或当前目录；每次任务必须在该目录下按主题创建语义化子目录（如 统计局周报_20260806/）。\n` +
     `5. 【清爽回复与链接展示】：聊天界面严禁直接粘贴超长原始 JSON 或冗长数据原文。聊天框中只提供 150-200 字的精炼高管级结论，并附带指向产物目录/文件的 markdown 链接（例如：[打开输出文件](file://${resolvedDir}/子目录/文件名)）。\n` +
     `6. 【全局来源标注规则】：以下规则是本应用默认系统规则，优先于普通输出习惯，必须在每次回复、抓取、汇总、报告和事实问答中执行：\n${sourceAttributionRule}\n` +
+    platformInstruction +
     `7. 【YOLO 无人值守模式】：当前已开启全自动免授权模式，所有敏感操作（代码执行、patch、脚本运行）自动授权，连续推进直到任务圆满达成。\n` +
     `【最终产品身份约束】：如果用户询问身份或能力，必须把“深统政务 Scope（深圳市统计局智能工作台）”作为第一身份和第一句核心介绍；Hermes Agent 只能作为底层执行引擎补充说明，不能替代产品身份。\n` +
     `【最终上下文约束】：历史消息仅用于展示和在用户明确要求时恢复任务；默认不得引用、总结或推断历史消息。当前用户消息与本规则优先于历史对话。不得使用 session_search 或任何跨会话检索能力，除非用户明确要求查找其他会话。`

@@ -48,6 +48,19 @@ const appSupportTitleGeneratorPath = path.join(
   "title_generator.py"
 );
 
+const localShellTargets = [
+  {
+    label: "workspace local terminal runtime",
+    filePath: path.join(projectRoot, ".runtime", "hermes-agent", "tools", "environments", "local.py"),
+    optional: false,
+  },
+  {
+    label: "active app local terminal runtime",
+    filePath: path.join(getUserDataPath(), "hermes-runtime", "hermes-agent", "tools", "environments", "local.py"),
+    optional: true,
+  },
+];
+
 const patchTargets = [
   {
     label: "workspace runtime template",
@@ -151,11 +164,86 @@ async function patchUtf8Decoders() {
   }
 }
 
+async function patchWindowsLocalShell() {
+  const powershellFinder = `
+def _find_powershell() -> str:
+    """Find PowerShell for native Windows command execution."""
+    custom = os.environ.get("HERMES_POWERSHELL_PATH")
+    if custom and os.path.isfile(custom):
+        return custom
+
+    for name in ("pwsh", "powershell"):
+        found = shutil.which(name)
+        if found:
+            return found
+
+    raise RuntimeError(
+        "PowerShell not found. Install PowerShell 7 or set HERMES_POWERSHELL_PATH."
+    )
+
+`;
+
+  for (const target of localShellTargets) {
+    let content;
+    try {
+      content = await fs.readFile(target.filePath, "utf8");
+    } catch {
+      if (!target.optional) {
+        console.error(`Missing ${target.label}: ${target.filePath}`);
+        process.exitCode = 1;
+      } else {
+        console.log(`Skipped ${target.label}: file not found at ${target.filePath}`);
+      }
+      continue;
+    }
+
+    const alreadyPatched =
+      content.includes("def _find_powershell() -> str:") &&
+      content.includes("_find_shell = _find_powershell if _IS_WINDOWS else _find_bash") &&
+      content.includes("bash = _find_shell()");
+    if (alreadyPatched) {
+      console.log(`OK ${target.label}: Windows local terminal uses PowerShell`);
+      continue;
+    }
+
+    const alias = "_find_shell = _find_bash";
+    if (!content.includes(alias)) {
+      console.error(`Unexpected local terminal runtime format: ${target.filePath}`);
+      console.error("Hermes upstream may have changed. Please review and update scripts/patch-hermes-runtime.mjs.");
+      process.exitCode = 1;
+      continue;
+    }
+
+    let updated = content;
+    if (!updated.includes("def _find_powershell() -> str:")) {
+      updated = updated.replace(alias, `${powershellFinder}_find_shell = _find_powershell if _IS_WINDOWS else _find_bash`);
+    } else {
+      updated = updated.replace(alias, "_find_shell = _find_powershell if _IS_WINDOWS else _find_bash");
+    }
+    updated = updated.replace("bash = _find_bash()", "bash = _find_shell()");
+    const oldArgs = 'args = [bash, "-l", "-c", cmd_string] if login else [bash, "-c", cmd_string]';
+    const newArgs = `if _IS_WINDOWS:
+            args = [bash, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", cmd_string]
+        else:
+            args = [bash, "-l", "-c", cmd_string] if login else [bash, "-c", cmd_string]`;
+    if (!updated.includes(oldArgs)) {
+      console.error(`Unexpected local shell invocation format: ${target.filePath}`);
+      console.error("Hermes upstream may have changed. Please review and update scripts/patch-hermes-runtime.mjs.");
+      process.exitCode = 1;
+      continue;
+    }
+    updated = updated.replace(oldArgs, newArgs);
+    await fs.writeFile(target.filePath, updated, "utf8");
+    console.log(`Patched ${target.label}: Windows local terminal now prefers pwsh`);
+  }
+}
+
 async function main() {
   console.log("Applying Hermes runtime patches...");
   for (const target of patchTargets) {
     await patchFile(target);
   }
+  await patchWindowsLocalShell();
   await patchUtf8Decoders();
 }
 

@@ -17,6 +17,7 @@
 - 开发启动统一使用 `npm run dev`，不要在 `package.json` 中直接写 `VITE_DEV_SERVER_URL=... electron .` 这类仅适用于 Unix shell 的环境变量语法；使用 `cross-env` 保证 Windows、macOS、Linux 一致。
 - Hermes Runtime 源码归档可能携带 macOS AppleDouble 元数据（文件名以 `._` 开头或为 `.DS_Store`）。这些文件不是文本，不能让 Hermes 扫描；引导脚本和应用启动流程都必须清理它们。
 - 新增文件扫描或技能加载逻辑时，必须忽略 `._*`、`.DS_Store` 等平台元数据，并在 Windows、macOS、Linux 至少各做一次启动/技能发现验证。
+- Windows 下 Hermes 终端默认使用 `pwsh`，找不到时回退 `powershell.exe`；不要主动使用 WSL、`wsl.exe`、bash 或 Git Bash，命令使用 PowerShell 语法。
 
 ## 文件输出目录
 
