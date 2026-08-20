@@ -23,6 +23,8 @@
 - Hermes Gateway 的 `session.create` / `session.resume` 当前不会使用客户端传入的 `developerInstructions` 作为模型身份提示。
 - 产品身份必须通过应用私有 `HERMES_HOME/SOUL.md` 注入；应用启动时由 `electron/main.mjs` 创建或更新默认 Hermes 身份模板，不要在前端写死“你是谁”的回复。
 - 仅替换 Hermes 默认的 `You are Hermes Agent...` 模板，不能覆盖用户自行修改过的 `SOUL.md`。
+- 私有运行时的 YOLO 必须通过启动 Hermes 进程前设置 `HERMES_YOLO_MODE=1`（可同时设置 `HERMES_EXEC_ASK=0`）；`session.create` 的 `yolo: true` 不能替代环境变量。
+- 审批事件不得在主进程静默自动批准；如果 YOLO 或硬性规则仍触发审批，必须保留 `pendingApproval` 并由前端展示授权操作。
 
 ## Git 合并策略
 

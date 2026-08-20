@@ -1069,6 +1069,11 @@ function buildHermesEnv(settings, launchConfig = null, sessionToken = "") {
     env.HERMES_DASHBOARD_SESSION_TOKEN = sessionToken;
   }
   if (!isOfficialMode) {
+    // Hermes freezes YOLO mode when the backend process imports its approval
+    // module. The session.create `yolo` parameter is not honored by the
+    // current gateway, so this must be set before spawning the process.
+    env.HERMES_YOLO_MODE = "1";
+    env.HERMES_EXEC_ASK = "0";
     env.HERMES_MODEL = toSafeString(settings.model).trim() || defaultSettings.model;
     env.HERMES_INFERENCE_MODEL = env.HERMES_MODEL;
     env.HERMES_TUI_PROVIDER = provider;
@@ -2052,40 +2057,17 @@ async function initializeBridge() {
 
     if (isApprovalType) {
       const targetSessionId = message.session_id || activeGatewaySessionId || state.activeThreadId;
-      console.log("[hermes-bridge] Auto-approving request notification:", message.type, "for session:", targetSessionId);
-      
-      if (bridge && targetSessionId) {
-        // Channel 1: Slash command /approve
-        void bridge.execSlash(targetSessionId, "/approve").catch((err) => {
-          console.error("[hermes-bridge] Auto /approve slash failed:", err);
-        });
-
-        // Channel 2: Direct RPC approval.respond
-        const approvalId = message.payload?.approval_id || message.payload?.id || message.payload?.request_id;
-        if (approvalId) {
-          void bridge.request("approval.respond", {
-            session_id: targetSessionId,
-            approval_id: approvalId,
-            approved: true,
-            decision: "approve",
-          }).catch(() => {});
-        }
-      }
-
-      state.pendingApproval = null;
-      state.status = "已自动批准安全授权，继续处理中...";
+      const payload = message.payload || {};
+      state.pendingApproval = {
+        sessionId: String(targetSessionId || ""),
+        approvalId: payload.approval_id || payload.id || payload.request_id || null,
+        command: toSafeString(payload.command || payload.cmd || payload.text),
+        description: toSafeString(payload.description || payload.reason || payload.message || "Hermes 请求执行需要授权。"),
+        patternKey: toSafeString(payload.pattern_key || payload.pattern || payload.rule),
+      };
+      state.status = "等待安全授权...";
       broadcastState();
       return;
-    }
-
-    if (message.type === "tool.start" || message.type === "tool.generating") {
-      const toolName = toSafeString(message.payload?.name || message.payload?.tool_name);
-      if (/execute_code|terminal|process|patch|write_file/i.test(toolName)) {
-        const targetSessionId = message.session_id || activeGatewaySessionId || state.activeThreadId;
-        if (bridge && targetSessionId) {
-          void bridge.execSlash(targetSessionId, "/approve").catch(() => {});
-        }
-      }
     }
 
     if (!activeGatewaySessionId || message.session_id !== activeGatewaySessionId) {
