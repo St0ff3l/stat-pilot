@@ -15,7 +15,7 @@ function formatRelativeTime(value: number): string {
 
 function withDisplayModel(appState: HermesAppState): HermesAppState["settings"] {
   return {
-    defaultOutputDir: "outputs",
+    defaultOutputDir: "output",
     ...appState.settings,
     model: appState.settings.runtimeMode === "official" ? appState.official.defaultModel : appState.settings.model,
   };
@@ -594,7 +594,7 @@ function App() {
     runtimeMode: "private",
     model: "",
     cwd: "",
-    defaultOutputDir: "outputs",
+    defaultOutputDir: "output",
     apiProvider: "deepseek",
     apiKey: "",
     apiBaseUrl: "",
@@ -2125,7 +2125,7 @@ function App() {
                 </div>
                 <p>当前对话下尚无生成的文件</p>
                 <p style={{ fontSize: "11.5px", opacity: 0.75, lineHeight: "1.5" }}>
-                  智能体执行导出或抓取任务后，生成的文件默认保存至 <b>{state?.settings.defaultOutputDir || "outputs"}/任务子目录/</b>。
+                  智能体执行导出或抓取任务后，生成的文件默认保存至 <b>{state?.settings.defaultOutputDir || "output"}/任务子目录/</b>。
                 </p>
               </div>
             ) : (
@@ -2182,7 +2182,7 @@ function App() {
               style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}
               onClick={() => {
                 const targetCwd = state?.activeThread?.cwd || state?.settings?.cwd || "";
-                const defaultOutputDir = state?.settings?.defaultOutputDir || "outputs";
+                const defaultOutputDir = state?.settings?.defaultOutputDir || "output";
                 let resolvedPath = defaultOutputDir;
                 if (targetCwd && !defaultOutputDir.startsWith("/") && !defaultOutputDir.includes(":")) {
                   resolvedPath = `${targetCwd}/${defaultOutputDir}`;
@@ -2242,7 +2242,7 @@ function App() {
               className="toast-open-dir-button"
               onClick={() => {
                 const targetCwd = state?.activeThread?.cwd || state?.settings?.cwd || "";
-                const defaultOutputDir = state?.settings?.defaultOutputDir || "outputs";
+                const defaultOutputDir = state?.settings?.defaultOutputDir || "output";
                 let resolvedPath = defaultOutputDir;
                 const firstFile = state.lastGeneratedFiles?.[0];
                 if (firstFile) {
@@ -2360,7 +2360,7 @@ function App() {
                             defaultOutputDir: event.target.value,
                           }))
                         }
-                        placeholder="outputs"
+                            placeholder="output"
                       />
                       <small className="field-hint">
                         智能体产生的文件将默认保存到该文件夹下的子目录中。支持相对路径（相对于工作区）或绝对路径。

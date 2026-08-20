@@ -18,6 +18,11 @@
 - Hermes Runtime 源码归档可能携带 macOS AppleDouble 元数据（文件名以 `._` 开头或为 `.DS_Store`）。这些文件不是文本，不能让 Hermes 扫描；引导脚本和应用启动流程都必须清理它们。
 - 新增文件扫描或技能加载逻辑时，必须忽略 `._*`、`.DS_Store` 等平台元数据，并在 Windows、macOS、Linux 至少各做一次启动/技能发现验证。
 
+## 文件输出目录
+
+- 未指定工作区文件夹时，所有抓取结果、报告、HTML 和其他生成文件统一写入工作区下的 `output/`，不得直接写入工作区根目录或应用安装目录。
+- 默认目录名称统一使用 `output`（单数）；不要再新增或使用 `outputs` 作为默认目录。用户明确指定输出目录时，才使用用户指定的位置。
+
 ## Hermes 身份提示
 
 - Hermes Gateway 的 `session.create` / `session.resume` 当前不会使用客户端传入的 `developerInstructions` 作为模型身份提示。

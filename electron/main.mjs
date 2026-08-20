@@ -158,10 +158,26 @@ async function loadSourceAttributionRule() {
   return FALLBACK_SOURCE_ATTRIBUTION_RULE;
 }
 
-async function buildOutputInstructions(cwd, defaultOutputDir = "outputs") {
-  const resolvedDir = path.isAbsolute(defaultOutputDir)
-    ? defaultOutputDir
-    : path.resolve(cwd, defaultOutputDir);
+function normalizeOutputDir(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw || raw === "outputs" || raw === "./outputs") {
+    return "output";
+  }
+  return raw;
+}
+
+function resolveOutputDir(cwd, defaultOutputDir = "output") {
+  const normalizedDir = normalizeOutputDir(defaultOutputDir);
+  return path.isAbsolute(normalizedDir)
+    ? normalizedDir
+    : path.resolve(cwd || process.cwd(), normalizedDir);
+}
+
+async function buildOutputInstructions(cwd, defaultOutputDir = "output") {
+  const resolvedDir = resolveOutputDir(cwd, defaultOutputDir);
+  await fs.mkdir(resolvedDir, { recursive: true }).catch((error) => {
+    console.warn("Unable to create the default output directory:", error.message);
+  });
   const sourceAttributionRule = await loadSourceAttributionRule();
 
   return (
@@ -173,7 +189,7 @@ async function buildOutputInstructions(cwd, defaultOutputDir = "outputs") {
     `1. 【对话上下文隔离与独立评估】：每一条新的用户消息默认都是独立请求。除非用户明确说“继续上文”“继续刚才的任务”“根据之前内容”或类似表达，否则只依据当前这条消息和当前已明确提供的内容回答；不要主动引用历史对话中的旧消息、旧问题、旧结论、旧项目状态或重复输入，不要因为历史记录推断用户当前意图。\n` +
     `2. 【自主闭环执行】：你是一个具备完全自主能力的 Agent（类似于 TRAE Solo / Codex / Antigravity）。面对用户的开发、分析、数据抓取与报告生成任务，你必须自主调用本地工具（文件读写、代码修改、终端执行、网络检索），一站式完成从需求分析、代码编写到真实验证的全流程，严禁中途停下询问用户许可。\n` +
     `3. 【根因排错与闭环验证】：若脚本执行或终端报错，必须主动读取错误 Log / 堆栈信息，分析根本原因并修补代码，重新运行直至完全成功。切勿吞掉报错，严禁在未验证成功前宣布完成。\n` +
-    `4. 【文件产出与统一存储】：所有抓取的数据、生成的 HTML 仪表盘、分析周报、代码产物等，统一存入目标输出目录：${resolvedDir}。每次任务必须在该目录下按主题创建语义化子目录（如 统计局周报_20260806/）。\n` +
+    `4. 【文件产出与统一存储】：所有抓取的数据、生成的 HTML 仪表盘、分析周报等产物，统一使用绝对路径存入目标输出目录：${resolvedDir}。未指定工作区文件夹时也必须使用这个目录，禁止把产物直接写入工作区根目录、应用安装目录或当前目录；每次任务必须在该目录下按主题创建语义化子目录（如 统计局周报_20260806/）。\n` +
     `5. 【清爽回复与链接展示】：聊天界面严禁直接粘贴超长原始 JSON 或冗长数据原文。聊天框中只提供 150-200 字的精炼高管级结论，并附带指向产物目录/文件的 markdown 链接（例如：[打开输出文件](file://${resolvedDir}/子目录/文件名)）。\n` +
     `6. 【全局来源标注规则】：以下规则是本应用默认系统规则，优先于普通输出习惯，必须在每次回复、抓取、汇总、报告和事实问答中执行：\n${sourceAttributionRule}\n` +
     `7. 【YOLO 无人值守模式】：当前已开启全自动免授权模式，所有敏感操作（代码执行、patch、脚本运行）自动授权，连续推进直到任务圆满达成。\n` +
@@ -231,7 +247,7 @@ const defaultSettings = {
   runtimeMode: "private",
   model: "",
   cwd: "",
-  defaultOutputDir: "outputs",
+  defaultOutputDir: "output",
   apiProvider: "deepseek",
   apiKey: "",
   apiBaseUrl: "",
@@ -295,7 +311,7 @@ function normalizeSettings(settings) {
     runtimeMode: input.runtimeMode === "official" ? "official" : "private",
     model: typeof input.model === "string" && input.model.trim() ? input.model.trim() : defaultSettings.model,
     cwd: defaultCwd,
-    defaultOutputDir: typeof input.defaultOutputDir === "string" ? input.defaultOutputDir : defaultSettings.defaultOutputDir,
+    defaultOutputDir: normalizeOutputDir(input.defaultOutputDir),
     apiProvider:
       typeof input.apiProvider === "string" ? input.apiProvider : defaultSettings.apiProvider,
     apiKey: typeof input.apiKey === "string" ? input.apiKey : defaultSettings.apiKey,
