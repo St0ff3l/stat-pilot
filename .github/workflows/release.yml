@@ -53,6 +53,12 @@ jobs:
             builder_args: --linux deb --x64
             artifact_name: installers-linux-x64-deb
             artifact_path: release/*.deb
+          - name: Linux ARM64 deb (Kylin)
+            os: ubuntu-24.04-arm
+            runtime_bootstrap: unix
+            builder_args: --linux deb --arm64
+            artifact_name: installers-linux-arm64-deb
+            artifact_path: release/*.deb
 
     env:
       HERMES_COMMIT: ${{ vars.HERMES_COMMIT }}
@@ -75,6 +81,12 @@ jobs:
       - name: Bootstrap Hermes Runtime on macOS/Linux
         if: matrix.runtime_bootstrap == 'unix'
         run: npm run hermes:bootstrap:skip-setup
+
+      - name: Verify Linux ARM64 build environment
+        if: matrix.name == 'Linux ARM64 deb (Kylin)'
+        run: |
+          test "$(uname -m)" = "aarch64"
+          test "$(dpkg --print-architecture)" = "arm64"
 
       - name: Bootstrap Hermes Runtime on Windows
         if: matrix.runtime_bootstrap == 'windows'

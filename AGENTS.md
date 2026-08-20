@@ -18,6 +18,7 @@
 - Hermes Runtime 源码归档可能携带 macOS AppleDouble 元数据（文件名以 `._` 开头或为 `.DS_Store`）。这些文件不是文本，不能让 Hermes 扫描；引导脚本和应用启动流程都必须清理它们。
 - 新增文件扫描或技能加载逻辑时，必须忽略 `._*`、`.DS_Store` 等平台元数据，并在 Windows、macOS、Linux 至少各做一次启动/技能发现验证。
 - Windows 下 Hermes 终端默认使用 `pwsh`，找不到时回退 `powershell.exe`；不要主动使用 WSL、`wsl.exe`、bash 或 Git Bash，命令使用 PowerShell 语法。
+- Linux 发布必须同时覆盖 x64 和 ARM64 `deb`；麒麟 ARM64 目标使用原生 ARM64 Runner 构建，确保 Electron、Hermes Runtime 和 portable Python 都是 ARM64，不能用 x64 包冒充。
 
 ## 文件输出目录
 

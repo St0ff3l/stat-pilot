@@ -26,6 +26,8 @@ When you package the app, include `.runtime/` alongside the Electron resources s
 
 The installers produced by the release workflow contain a platform-specific Hermes runtime. On first launch, the app copies that bundled runtime into its private application-data directory; it does not depend on a separately installed `hermes` command. The build excludes the local `.runtime/hermes-home` so personal sessions, login state, and API keys are never bundled. A GitHub **Source code** ZIP does not contain `.runtime`, because that directory is generated and gitignored, so it cannot be used as a ready-to-run installer without running the platform bootstrap first.
 
+The release workflow also builds a native Linux ARM64 `.deb` on an ARM64 runner for Debian-based 麒麟桌面系统 (including the ARM edition). This target bundles an ARM64 Electron binary and an ARM64 Hermes/Python runtime; use the `Linux ARM64 deb (Kylin)` asset on a 麒麟 ARM64 machine, not the Linux x64 asset.
+
 On macOS, dragging the `.app` from the `.dmg` into `Applications` does not run installer hooks by itself. Instead, on the first app launch, the Electron main process copies the bundled `.runtime/` from the app's `Resources` directory into the user's private app-data directory and starts Hermes from there automatically.
 
 Release installers are built only by GitHub Actions on the matching target runner. Push a version tag such as `v0.1.0`, or start the `Build and release installers` workflow manually; do not build a Release installer locally. The workflow runs the platform bootstrap, verifies the bundled Hermes runtime, packages the installer, and uploads the artifacts.
