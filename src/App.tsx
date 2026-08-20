@@ -611,6 +611,9 @@ function App() {
     browserbaseProjectId: "",
   });
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const activeDraftScrollKey = state?.activeDraft?.segments
+    ?.map((segment) => `${segment.reasoning ?? ""}\u0000${segment.text ?? ""}`)
+    .join("\u0001");
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
@@ -752,8 +755,27 @@ function App() {
   }, [state?.activeThreadId, state?.messages, state?.lastGeneratedFiles]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [state?.messages.length, state?.activeDraft?.text]);
+    // Reasoning is streamed separately from the final answer. Include both the
+    // top-level fields and segment content so the viewport follows while the
+    // model is still thinking, not only after answer text arrives.
+    const frame = window.requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({
+        // Smooth scrolling on every streaming delta queues animations and can
+        // visibly lag behind the model. Keep completed-history transitions
+        // smooth, but track an active stream immediately.
+        behavior: state?.activeDraft ? "auto" : "smooth",
+        block: "end",
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    state?.messages.length,
+    state?.activeDraft,
+    state?.activeDraft?.text,
+    state?.activeDraft?.reasoning,
+    activeDraftScrollKey,
+  ]);
 
   useEffect(() => {
     const isModelSwitching = !!state?.busy && !!state?.status && state.status.includes("切换模型");
