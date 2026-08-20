@@ -200,14 +200,18 @@ def _find_powershell() -> str:
     const alreadyPatched =
       content.includes("def _find_powershell() -> str:") &&
       content.includes("_find_shell = _find_powershell if _IS_WINDOWS else _find_bash") &&
-      content.includes("bash = _find_shell()");
+      content.includes("bash = _find_shell()") &&
+      content.includes("        if _IS_WINDOWS:\n            powershell_cmd =") &&
+      content.includes("        else:\n            args = [bash, \"-l\", \"-c\", cmd_string]") &&
+      !content.includes("        else:\n            if _IS_WINDOWS:");
     if (alreadyPatched) {
       console.log(`OK ${target.label}: Windows local terminal uses PowerShell`);
       continue;
     }
 
     const alias = "_find_shell = _find_bash";
-    if (!content.includes(alias)) {
+    const patchedAlias = "_find_shell = _find_powershell if _IS_WINDOWS else _find_bash";
+    if (!content.includes(alias) && !content.includes(patchedAlias)) {
       console.error(`Unexpected local terminal runtime format: ${target.filePath}`);
       console.error("Hermes upstream may have changed. Please review and update scripts/patch-hermes-runtime.mjs.");
       process.exitCode = 1;
@@ -218,21 +222,25 @@ def _find_powershell() -> str:
     if (!updated.includes("def _find_powershell() -> str:")) {
       updated = updated.replace(alias, `${powershellFinder}_find_shell = _find_powershell if _IS_WINDOWS else _find_bash`);
     } else {
-      updated = updated.replace(alias, "_find_shell = _find_powershell if _IS_WINDOWS else _find_bash");
+      updated = updated.replace(alias, patchedAlias);
     }
     updated = updated.replace("bash = _find_bash()", "bash = _find_shell()");
-    const oldArgs = 'args = [bash, "-l", "-c", cmd_string] if login else [bash, "-c", cmd_string]';
     const newArgs = `if _IS_WINDOWS:
-            args = [bash, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", cmd_string]
+            powershell_cmd = "$OutputEncoding = [System.Text.UTF8Encoding]::new(\$false); [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(\$false); [Console]::ErrorEncoding = [System.Text.UTF8Encoding]::new(\$false); " + cmd_string
+            args = [bash, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", powershell_cmd]
         else:
             args = [bash, "-l", "-c", cmd_string] if login else [bash, "-c", cmd_string]`;
-    if (!updated.includes(oldArgs)) {
+    const runBashStart = updated.indexOf("def _run_bash");
+    const shellBlockStart = updated.indexOf("        if _IS_WINDOWS:\n", runBashStart);
+    const runEnvMarker = "        run_env = _make_run_env(self.env)";
+    const shellBlockEnd = updated.indexOf(runEnvMarker, shellBlockStart);
+    if (runBashStart < 0 || shellBlockStart < 0 || shellBlockEnd < 0) {
       console.error(`Unexpected local shell invocation format: ${target.filePath}`);
       console.error("Hermes upstream may have changed. Please review and update scripts/patch-hermes-runtime.mjs.");
       process.exitCode = 1;
       continue;
     }
-    updated = updated.replace(oldArgs, newArgs);
+    updated = updated.slice(0, shellBlockStart) + `        ${newArgs}\n` + updated.slice(shellBlockEnd);
     await fs.writeFile(target.filePath, updated, "utf8");
     console.log(`Patched ${target.label}: Windows local terminal now prefers pwsh`);
   }

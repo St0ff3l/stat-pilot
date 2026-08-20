@@ -746,7 +746,21 @@ function App() {
     });
 
     const lastGen = state?.lastGeneratedFiles || [];
-    const allFiles = Array.from(new Set([...filesFromStorage, ...lastGen, ...filesFromMessages]));
+    const normalizeFileIdentity = (filePath: string) => {
+      let normalized = filePath.trim().replace(/^file:\/\//i, "");
+      // Markdown file URLs on Windows can arrive as /C:/... while scan results
+      // use C:\\...; normalize both forms before merging the sources.
+      normalized = normalized.replace(/^\/(?=[A-Za-z]:[\\/])/, "");
+      normalized = normalized.replace(/[\\/]+/g, "/");
+      return normalized.replace(/\/$/, "").toLowerCase();
+    };
+    const allFiles = Array.from(
+      new Map(
+        [...filesFromStorage, ...lastGen, ...filesFromMessages]
+          .filter(Boolean)
+          .map((file) => [normalizeFileIdentity(file), file] as const)
+      ).values()
+    );
 
     if (allFiles.length > 0) {
       localStorage.setItem(key, JSON.stringify(allFiles));
