@@ -91,6 +91,7 @@ declare global {
     lastGeneratedFiles?: string[] | null;
     pendingApproval?: {
       sessionId: string;
+      approvalId?: string | null;
       command: string;
       description: string;
       patternKey: string;
