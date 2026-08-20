@@ -611,6 +611,7 @@ function App() {
     browserbaseProjectId: "",
   });
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<HTMLElement | null>(null);
   const activeDraftScrollKey = state?.activeDraft?.segments
     ?.map((segment) => `${segment.reasoning ?? ""}\u0000${segment.text ?? ""}`)
     .join("\u0001");
@@ -773,12 +774,25 @@ function App() {
     // top-level fields and segment content so the viewport follows while the
     // model is still thinking, not only after answer text arrives.
     const frame = window.requestAnimationFrame(() => {
-      messagesEndRef.current?.scrollIntoView({
+      const end = messagesEndRef.current;
+      const scroller = end?.closest(".message-scroller") as HTMLElement | null;
+      if (!end || !scroller) return;
+
+      // The composer is an absolute bottom dock, so scrollIntoView({block:
+      // "end"}) places the newest text underneath it. Calculate the visible
+      // bottom edge explicitly and keep the stream above the dock.
+      const composerHeight = composerRef.current?.getBoundingClientRect().height ?? 180;
+      const scrollerRect = scroller.getBoundingClientRect();
+      const endRect = end.getBoundingClientRect();
+      const visibleBottom = scrollerRect.bottom - composerHeight - 24;
+      const delta = endRect.bottom - visibleBottom;
+      if (Math.abs(delta) < 1) return;
+
+      scroller.scrollTo({
+        top: Math.max(0, scroller.scrollTop + delta),
         // Smooth scrolling on every streaming delta queues animations and can
-        // visibly lag behind the model. Keep completed-history transitions
-        // smooth, but track an active stream immediately.
+        // visibly lag behind the model. Track an active stream immediately.
         behavior: state?.activeDraft ? "auto" : "smooth",
-        block: "end",
       });
     });
 
@@ -1785,7 +1799,7 @@ function App() {
             <div ref={messagesEndRef} />
           </section>
 
-          <footer className="composer">
+          <footer ref={composerRef} className="composer">
             {selectedDigestList.length > 0 && (
               <div className="digest-composer-toolbar">
                 <div className="digest-bar-info">
