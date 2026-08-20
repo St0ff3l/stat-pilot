@@ -106,6 +106,8 @@
   .card-title a { transition: color 0.15s; }
   .card-title a:hover { color: var(--brand); }
   .card-sum { font-size: 14.5px; color: var(--ink2); line-height: 1.7; margin-bottom: 20px; }
+  .card-source { font-size: 12px; color: var(--muted); line-height: 1.6; margin: -8px 0 16px; }
+  .card-source a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; }
   .card-foot { display: flex; justify-content: space-between; align-items: center; margin-top: auto; }
   .go { display: inline-flex; align-items: center; gap: 4px; font-size: 13.5px; font-weight: 700; color: var(--brand); transition: gap 0.15s; }
   .go:hover { gap: 7px; }
@@ -146,12 +148,13 @@
     <article class="card">
       <div class="card-top">
         <span class="num">[两位序号，如 01]</span>
-        <span class="badge [orange/emerald/purple/留空]">[来源简称]</span>
+        <span class="badge [orange/emerald/purple/留空]">来源：[发布单位]</span>
       </div>
       <h3 class="card-title">
         <a href="[原文链接]" target="_blank" rel="noopener noreferrer">[标题]</a>
       </h3>
       <p class="card-sum">[摘要，2-3行内]</p>
+      <p class="card-source">来源：<a href="[原文链接]" target="_blank" rel="noopener noreferrer">[发布单位]：《[标题]》</a></p>
       <div class="card-foot">
         <a class="go" href="[原文链接]" target="_blank" rel="noopener noreferrer">
           阅读原文 <span class="go-arr">↗</span>
