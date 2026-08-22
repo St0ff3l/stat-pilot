@@ -160,6 +160,75 @@ export interface DigestItem {
   category?: string;
 }
 
+type ReportStyleOption = {
+  id: string;
+  label: string;
+  description: string;
+  tone: string;
+};
+
+const BUILTIN_SKILL_DISPLAY_NAMES: Record<string, string> = {
+  info_digest_html: "动态信息汇总 HTML 报表",
+  weekly_report: "统计信息化动态采集与周报",
+  price_index_gdp_impact: "价格指数对 GDP 各项影响分析",
+  source_verification: "官方来源与转载核验",
+  gov_official_document_drafting: "政务公文起草",
+};
+
+const BUILTIN_SKILL_ICONS: Record<string, string> = {
+  info_digest_html: "📰",
+  weekly_report: "📊",
+  price_index_gdp_impact: "📈",
+  source_verification: "🔎",
+  gov_official_document_drafting: "📝",
+};
+
+const REPORT_STYLE_OPTIONS: ReportStyleOption[] = [
+  {
+    id: "geek",
+    label: "极客卡片",
+    description: "信息密度高，适合日常追踪与周报参阅。",
+    tone: "blue",
+  },
+  {
+    id: "classic",
+    label: "政务经典",
+    description: "庄重朱红，适合正式汇报和打印阅读。",
+    tone: "red",
+  },
+  {
+    id: "slate",
+    label: "现代板岩",
+    description: "克制清爽，适合数字政府看板式呈现。",
+    tone: "slate",
+  },
+  {
+    id: "dark",
+    label: "暗黑海洋",
+    description: "深色大屏，适合会议室展示和夜间浏览。",
+    tone: "navy",
+  },
+  {
+    id: "swiss",
+    label: "瑞士编辑",
+    description: "极简网格，适合专题材料和编辑式阅读。",
+    tone: "yellow",
+  },
+];
+
+const REPORT_SKILL_NAMES = new Set(["info_digest_html", "weekly_report"]);
+
+const BUILTIN_SKILL_START_PROMPTS: Record<string, string> = {
+  weekly_report:
+    "请采集最近 7 天国家统计局、广东省统计局、深圳市统计局等官方来源的统计信息化动态，筛选信息化、数字化、人工智能、大数据等主题，生成周报；每条内容都必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接。",
+  price_index_gdp_impact:
+    "请默认以深圳市为分析对象，分析 CPI、PPI、GDP 平减指数等价格指数对 GDP 各项（消费、投资、净出口及名义/实际 GDP）的影响；优先使用深圳市统计局及深圳市政府官方统计数据，国家和广东省数据只作口径或对照，区分相关性与因果性，并为每个事实附发布单位或网站全称、完整标题和具体原文链接。",
+  source_verification:
+    "请核验我接下来提交的文件或链接：确认是否为官方来源、发布日期、发布机构、具体原文链接是否有效，并识别重复、转载和二次改写关系；输出逐项证据和发布单位或网站全称、完整标题、具体原文链接。",
+  gov_official_document_drafting:
+    "请按深圳市统计局官方网站公开页面的政务文风起草公文：先根据我的任务判断合适的文种，保留文号、落款、联系人等待补字段，不虚构正式发布信息，并为事实、政策依据和数据附发布单位或网站全称、完整标题和具体原文链接。",
+};
+
 function extractDigestItems(text: string): DigestItem[] {
   if (!text) return [];
 
@@ -341,11 +410,20 @@ function CheckableItemSection({
   );
 }
 
+function formatFileSize(size?: number): string {
+  if (typeof size !== "number" || !Number.isFinite(size)) return "";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
 function App() {
   const [state, setState] = useState<HermesAppState | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeSettingsTab, setActiveSettingsTab] = useState<"runtime" | "chat" | "vision" | "tools">("runtime");
   const [draft, setDraft] = useState("");
+  const [selectedAttachments, setSelectedAttachments] = useState<HermesSelectedFile[]>([]);
   const [clarificationDraft, setClarificationDraft] = useState("");
   const [isThreadLoading, setIsThreadLoading] = useState(false);
   const [dismissedFiles, setDismissedFiles] = useState<string[] | null>(null);
@@ -392,6 +470,7 @@ function App() {
   const [activeMainTab, setActiveMainTab] = useState<"chat" | "skills">("chat");
   const [skillsSearchQuery, setSkillsSearchQuery] = useState("");
   const [selectedSkillTag, setSelectedSkillTag] = useState<string | null>(null);
+  const [stylePickerSkillName, setStylePickerSkillName] = useState<string | null>(null);
   const [selectedDigestItems, setSelectedDigestItems] = useState<Record<string, DigestItem>>({});
 
   function handleToggleDigestItem(item: DigestItem) {
@@ -459,7 +538,7 @@ function App() {
     if (selectedDigestList.length === 0) return;
     handleUseSkillInChat("info_digest_html");
     const itemsText = formatSelectedItemsForPrompt(selectedDigestList);
-    const prompt = `请调用 @info_digest_html 技能，根据我勾选的这 ${selectedDigestList.length} 条动态生成 HTML 参阅报表：\n\n${itemsText}`;
+    const prompt = `请根据我勾选的这 ${selectedDigestList.length} 条动态生成 HTML 参阅报表，默认使用极客卡片风：\n\n${itemsText}`;
     setDraft(prompt);
     focusEditor();
   }
@@ -504,6 +583,58 @@ function App() {
     setTimeout(() => {
       focusEditor();
     }, 60);
+  }
+
+  function startSkillTask(skillName: string, prompt: string) {
+    handleUseSkillInChat(skillName);
+    setDraft(prompt);
+    focusEditor();
+  }
+
+  function handleSkillPageUse(skillName: string) {
+    if (REPORT_SKILL_NAMES.has(skillName)) {
+      setStylePickerSkillName(skillName);
+      return;
+    }
+
+    startSkillTask(
+      skillName,
+      BUILTIN_SKILL_START_PROMPTS[skillName] ||
+        "请使用当前技能完成我的任务，并为所有事实性内容附发布单位或网站全称、文章来源/页面完整标题和具体原文链接。",
+    );
+  }
+
+  function handleReportStyleSelect(styleId: string) {
+    const skillName = stylePickerSkillName;
+    const style = REPORT_STYLE_OPTIONS.find((option) => option.id === styleId);
+    if (!skillName || !style) return;
+
+    const prompt = skillName === "info_digest_html"
+      ? `请生成动态信息汇总 HTML 报表，使用“${style.label}”风格（template_style: ${style.id}）。采集或整理统计、政务和信息化动态，输出可打开的 HTML 文件；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接。`
+      : `请采集最近 7 天统计信息化、数字化、人工智能和大数据相关动态，生成统计信息化动态周报 HTML，使用“${style.label}”风格（template_style: ${style.id}）；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接。`;
+
+    setStylePickerSkillName(null);
+    startSkillTask(skillName, prompt);
+  }
+
+  async function handleSelectAttachments() {
+    if (!window.hermesDesktop) return;
+    try {
+      const files = await window.hermesDesktop.selectFiles();
+      if (files.length === 0) return;
+      setSelectedAttachments((previous) => {
+        const existingPaths = new Set(previous.map((file) => file.path));
+        return [...previous, ...files.filter((file) => !existingPaths.has(file.path))];
+      });
+      focusEditor();
+    } catch (error) {
+      console.error("Failed to select attachments:", error);
+    }
+  }
+
+  function removeAttachment(filePath: string) {
+    setSelectedAttachments((previous) => previous.filter((file) => file.path !== filePath));
+    focusEditor();
   }
 
   async function handleStopMessage() {
@@ -836,6 +967,7 @@ function App() {
     }
 
     setActiveMainTab("chat");
+    setSelectedAttachments([]);
     setIsThreadLoading(true);
     try {
       const nextState = await window.hermesDesktop.newThread();
@@ -851,6 +983,7 @@ function App() {
     }
 
     setActiveMainTab("chat");
+    setSelectedAttachments([]);
     setIsThreadLoading(true);
     try {
       const nextState = await window.hermesDesktop.selectThread(threadId);
@@ -882,19 +1015,43 @@ function App() {
 
   async function sendMessage() {
     const rawText = draft.trim();
-    if ((!rawText && !selectedSkillTag) || !window.hermesDesktop) {
+    const attachmentText = selectedAttachments.length > 0
+      ? [
+          "用户已提交以下本地文件，请先读取这些文件，再完成本次任务：",
+          ...selectedAttachments.map((file, index) => `${index + 1}. 文件名：${file.name}；绝对路径：${file.path}`),
+          "如果文件无法读取，请明确指出具体文件和原因；不要把文件路径本身当作来源证据。",
+        ].join("\n")
+      : "";
+    const taskText = rawText || (selectedAttachments.length > 0 ? "请先概述这些文件的内容、来源和可用字段。" : "");
+    if ((!taskText && !selectedSkillTag) || !window.hermesDesktop) {
       return;
     }
 
-    const text = (selectedSkillTag ? `@${selectedSkillTag} ${rawText}` : rawText).trim();
+    const text = [
+      selectedSkillTag ? `@${selectedSkillTag}` : "",
+      taskText,
+      attachmentText,
+    ].filter(Boolean).join("\n\n").trim();
+    const previousDraft = draft;
+    const previousSkillTag = selectedSkillTag;
+    const previousAttachments = selectedAttachments;
 
     setDraft("");
     setSelectedSkillTag(null);
+    setSelectedAttachments([]);
     try {
       const nextState = await window.hermesDesktop.sendMessage({ text });
       setState(nextState);
+      if (nextState.error) {
+        setDraft(previousDraft);
+        setSelectedSkillTag(previousSkillTag);
+        setSelectedAttachments(previousAttachments);
+      }
     } catch (e: any) {
       console.error("Failed to send message:", e);
+      setDraft(previousDraft);
+      setSelectedSkillTag(previousSkillTag);
+      setSelectedAttachments(previousAttachments);
       try {
         const currentState = await window.hermesDesktop.getState();
         setState(currentState);
@@ -1138,6 +1295,9 @@ function App() {
 
   const currentActiveModel = (isOfficialMode ? state?.official.defaultModel : state?.settings.model) || "";
   const quickModelDirty = !!state && !!headerModelSelection && headerModelSelection !== currentActiveModel;
+  const selectedSkillDisplayName = selectedSkillTag
+    ? state?.skills.find((skill) => skill.name === selectedSkillTag)?.displayName || BUILTIN_SKILL_DISPLAY_NAMES[selectedSkillTag] || selectedSkillTag
+    : "";
   const isModelSwitching = !!state?.busy && !!state?.status && state.status.includes("切换模型");
   const isHermesMissing = !state?.runtime.installed || (!!state?.error && (
     state.error.includes("ENOENT") || 
@@ -1181,9 +1341,7 @@ function App() {
     return (
       <div
         className="shell"
-        style={{
-          gridTemplateColumns: `${sidebarWidth}px 1fr`,
-        }}
+        style={{ "--sidebar-w": `${sidebarWidth}px` } as React.CSSProperties}
       >
         <aside className="sidebar">
           <div className="sidebar-resizer" onMouseDown={startResizing} />
@@ -1192,14 +1350,14 @@ function App() {
               <img className="brand-logo" src={szLogo} alt="" />
               <div className="brand-title">
                 <p className="eyebrow">深圳市统计局</p>
-                <h1>深统政务Scope</h1>
+                <h1>深小统</h1>
                 <span className="app-version">v{__APP_VERSION__}</span>
               </div>
             </div>
           </div>
           <div className="empty-state">
             <strong>正在启动</strong>
-            <p>正在连接并启动本地深统政务Scope后台...</p>
+            <p>正在连接并启动本地深小统后台...</p>
           </div>
         </aside>
         <main className="chat">
@@ -1216,9 +1374,7 @@ function App() {
   return (
     <div
       className={`shell ${rightSidebarOpen ? "with-right-sidebar" : ""}`}
-      style={{
-        gridTemplateColumns: `${sidebarWidth}px 1fr${rightSidebarOpen ? " 300px" : ""}`,
-      }}
+      style={{ "--sidebar-w": `${sidebarWidth}px` } as React.CSSProperties}
     >
       <aside className="sidebar">
         <div className="sidebar-resizer" onMouseDown={startResizing} />
@@ -1227,7 +1383,7 @@ function App() {
             <img className="brand-logo" src={szLogo} alt="" />
             <div className="brand-title">
               <p className="eyebrow">深圳市统计局</p>
-              <h1>深统政务Scope</h1>
+              <h1>深小统</h1>
               <span className="app-version">v{__APP_VERSION__}</span>
             </div>
           </div>
@@ -1352,7 +1508,7 @@ function App() {
           setSearchQuery={setSkillsSearchQuery}
           onImportSkill={() => void registerNewSkill()}
           onUnregisterSkill={(path) => void unregisterSkill(path)}
-          onUseSkill={(skillName) => handleUseSkillInChat(skillName)}
+          onUseSkill={handleSkillPageUse}
         />
       ) : (
         <main className="chat">
@@ -1433,7 +1589,7 @@ function App() {
               <div className="thread-loading-wrapper flex flex-col gap-6 w-full max-w-[860px] mx-auto py-4 px-2 overflow-hidden animate-fade-in">
                 <div className="loading-status-bar flex items-center justify-center gap-2.5 py-1.5 px-4 rounded-full bg-blue-50/90 border border-blue-200/60 w-fit mx-auto shadow-xs text-xs font-medium text-blue-700">
                   <span className="loading-spinner-ring" />
-                  <span>{isInitializing ? "正在加载深统政务 Scope..." : "正在同步加载对话历史与结构化数据..."}</span>
+                  <span>{isInitializing ? "正在加载深小统..." : "正在同步加载对话历史与结构化数据..."}</span>
                 </div>
 
                 {/* Assistant Bubble Skeleton */}
@@ -1584,7 +1740,7 @@ function App() {
                       <span>深圳市统计局 · 智能工作台</span>
                     </div>
 
-          <h2 className="trae-hero-title">深统政务Scope</h2>
+          <h2 className="trae-hero-title">深小统</h2>
                     <p className="trae-hero-subtitle">
                       高效检索政务统计数据、自动化分析公文报告、智能代码生成与数据洞察
                     </p>
@@ -1593,63 +1749,48 @@ function App() {
                       <button
                         type="button"
                         className="trae-suggestion-card"
-                        onClick={() => setDraft("帮我检索深圳市最新的 CPI 与 GDP 统计数据并生成分析趋势")}
+                        onClick={() => startSkillTask("weekly_report", BUILTIN_SKILL_START_PROMPTS.weekly_report)}
                       >
                         <span className="icon">📊</span>
                         <div className="text-content">
-                          <strong>检索统计数据</strong>
-                          <p>查询最新 CPI/GDP 统计指标与发展趋势分析</p>
+                          <strong>统计信息化动态采集与周报</strong>
+                          <p>采集官方统计动态，筛选信息化主题并生成周报</p>
                         </div>
                       </button>
 
                       <button
                         type="button"
                         className="trae-suggestion-card"
-                        onClick={() => setDraft("快速梳理当前选定项目工作区的文件结构和核心逻辑")}
+                        onClick={() => startSkillTask("price_index_gdp_impact", BUILTIN_SKILL_START_PROMPTS.price_index_gdp_impact)}
                       >
-                        <span className="icon">📁</span>
+                        <span className="icon">📈</span>
                         <div className="text-content">
-                          <strong>分析项目工作区</strong>
-                          <p>了解本地项目文件结构、依赖关系与最新代码变更</p>
+                          <strong>价格指数对 GDP 各项影响分析</strong>
+                          <p>默认分析深圳市，拆解 CPI、PPI 等指数对 GDP 各项的传导影响</p>
                         </div>
                       </button>
 
                       <button
                         type="button"
                         className="trae-suggestion-card"
-                        onClick={() => setDraft("帮我起草一份关于近期统计数据调度的政务公文报告草案")}
+                        onClick={() => startSkillTask("source_verification", BUILTIN_SKILL_START_PROMPTS.source_verification)}
+                      >
+                        <span className="icon">🔎</span>
+                        <div className="text-content">
+                          <strong>官方来源与转载核验</strong>
+                          <p>核验来源、发布日期、机构、链接及重复转载关系</p>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        className="trae-suggestion-card"
+                        onClick={() => startSkillTask("gov_official_document_drafting", BUILTIN_SKILL_START_PROMPTS.gov_official_document_drafting)}
                       >
                         <span className="icon">📝</span>
                         <div className="text-content">
                           <strong>起草政务公文</strong>
-                          <p>生成规范的统计分析报告与政务公文草案</p>
-                        </div>
-                      </button>
-
-                      <button
-                        type="button"
-                        className="trae-suggestion-card"
-                        onClick={() => setDraft("帮我检索政务数据公开目录并整理关键信息表")}
-                      >
-                        <span className="icon">🔍</span>
-                        <div className="text-content">
-                          <strong>政务数据检索</strong>
-                          <p>检索政务公开目录与数据交换标准规范</p>
-                        </div>
-                      </button>
-
-                      <button
-                        type="button"
-                        className="trae-suggestion-card"
-                        onClick={() => {
-                          handleUseSkillInChat("info_digest_html");
-                          setDraft("请抓取国家统计局与各省统计局官网最新工作动态，并使用 @info_digest_html 生成一键参阅 HTML 报表");
-                        }}
-                      >
-                        <span className="icon">📰</span>
-                        <div className="text-content">
-                          <strong>信息汇总 HTML 报表</strong>
-                          <p>抓取统计局工作动态并一键生成专业 HTML 参阅仪表盘</p>
+                          <p>按深圳统计官网公开风格起草通知、报告与工作方案</p>
                         </div>
                       </button>
                     </div>
@@ -1689,7 +1830,7 @@ function App() {
                   return (
                     <article key={group.id} className={`bubble assistant ${isThisGroupStreaming ? "streaming" : ""}`}>
                       <div className="bubble-head">
-                        <strong>深统 Scope</strong>
+                        <strong>深小统</strong>
                       </div>
 
                       {/* Chronological Interleaved rendering: 思考一段 -> 输出/动作一段 */}
@@ -1762,7 +1903,7 @@ function App() {
                 {!isHermesMissing && state?.activeDraft && (renderTurnGroups.length === 0 || renderTurnGroups[renderTurnGroups.length - 1].role !== "assistant") ? (
                   <article className="bubble assistant streaming">
                     <div className="bubble-head">
-                      <strong>深统 Scope</strong>
+                      <strong>深小统</strong>
                     </div>
                     {((state.activeDraft.segments && state.activeDraft.segments.length > 0)
                       ? state.activeDraft.segments
@@ -1834,7 +1975,7 @@ function App() {
                     className="digest-bar-btn primary"
                     onClick={handleDigestActionGenerateHtml}
                   >
-                    📰 生成 HTML 报表 (@info_digest_html)
+                    📰 生成动态信息汇总 HTML 报表
                   </button>
                 </div>
               </div>
@@ -1953,12 +2094,34 @@ function App() {
             ) : null}
 
             <div className="trae-composer-card">
+              {selectedAttachments.length > 0 && (
+                <div className="trae-attachment-list" aria-label="待提交文件">
+                  {selectedAttachments.map((file) => (
+                    <span key={file.path} className="trae-attachment-pill" title={file.path}>
+                      <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                      </svg>
+                      <span className="trae-attachment-name">{file.name}</span>
+                      {formatFileSize(file.size) && <span className="trae-attachment-size">{formatFileSize(file.size)}</span>}
+                      <button
+                        type="button"
+                        className="trae-attachment-remove"
+                        onClick={() => removeAttachment(file.path)}
+                        title={`移除 ${file.name}`}
+                        aria-label={`移除 ${file.name}`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
               {selectedSkillTag && (
                 <span className="trae-skill-tag-pill" data-skill={selectedSkillTag}>
                   <svg className="w-3.5 h-3.5 shrink-0" style={{ color: "#734b26" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
                   </svg>
-                  <span className="trae-skill-tag-name">{selectedSkillTag}</span>
+                  <span className="trae-skill-tag-name" title={selectedSkillTag}>{selectedSkillDisplayName}</span>
                   <button
                     type="button"
                     className="trae-skill-tag-remove"
@@ -1997,12 +2160,27 @@ function App() {
                       ? isOfficialMode
                         ? "请先让本机 Hermes 官方配置完成登录，消息框暂不可用"
                         : "请先在设置中填写 API key，消息框暂不可用"
-                      : "继续输入任务需求..."
+                      : "输入任务需求，或先添加文件..."
                 }
               />
 
               <div className="trae-composer-actions-bar">
-                <div ref={folderMenuRef} className="relative">
+                <div className="trae-composer-actions-left">
+                  <button
+                    type="button"
+                    className="trae-attach-button"
+                    onClick={() => void handleSelectAttachments()}
+                    disabled={isHermesMissing || Boolean(state.busy) || isThreadLoading}
+                    title="添加要提交给智能体的本地文件"
+                  >
+                    <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                    </svg>
+                    <span>添加文件</span>
+                    {selectedAttachments.length > 0 && <span className="trae-attach-count">{selectedAttachments.length}</span>}
+                  </button>
+
+                  <div ref={folderMenuRef} className="relative">
                   <button
                     type="button"
                     className="trae-selector-pill"
@@ -2025,7 +2203,7 @@ function App() {
                     </svg>
                   </button>
 
-                  {isFolderMenuOpen && (
+                    {isFolderMenuOpen && (
                     <div className="trae-popover-menu">
                       <div className="trae-popover-header">
                         <span>当前项目工作区</span>
@@ -2085,10 +2263,11 @@ function App() {
                         )}
                       </div>
                     </div>
-                  )}
+                    )}
+                  </div>
                 </div>
 
-              {/* Right Side: Send or Stop Button */}
+                {/* Right Side: Send or Stop Button */}
               {state?.busy ? (
                 <button
                   type="button"
@@ -2106,7 +2285,7 @@ function App() {
                   type="button"
                   className="primary-button-icon"
                   onClick={() => void sendMessage()}
-                  disabled={(!draft.trim() && !selectedSkillTag) || !canSend}
+                  disabled={(!draft.trim() && !selectedSkillTag && selectedAttachments.length === 0) || !canSend}
                   title="发送消息 (Enter)"
                   aria-label="发送消息"
                 >
@@ -2122,9 +2301,9 @@ function App() {
           <div className="composer-bottom-info">
             <span className="flex items-center gap-1.5 font-medium text-slate-500">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
-              深统 Scope 智能工作台
+              深小统智能工作台
             </span>
-            <span className="text-slate-400">Shift + Enter 换行 · Enter 发送</span>
+            <span className="text-slate-400">支持 PDF / Word / Excel / CSV / 图片 · Shift + Enter 换行 · Enter 发送</span>
           </div>
         </footer>
       </main>
@@ -2918,6 +3097,14 @@ function App() {
         </div>
       ) : null}
 
+      {stylePickerSkillName ? (
+        <ReportStylePicker
+          skillName={stylePickerSkillName}
+          onCancel={() => setStylePickerSkillName(null)}
+          onSelect={handleReportStyleSelect}
+        />
+      ) : null}
+
       {isModelSwitching ? (
         <BusyOverlay
           title="正在切换模型"
@@ -3012,6 +3199,59 @@ function App() {
   );
 }
 
+function ReportStylePicker({
+  skillName,
+  onCancel,
+  onSelect,
+}: {
+  skillName: string;
+  onCancel: () => void;
+  onSelect: (styleId: string) => void;
+}) {
+  const skillDisplayName = BUILTIN_SKILL_DISPLAY_NAMES[skillName] || "HTML 报表技能";
+
+  return (
+    <div className="modal-backdrop report-style-picker-backdrop" onClick={onCancel}>
+      <div className="report-style-picker" onClick={(event) => event.stopPropagation()}>
+        <div className="report-style-picker-header">
+          <div>
+            <p className="eyebrow">先选输出风格</p>
+            <h3>{skillDisplayName}</h3>
+            <p>选择后会自动进入对话输入框，技能会按该风格生成 HTML 报表。</p>
+          </div>
+          <button type="button" className="report-style-picker-close" onClick={onCancel} aria-label="关闭风格选择">
+            ×
+          </button>
+        </div>
+
+        <div className="report-style-picker-grid">
+          {REPORT_STYLE_OPTIONS.map((style, index) => (
+            <button
+              key={style.id}
+              type="button"
+              className={`report-style-option tone-${style.tone}`}
+              onClick={() => onSelect(style.id)}
+            >
+              <span className="report-style-option-index">0{index + 1}</span>
+              <span className="report-style-option-copy">
+                <strong>{style.label}</strong>
+                {index === 0 && <em>推荐</em>}
+                <small>{style.description}</small>
+              </span>
+              <span className="report-style-option-arrow" aria-hidden="true">↗</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="report-style-picker-footer">
+          <span>也可以进入输入框后直接补充标题、时间范围和站点范围。</span>
+          <button type="button" className="secondary-button" onClick={onCancel}>取消</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SkillsPageView({
   skills,
   searchQuery,
@@ -3030,7 +3270,8 @@ function SkillsPageView({
   const filteredSkills = useMemo(() => {
     return skills.filter((s) => {
       const q = searchQuery.toLowerCase().trim();
-      return !q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q);
+      const displayName = s.displayName || BUILTIN_SKILL_DISPLAY_NAMES[s.name] || s.name;
+      return !q || s.name.toLowerCase().includes(q) || displayName.toLowerCase().includes(q) || s.description.toLowerCase().includes(q);
     });
   }, [skills, searchQuery]);
 
@@ -3088,20 +3329,16 @@ function SkillsPageView({
         ) : (
           <div className="skills-card-grid">
             {filteredSkills.map((skill) => {
-              const isOfficialBuiltin = skill.name === "info_digest_html" || skill.name === "weekly_report";
+              const isOfficialBuiltin = [
+                "info_digest_html",
+                "weekly_report",
+                "price_index_gdp_impact",
+                "source_verification",
+                "gov_official_document_drafting",
+              ].includes(skill.name);
 
-              const skillIcons: Record<string, string> = {
-                info_digest_html: "📰",
-                weekly_report: "📊",
-              };
-
-              const skillDisplayNames: Record<string, string> = {
-                info_digest_html: "动态信息汇总 HTML 报表",
-                weekly_report: "统计信息化采集与周报生成器",
-              };
-
-              const icon = skillIcons[skill.name] || "🧩";
-              const displayName = skillDisplayNames[skill.name] || skill.name;
+              const icon = BUILTIN_SKILL_ICONS[skill.name] || "🧩";
+              const displayName = skill.displayName || BUILTIN_SKILL_DISPLAY_NAMES[skill.name] || skill.name;
 
               return (
                 <div key={skill.path} className={`skills-grid-card ${isOfficialBuiltin ? "border-blue-200/80 bg-slate-50/40" : ""}`}>

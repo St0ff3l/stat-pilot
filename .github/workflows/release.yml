@@ -51,12 +51,14 @@ jobs:
             os: ubuntu-22.04
             runtime_bootstrap: unix
             builder_args: --linux deb --x64
+            debian_arch: amd64
             artifact_name: installers-linux-x64-deb
             artifact_path: release/*.deb
           - name: Linux ARM64 deb (Kylin)
             os: ubuntu-24.04-arm
             runtime_bootstrap: unix
-            builder_args: --linux deb --arm64
+            builder_args: --linux deb --arm64 --config build/electron-builder.kylin.yml
+            debian_arch: arm64
             artifact_name: installers-linux-arm64-deb
             artifact_path: release/*.deb
 
@@ -117,6 +119,14 @@ jobs:
       - name: Package installer
         run: npx electron-builder ${{ matrix.builder_args }} --publish never
 
+      - name: Validate Debian package metadata and contents
+        if: startsWith(matrix.name, 'Linux')
+        shell: bash
+        run: |
+          deb="$(find release -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$deb"
+          bash scripts/validate-deb-package.sh "$deb" "${{ matrix.debian_arch }}"
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
@@ -161,6 +171,6 @@ jobs:
           else
             gh release create "$RELEASE_TAG" release-assets/* \
               --repo "$GITHUB_REPOSITORY" \
-              --title "SZ Gov Scope $RELEASE_TAG" \
+              --title "深小统 $RELEASE_TAG" \
               --generate-notes
           fi

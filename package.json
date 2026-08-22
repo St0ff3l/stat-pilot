@@ -1,7 +1,14 @@
 {
   "name": "sz-gov-scope",
   "private": true,
-  "version": "0.1.9",
+  "version": "0.1.10",
+  "description": "面向深圳市统计政务工作的本地智能工作台，支持统计信息采集、数据分析、来源核验与公文起草。",
+  "author": {
+    "name": "深小统",
+    "email": "st0ff3l@users.noreply.github.com",
+    "url": "https://github.com/St0ff3l/sz-gov-scope"
+  },
+  "homepage": "https://github.com/St0ff3l/sz-gov-scope",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
@@ -12,7 +19,7 @@
     "dist:mac": "npm run verify:runtime && npm run build && electron-builder --mac dmg",
     "dist:win": "npm run verify:runtime && npm run build && electron-builder --win nsis",
     "dist:linux": "npm run verify:runtime && npm run build && electron-builder --linux deb",
-    "dist:linux:arm64": "npm run verify:runtime && npm run build && electron-builder --linux deb --arm64",
+    "dist:linux:arm64": "npm run verify:runtime && npm run build && electron-builder --linux deb --arm64 --config build/electron-builder.kylin.yml",
     "verify:runtime": "node scripts/verify-bundled-hermes-runtime.mjs",
     "hermes:patch": "node scripts/patch-hermes-runtime.mjs",
     "hermes:bootstrap": "bash scripts/bootstrap-hermes.sh",
@@ -55,7 +62,7 @@
   },
   "build": {
     "appId": "com.stoffel.szgovscope",
-    "productName": "深统政务Scope",
+    "productName": "深小统",
     "icon": "src/assets/sz-logo.png",
     "directories": {
       "output": "release"
@@ -67,7 +74,10 @@
       "rules/**",
       "skills/**",
       "src/electron.d.ts",
-      "package.json"
+      "package.json",
+      "!**/._*",
+      "!**/.DS_Store",
+      "!**/.DS_Store/**"
     ],
     "extraResources": [
       {
@@ -79,14 +89,20 @@
           "!**/.git/**",
           "!hermes-home",
           "!hermes-home/**",
-          "!**/node_modules/electron/dist/Electron.app/**"
+          "!**/node_modules/electron/dist/Electron.app/**",
+          "!**/._*",
+          "!**/.DS_Store",
+          "!**/.DS_Store/**"
         ]
       },
       {
         "from": "rules",
         "to": "rules",
         "filter": [
-          "**/*"
+          "**/*",
+          "!**/._*",
+          "!**/.DS_Store",
+          "!**/.DS_Store/**"
         ]
       },
       {
@@ -97,7 +113,10 @@
         "from": "skills",
         "to": "skills",
         "filter": [
-          "**/*"
+          "**/*",
+          "!**/._*",
+          "!**/.DS_Store",
+          "!**/.DS_Store/**"
         ]
       }
     ],
@@ -129,7 +148,12 @@
       ],
       "artifactName": "${productName}-${version}-Linux-${arch}.${ext}",
       "category": "Utility",
-      "maintainer": "深统政务Scope"
+      "packageName": "sz-gov-scope",
+      "packageCategory": "utils",
+      "synopsis": "深圳市统计局智能工作台",
+      "description": "面向深圳市统计政务工作的本地智能工作台，支持统计信息采集、数据分析、来源核验与公文起草。",
+      "maintainer": "深小统 <st0ff3l@users.noreply.github.com>",
+      "vendor": "深小统"
     }
   }
 }

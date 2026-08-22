@@ -22,6 +22,12 @@ declare global {
     reasoning?: string | null;
   };
 
+  type HermesSelectedFile = {
+    path: string;
+    name: string;
+    size?: number;
+  };
+
   type HermesAppState = {
     status: string;
     error: string | null;
@@ -41,7 +47,7 @@ declare global {
       visionProvider: "openai" | "openrouter" | "ollama" | "custom";
       visionApiKey: string;
       visionBaseUrl: string;
-      registeredSkills: Array<{ name: string; description: string; path: string }>;
+      registeredSkills: Array<{ name: string; displayName?: string; description: string; path: string }>;
       firecrawlApiKey?: string;
       exaApiKey?: string;
       falApiKey?: string;
@@ -87,7 +93,7 @@ declare global {
       segments?: Array<{ reasoning?: string; text?: string }>;
     } | null;
     busy: boolean;
-    skills: Array<{ name: string; description: string; path: string }>;
+    skills: Array<{ name: string; displayName?: string; description: string; path: string }>;
     lastGeneratedFiles?: string[] | null;
     pendingApproval?: {
       sessionId: string;
@@ -112,6 +118,7 @@ declare global {
       sendMessage: (payload: { text: string }) => Promise<HermesAppState>;
       stopMessage: () => Promise<HermesAppState>;
       selectWorkspaceFolder: () => Promise<{ cwd: string; folderName: string; branch: string | null } | null>;
+      selectFiles: () => Promise<HermesSelectedFile[]>;
       switchSessionModel: (model: string) => Promise<HermesAppState>;
       archiveThread: (threadId: string) => Promise<HermesAppState>;
       updateSettings: (settings: Partial<HermesAppState["settings"]>) => Promise<HermesAppState>;

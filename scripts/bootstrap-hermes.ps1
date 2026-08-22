@@ -102,8 +102,8 @@ function Prepare-LocalHermesRepository {
         Get-ChildItem -LiteralPath $installDir -Recurse -Force -File -ErrorAction SilentlyContinue |
             Where-Object { $_.Name.StartsWith("._") -or $_.Name -eq ".DS_Store" } |
             Remove-Item -Force -ErrorAction SilentlyContinue
-        Invoke-Git @("-C", $installDir, "-c", "user.name=SZ Gov Scope build", "-c", "user.email=build@localhost", "add", "-A")
-        Invoke-Git @("-C", $installDir, "-c", "user.name=SZ Gov Scope build", "-c", "user.email=build@localhost", "commit", "-m", "Hermes source archive")
+        Invoke-Git @("-C", $installDir, "-c", "user.name=深小统 build", "-c", "user.email=build@localhost", "add", "-A")
+        Invoke-Git @("-C", $installDir, "-c", "user.name=深小统 build", "-c", "user.email=build@localhost", "commit", "-m", "Hermes source archive")
         Write-Host "Prepared Hermes source from ref: $sourceRef"
     } else {
         Write-Host "Using the existing Hermes source checkout."

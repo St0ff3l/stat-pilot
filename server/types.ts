@@ -1,5 +1,6 @@
 export type SkillSummary = {
   name: string;
+  displayName?: string;
   description: string;
   path: string;
 };

@@ -12,15 +12,26 @@ export async function listLocalSkills(skillRoot = defaultSkillRoot): Promise<Ski
     if (!entry.isDirectory()) {
       continue;
     }
+    if (entry.name === ".DS_Store" || entry.name.startsWith("._")) {
+      continue;
+    }
 
     const skillFile = path.join(skillRoot, entry.name, "SKILL.md");
     const content = await fs.readFile(skillFile, "utf8").catch(() => "");
     const descriptionLine = content
       .split("\n")
       .find((line) => line.trim().startsWith("description:"));
+    const displayNameLine = content
+      .split("\n")
+      .find((line) => line.trim().startsWith("display_name:"));
+
+    const displayName = displayNameLine
+      ? displayNameLine.replace("display_name:", "").trim().replace(/^["']|["']$/g, "")
+      : undefined;
 
     localSkills.push({
       name: entry.name,
+      ...(displayName ? { displayName } : {}),
       description: descriptionLine
         ? descriptionLine.replace("description:", "").trim().replace(/^"|"$/g, "")
         : "Local project skill",

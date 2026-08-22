@@ -1,15 +1,16 @@
-# 发布 深统政务Scope
+# 发布 深小统
 
-深统政务Scope 将 Hermes Runtime 和项目 Skill 一起打进安装包。由于 Hermes 的 Python 虚拟环境包含平台相关文件，必须在对应的 GitHub Actions Runner 上分别构建四个目标：
+深小统将 Hermes Runtime 和项目 Skill 一起打进安装包。由于 Hermes 的 Python 虚拟环境包含平台相关文件，必须在对应的 GitHub Actions Runner 上分别构建五个目标：
 
 - macOS：`macos-14`，生成 Apple Silicon `.dmg`；
 - macOS Intel：`macos-15-intel`，生成 Intel `.dmg`；
 - Windows：`windows-2022`，生成 NSIS `.exe`；
-- Linux：`ubuntu-22.04`，生成 x64 `.deb`。
+- Linux x64：`ubuntu-22.04`，生成 `amd64` `.deb`；
+- 银河麒麟 ARM64：`ubuntu-24.04-arm`，生成 `arm64` `.deb`。
 
 ## GitHub Actions 发布
 
-推送版本标签即可触发四个目标并行构建：
+推送版本标签即可触发五个目标并行构建：
 
 ```bash
 git tag v0.1.0
@@ -22,8 +23,25 @@ git push origin v0.1.0
 2. 构建前端与 Electron 主进程；
 3. 验证目标平台的 `.runtime` 同时包含 Python、Hermes 入口和 `portable-python.json`；
 4. 把 `.runtime`、`skills/` 和 `rules/` 一起打包；
-5. 上传 macOS、Windows、Linux 安装包；
-6. 创建或更新 GitHub Release，并附带 `SHA256SUMS.txt`。
+5. 按架构校验 DEB 的 `Package`、`Version`、`Architecture`、`Maintainer`、`Description` 字段；
+6. 上传 macOS、Windows、Linux 安装包；
+7. 创建或更新 GitHub Release，并附带 `SHA256SUMS.txt`。
+
+## 银河麒麟 V10(SP1) ARM64 打包约束
+
+麒麟 ARM64 包使用 `build/electron-builder.kylin.yml`。它仍然按照官方指南输出
+`deb`，但使用 `scripts/kylin-after-install.sh` 安装钩子：
+
+- 对 `unshare` 检测设置超时，避免旧内核在安装阶段阻塞；
+- MIME 和桌面数据库刷新设置超时，失败不会阻断安装；
+- 不执行 Electron Builder 默认的 Ubuntu AppArmor 安装钩子，避免在麒麟 V10(SP1)
+  上调用 `apparmor_parser` 导致软件中心长时间停留在“安装中”。
+
+官方参考文档：
+
+- [银河麒麟桌面操作系统 V10 Electron 应用开发者打包指南](https://www.kylinos.cn/upload/1/editor/20251223/1766460381009.pdf)
+- [银河麒麟桌面操作系统 V10-DEB 包开发者指南](https://www.kylinos.cn/upload/1/editor/20251223/1766460292334.pdf)
+- [银河麒麟桌面操作系统 V10 常见问题](https://www.kylinos.cn/upload/1/kycms/20250617/1934877956515139584.pdf)
 
 Hermes 引导会下载源码归档并在临时目录建立本地镜像，再执行归档内的官方安装脚本；构建过程不依赖对上游仓库执行 Git clone，也不会把临时镜像放进最终安装包。
 

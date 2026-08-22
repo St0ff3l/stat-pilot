@@ -105,5 +105,5 @@ app.post("/api/articles/:articleId/analyze", async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`SZ Gov Scope API listening on http://localhost:${port}`);
+  console.log(`深小统 API listening on http://localhost:${port}`);
 });

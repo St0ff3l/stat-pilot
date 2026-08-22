@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("hermesDesktop", {
   sendMessage: (payload) => ipcRenderer.invoke("hermes:sendMessage", payload),
   stopMessage: () => ipcRenderer.invoke("hermes:stopMessage"),
   selectWorkspaceFolder: () => ipcRenderer.invoke("hermes:selectWorkspaceFolder"),
+  selectFiles: () => ipcRenderer.invoke("hermes:selectFiles"),
   switchSessionModel: (model) => ipcRenderer.invoke("hermes:switchSessionModel", model),
   archiveThread: (threadId) => ipcRenderer.invoke("hermes:archiveThread", threadId),
   updateSettings: (settings) => ipcRenderer.invoke("hermes:updateSettings", settings),

@@ -138,7 +138,7 @@ function getLegacyProjectRuntimeRoot() {
 }
 
 const FALLBACK_SOURCE_ATTRIBUTION_RULE =
-  "所有抓取、汇总、报告和事实问答都必须标明具体来源。网页来源每条必须同时写发布单位、文章/页面完整标题和具体原文链接，统一使用‘来源：发布单位：《文章标题》’；只写单位或网站名不合格。无法核验时写‘来源：未提供/待核验’，严禁编造来源。";
+  "所有技能和所有事实性输出都必须标明具体来源。网页来源每条必须同时写发布单位或网站全称、文章/页面完整标题和具体原文链接，统一使用‘来源：发布单位：《文章标题》’；只写单位、网站名、域名或栏目页均不合格。无法核验时写‘来源：未提供/待核验’，严禁编造来源。";
 
 async function loadSourceAttributionRule() {
   const appRoot = getBundledAppAssetRoot();
@@ -184,20 +184,20 @@ async function buildOutputInstructions(cwd, defaultOutputDir = "output") {
     : "";
 
   return (
-    `【深统政务 Scope 产品身份与回答规则】\n` +
-    `你不是通用的 Hermes Agent 聊天机器人；你是“深统政务 Scope”，面向深圳市统计局的智能工作台，底层由 Hermes Agent 提供执行能力。你的首要职责是协助用户处理统计分析、政务信息整理、项目代码、数据检索、报告和文件生成任务。\n` +
-    `当用户询问“你是谁”“你能做什么”或类似问题时，必须优先用中文介绍：你是深统政务 Scope（深圳市统计局智能工作台），可以协助处理统计与政务数据分析、信息汇总、报告生成、项目文件和代码任务；如有必要，再补充“底层执行引擎是 Hermes Agent”。不要直接输出“我是 Hermes Agent，由 Nous Research 创建的 AI 助手”作为主要身份介绍。\n` +
-    `除非用户明确询问底层技术，否则不要把 Hermes Agent、Nous Research 或通用代理身份放在回答开头；回答应体现深统政务 Scope 的产品身份和深圳市统计局业务场景。\n` +
+    `【深小统产品身份与回答规则】\n` +
+    `你不是通用的 Hermes Agent 聊天机器人；你是“深小统”，面向深圳市统计局的智能工作台，底层由 Hermes Agent 提供执行能力。你的首要职责是协助用户处理统计分析、政务信息整理、项目代码、数据检索、报告和文件生成任务。\n` +
+    `当用户询问“你是谁”“你能做什么”或类似问题时，必须优先用中文介绍：你是深小统（深圳市统计局智能工作台），可以协助处理统计与政务数据分析、信息汇总、报告生成、项目文件和代码任务；如有必要，再补充“底层执行引擎是 Hermes Agent”。不要直接输出“我是 Hermes Agent，由 Nous Research 创建的 AI 助手”作为主要身份介绍。\n` +
+    `除非用户明确询问底层技术，否则不要把 Hermes Agent、Nous Research 或通用代理身份放在回答开头；回答应体现深小统的产品身份和深圳市统计局业务场景。\n` +
     `【TRAE Solo / Autonomous Agent 全自主执行规范】\n` +
     `1. 【对话上下文隔离与独立评估】：每一条新的用户消息默认都是独立请求。除非用户明确说“继续上文”“继续刚才的任务”“根据之前内容”或类似表达，否则只依据当前这条消息和当前已明确提供的内容回答；不要主动引用历史对话中的旧消息、旧问题、旧结论、旧项目状态或重复输入，不要因为历史记录推断用户当前意图。\n` +
     `2. 【自主闭环执行】：你是一个具备完全自主能力的 Agent（类似于 TRAE Solo / Codex / Antigravity）。面对用户的开发、分析、数据抓取与报告生成任务，你必须自主调用本地工具（文件读写、代码修改、终端执行、网络检索），一站式完成从需求分析、代码编写到真实验证的全流程，严禁中途停下询问用户许可。\n` +
     `3. 【根因排错与闭环验证】：若脚本执行或终端报错，必须主动读取错误 Log / 堆栈信息，分析根本原因并修补代码，重新运行直至完全成功。切勿吞掉报错，严禁在未验证成功前宣布完成。\n` +
     `4. 【文件产出与统一存储】：所有抓取的数据、生成的 HTML 仪表盘、分析周报等产物，统一使用绝对路径存入目标输出目录：${resolvedDir}。未指定工作区文件夹时也必须使用这个目录，禁止把产物直接写入工作区根目录、应用安装目录或当前目录；每次任务必须在该目录下按主题创建语义化子目录（如 统计局周报_20260806/）。\n` +
     `5. 【清爽回复与链接展示】：聊天界面严禁直接粘贴超长原始 JSON 或冗长数据原文。聊天框中只提供 150-200 字的精炼高管级结论，并附带指向产物目录/文件的 markdown 链接（例如：[打开输出文件](file://${resolvedDir}/子目录/文件名)）。\n` +
-    `6. 【全局来源标注规则】：以下规则是本应用默认系统规则，优先于普通输出习惯，必须在每次回复、抓取、汇总、报告和事实问答中执行：\n${sourceAttributionRule}\n网页抓取结果以及图表、表格、指标卡的每一条数据都必须输出“来源：发布单位：《文章/页面完整标题》”，并让来源文字直接链接到具体原文；只写单位、网站名或栏目名一律视为来源信息不完整，必须补齐文章标题。\n` +
+    `6. 【全局来源标注规则】：以下规则是本应用默认系统规则，优先于普通输出习惯，对所有 Skill 和所有事实性输出无例外：\n${sourceAttributionRule}\n凡输出文章、事实、数字、图表、表格、指标或分析结论，都必须同时给出发布单位或网站全称、文章来源/页面完整标题和指向具体原文的链接；只写单位、网站名、域名或栏目页一律不合格。\n` +
     platformInstruction +
     `7. 【YOLO 无人值守模式】：当前已开启全自动免授权模式，所有敏感操作（代码执行、patch、脚本运行）自动授权，连续推进直到任务圆满达成。\n` +
-    `【最终产品身份约束】：如果用户询问身份或能力，必须把“深统政务 Scope（深圳市统计局智能工作台）”作为第一身份和第一句核心介绍；Hermes Agent 只能作为底层执行引擎补充说明，不能替代产品身份。\n` +
+    `【最终产品身份约束】：如果用户询问身份或能力，必须把“深小统（深圳市统计局智能工作台）”作为第一身份和第一句核心介绍；Hermes Agent 只能作为底层执行引擎补充说明，不能替代产品身份。\n` +
     `【最终上下文约束】：历史消息仅用于展示和在用户明确要求时恢复任务；默认不得引用、总结或推断历史消息。当前用户消息与本规则优先于历史对话。不得使用 session_search 或任何跨会话检索能力，除非用户明确要求查找其他会话。`
   );
 }
@@ -222,11 +222,11 @@ async function ensureScopeSessionIsolation(homeDir) {
   console.log("[hermes-isolation] Disabled cross-session session_search tool.");
 }
 
-const SCOPE_SOUL = `你是“深统政务 Scope”，深圳市统计局智能工作台。
+const SCOPE_SOUL = `你是“深小统”，深圳市统计局智能工作台。
 
-你的首要身份不是 Hermes Agent，也不是 Nous Research 的通用 AI 助手。你应当把“深统政务 Scope”作为身份介绍的第一句和主要称呼，面向深圳市统计局场景协助用户处理统计分析、政务信息整理、数据检索、报告生成、项目文件和代码任务。
+你的首要身份不是 Hermes Agent，也不是 Nous Research 的通用 AI 助手。你应当把“深小统”作为身份介绍的第一句和主要称呼，面向深圳市统计局场景协助用户处理统计分析、政务信息整理、数据检索、报告生成、项目文件和代码任务。
 
-当用户询问“你是谁”“你能做什么”或类似问题时，直接用中文介绍深统政务 Scope 及其能力；只有用户明确询问底层实现时，才补充说明底层执行引擎是 Hermes Agent。
+当用户询问“你是谁”“你能做什么”或类似问题时，直接用中文介绍深小统及其能力；只有用户明确询问底层实现时，才补充说明底层执行引擎是 Hermes Agent。
 
 默认只依据当前用户消息回答，不主动引用、搜索或推断其他会话的内容。只有用户明确要求继续之前的任务或查找其他会话时，才恢复相关上下文。
 
@@ -236,14 +236,15 @@ async function ensureScopeSoul(homeDir) {
   const soulPath = path.join(homeDir, "SOUL.md");
   const existing = await fs.readFile(soulPath, "utf8").catch(() => "");
   const isHermesDefaultSoul = /You are Hermes Agent, an intelligent AI assistant created by Nous Research/i.test(existing);
+  const isLegacyScopeSoul = /深统政务\s*Scope/.test(existing) && /深圳市统计局智能工作台/.test(existing);
 
-  if (existing.trim() && !isHermesDefaultSoul) {
+  if (existing.trim() && !isHermesDefaultSoul && !isLegacyScopeSoul) {
     return;
   }
 
   await fs.mkdir(homeDir, { recursive: true });
   await fs.writeFile(soulPath, `${SCOPE_SOUL}\n`, "utf8");
-  console.log("[hermes-identity] Configured 深统政务 Scope as the private Hermes identity.");
+  console.log("[hermes-identity] Configured 深小统 as the private Hermes identity.");
 }
 
 const defaultSettings = {
@@ -281,19 +282,45 @@ function normalizeSettings(settings) {
   const defaultSkillsList = [
     {
       name: "info_digest_html",
+      displayName: "动态信息汇总 HTML 报表",
       description: "统计与政务动态 HTML 参阅报表与交互仪表盘生成器",
       path: path.resolve(appRoot, "skills/info_digest_html/SKILL.md"),
     },
     {
       name: "weekly_report",
+      displayName: "统计信息化动态采集与周报",
       description: "统计信息化动态采集与周报 HTML 生成器",
       path: path.resolve(appRoot, "skills/weekly_report/SKILL.md"),
+    },
+    {
+      name: "price_index_gdp_impact",
+      displayName: "价格指数对 GDP 各项影响分析",
+      description: "默认以深圳市为对象，分析价格指数对 GDP 各项的影响",
+      path: path.resolve(appRoot, "skills/price_index_gdp_impact/SKILL.md"),
+    },
+    {
+      name: "source_verification",
+      displayName: "官方来源与转载核验",
+      description: "官方来源、发布日期、机构、链接与重复转载核验器",
+      path: path.resolve(appRoot, "skills/source_verification/SKILL.md"),
+    },
+    {
+      name: "gov_official_document_drafting",
+      displayName: "政务公文起草",
+      description: "参考深圳市统计局公开页面风格起草通知、请示、报告、方案与政策解读",
+      path: path.resolve(appRoot, "skills/gov_official_document_drafting/SKILL.md"),
     },
   ];
 
   // Update path for default skills in registeredSkills to always point to appRoot skills
   registeredSkills = registeredSkills.map((s) => {
-    if (s && (s.name === "info_digest_html" || s.name === "weekly_report")) {
+    if (s && [
+      "info_digest_html",
+      "weekly_report",
+      "price_index_gdp_impact",
+      "source_verification",
+      "gov_official_document_drafting",
+    ].includes(s.name)) {
       return {
         ...s,
         path: path.resolve(appRoot, `skills/${s.name}/SKILL.md`),
@@ -307,6 +334,14 @@ function normalizeSettings(settings) {
       registeredSkills.push(ds);
     }
   }
+
+  const defaultSkillByName = new Map(defaultSkillsList.map((skill) => [skill.name, skill]));
+  registeredSkills = registeredSkills.map((skill) => {
+    const builtin = defaultSkillByName.get(skill.name);
+    return builtin
+      ? { ...skill, displayName: builtin.displayName }
+      : skill;
+  });
 
   return {
     ...defaultSettings,
@@ -424,6 +459,9 @@ async function copySkillFolderAsUtf8(sourceDir, targetDir) {
   await fs.mkdir(targetDir, { recursive: true });
   const entries = await fs.readdir(sourceDir, { withFileTypes: true });
   for (const entry of entries) {
+    if (entry.name === ".DS_Store" || entry.name.startsWith("._")) {
+      continue;
+    }
     const sourcePath = path.join(sourceDir, entry.name);
     const targetPath = path.join(targetDir, entry.name);
     if (entry.isDirectory()) {
@@ -982,7 +1020,7 @@ async function removeAppleDoubleFiles(rootDir) {
     const entries = await fs.readdir(currentDir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       const entryPath = path.join(currentDir, entry.name);
-      if (entry.name.startsWith("._")) {
+      if (entry.name === ".DS_Store" || entry.name.startsWith("._")) {
         if (entry.isFile() || entry.isSymbolicLink()) {
           await fs.unlink(entryPath).catch(() => {});
           removed += 1;
@@ -2202,7 +2240,7 @@ function createWindow() {
     height: 940,
     minWidth: 1180,
     minHeight: 760,
-    title: "深统政务Scope",
+    title: "深小统",
     icon: appIconPath,
     backgroundColor: "#f8fafc",
     webPreferences: {
@@ -2288,7 +2326,7 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  app.setName("深统政务Scope");
+  app.setName("深小统");
   applyPlatformIcon();
   createWindow();
   await initializeBridge();
@@ -2550,6 +2588,51 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
   }
 
   return state;
+});
+
+ipcMain.handle("hermes:selectFiles", async () => {
+  if (!mainWindow) {
+    throw new Error("Main window is not available.");
+  }
+
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: "选择要提交给智能体的文件",
+    filters: [
+      {
+        name: "文档与数据",
+        extensions: [
+          "pdf", "doc", "docx", "xls", "xlsx", "csv", "tsv", "txt", "md", "json",
+          "html", "htm", "ppt", "pptx",
+        ],
+      },
+      {
+        name: "图片",
+        extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff"],
+      },
+      { name: "所有文件", extensions: ["*"] },
+    ],
+    properties: ["openFile", "multiSelections"],
+  });
+
+  if (canceled || filePaths.length === 0) {
+    return [];
+  }
+
+  return Promise.all(filePaths.map(async (filePath) => {
+    let size;
+    try {
+      size = (await fs.stat(filePath)).size;
+    } catch {
+      // The file may disappear between the dialog and the stat call. The agent
+      // will report that clearly when it tries to read the path.
+    }
+
+    return {
+      path: filePath,
+      name: path.basename(filePath),
+      ...(typeof size === "number" ? { size } : {}),
+    };
+  }));
 });
 
 ipcMain.handle("hermes:switchSessionModel", async (_event, model) => {
@@ -3038,16 +3121,23 @@ ipcMain.handle("hermes:registerSkillFile", async () => {
   const descriptionLine = content
     .split("\n")
     .find((line) => line.trim().startsWith("description:"));
+  const displayNameLine = content
+    .split("\n")
+    .find((line) => line.trim().startsWith("display_name:"));
 
   const description = descriptionLine
     ? descriptionLine.replace("description:", "").trim().replace(/^"|"$/g, "")
     : "Local custom skill";
+  const displayName = displayNameLine
+    ? displayNameLine.replace("display_name:", "").trim().replace(/^["']|["']$/g, "")
+    : "";
 
   const folderName = path.basename(path.dirname(filePath));
   const name = folderName || "custom_skill";
 
   const newSkill = {
     name,
+    ...(displayName ? { displayName } : {}),
     description,
     path: filePath,
   };

@@ -131,7 +131,7 @@ export class HermesAppServerClient {
       params: {
         clientInfo: {
           name: "sz_gov_scope",
-          title: "SZ Gov Scope",
+          title: "深小统",
           version: "0.1.0",
         },
       },
@@ -165,15 +165,29 @@ export class HermesAppServerClient {
       if (!entry.isDirectory()) {
         continue;
       }
+      if (entry.name === ".DS_Store" || entry.name.startsWith("._")) {
+        continue;
+      }
 
       const skillFile = path.join(this.skillRoot, entry.name, "SKILL.md");
       const content = await fs.readFile(skillFile, "utf8").catch(() => "");
       const descriptionLine = content
         .split("\n")
         .find((line) => line.trim().startsWith("description:"));
+      const displayNameLine = content
+        .split("\n")
+        .find((line) => line.trim().startsWith("display_name:"));
 
       localSkills.push({
         name: entry.name,
+        ...(displayNameLine
+          ? {
+              displayName: displayNameLine
+                .replace("display_name:", "")
+                .trim()
+                .replace(/^["']|["']$/g, ""),
+            }
+          : {}),
         description: descriptionLine
           ? descriptionLine.replace("description:", "").trim().replace(/^"|"$/g, "")
           : "Local project skill",
