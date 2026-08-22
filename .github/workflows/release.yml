@@ -57,7 +57,7 @@ jobs:
           - name: Linux ARM64 deb (Kylin)
             os: ubuntu-24.04-arm
             runtime_bootstrap: unix
-            builder_args: --linux deb --arm64 --config build/electron-builder.kylin.yml
+            builder_args: --linux deb --arm64
             debian_arch: arm64
             artifact_name: installers-linux-arm64-deb
             artifact_path: release/*.deb

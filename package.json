@@ -19,7 +19,7 @@
     "dist:mac": "npm run verify:runtime && npm run build && electron-builder --mac dmg",
     "dist:win": "npm run verify:runtime && npm run build && electron-builder --win nsis",
     "dist:linux": "npm run verify:runtime && npm run build && electron-builder --linux deb",
-    "dist:linux:arm64": "npm run verify:runtime && npm run build && electron-builder --linux deb --arm64 --config build/electron-builder.kylin.yml",
+    "dist:linux:arm64": "npm run verify:runtime && npm run build && electron-builder --linux deb --arm64",
     "verify:runtime": "node scripts/verify-bundled-hermes-runtime.mjs",
     "hermes:patch": "node scripts/patch-hermes-runtime.mjs",
     "hermes:bootstrap": "bash scripts/bootstrap-hermes.sh",
@@ -155,7 +155,9 @@
       "vendor": "深小统"
     },
     "deb": {
-      "packageName": "sz-gov-scope"
+      "packageName": "sz-gov-scope",
+      "afterInstall": "scripts/kylin-after-install.sh",
+      "afterRemove": "scripts/kylin-after-remove.sh"
     }
   }
 }

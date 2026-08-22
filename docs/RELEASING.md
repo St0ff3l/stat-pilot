@@ -29,8 +29,8 @@ git push origin v0.1.0
 
 ## 银河麒麟 V10(SP1) ARM64 打包约束
 
-麒麟 ARM64 包使用 `build/electron-builder.kylin.yml`。它仍然按照官方指南输出
-`deb`，但使用 `scripts/kylin-after-install.sh` 安装钩子：
+麒麟 ARM64 包仍然按照官方指南输出 `deb`，并在 `package.json` 的 `deb` 配置中
+使用 `scripts/kylin-after-install.sh` 和 `scripts/kylin-after-remove.sh` 钩子：
 
 - 对 `unshare` 检测设置超时，避免旧内核在安装阶段阻塞；
 - MIME 和桌面数据库刷新设置超时，失败不会阻断安装；
