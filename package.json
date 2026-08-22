@@ -148,12 +148,14 @@
       ],
       "artifactName": "${productName}-${version}-Linux-${arch}.${ext}",
       "category": "Utility",
-      "packageName": "sz-gov-scope",
       "packageCategory": "utils",
       "synopsis": "深圳市统计局智能工作台",
       "description": "面向深圳市统计政务工作的本地智能工作台，支持统计信息采集、数据分析、来源核验与公文起草。",
       "maintainer": "深小统 <st0ff3l@users.noreply.github.com>",
       "vendor": "深小统"
+    },
+    "deb": {
+      "packageName": "sz-gov-scope"
     }
   }
 }

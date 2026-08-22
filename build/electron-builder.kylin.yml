@@ -1,0 +1,8 @@
+# 银河麒麟 V10(SP1) ARM64 专用 DEB 配置。
+#
+# 麒麟官方 Electron 打包指南要求输出 deb 并使用目标架构构建。
+# Electron Builder 26 默认生成的 Ubuntu AppArmor 安装钩子不适合直接
+# 作为麒麟 V10 的安装前提，因此 ARM64 麒麟包使用受控的安装脚本。
+deb:
+  afterInstall: scripts/kylin-after-install.sh
+  afterRemove: scripts/kylin-after-remove.sh
