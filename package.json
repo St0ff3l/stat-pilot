@@ -110,6 +110,10 @@
         "to": "app-icon.png"
       },
       {
+        "from": "public/sz-dock-icon.png",
+        "to": "app-dock-icon.png"
+      },
+      {
         "from": "skills",
         "to": "skills",
         "filter": [

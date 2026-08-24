@@ -35,8 +35,16 @@ function getAppIconPath() {
     : path.resolve(process.cwd(), "public/sz-logo.png");
 }
 
+function getAppDockIconPath() {
+  const dockIconPath = app.isPackaged
+    ? path.join(process.resourcesPath, "app-dock-icon.png")
+    : path.resolve(process.cwd(), "public/sz-dock-icon.png");
+
+  return existsSync(dockIconPath) ? dockIconPath : getAppIconPath();
+}
+
 function applyPlatformIcon() {
-  const iconPath = getAppIconPath();
+  const iconPath = getAppDockIconPath();
 
   if (process.platform === "darwin" && app.dock) {
     try {

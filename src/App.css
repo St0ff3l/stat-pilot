@@ -246,6 +246,8 @@ body {
 
 .header-actions {
   @apply flex items-center gap-3;
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 /* Header Pills */
@@ -253,6 +255,19 @@ body {
 .workspace-header-pill {
   @apply bg-white border border-border-main rounded-md flex items-center h-8 px-2.5 gap-1.5 transition-all duration-200;
   box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+
+.model-header-pill {
+  flex: 0 1 clamp(260px, 28vw, 360px);
+  min-width: 260px;
+  max-width: min(100%, 360px);
+}
+
+.model-header-pill > .pill-label {
+  flex: 0 0 auto;
+  min-width: max-content;
+  max-width: none;
+  white-space: nowrap;
 }
 
 .model-header-pill.dirty {
@@ -276,7 +291,11 @@ body {
 }
 
 .header-model-select {
-  @apply bg-transparent border-none text-[0.8rem] text-text-primary font-medium focus:outline-none cursor-pointer h-full max-w-[280px] pr-1;
+  @apply bg-transparent border-none text-[0.8rem] text-text-primary font-medium focus:outline-none cursor-pointer h-full pr-1;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: none;
   outline: none;
   font-family: inherit;
 }
@@ -486,8 +505,24 @@ body {
 
 /* Header Toggle Button & Badge Styles */
 .header-toggle-sidebar-button {
-  @apply bg-white border border-border-main rounded-md flex items-center justify-center h-8 px-2.5 gap-1.5 cursor-pointer transition-all duration-200 text-[0.8rem] font-medium text-text-secondary;
+  @apply bg-white border border-border-main rounded-md flex items-center justify-center h-8 px-2 gap-1.5 cursor-pointer transition-all duration-200 text-[0.8rem] font-medium text-text-secondary;
+  flex: 0 0 auto;
+  min-width: 116px;
+  white-space: nowrap;
   box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+
+.header-toggle-sidebar-button > .pill-label {
+  flex: 0 0 auto;
+  min-width: max-content;
+  max-width: none;
+  white-space: nowrap;
+}
+
+.header-toggle-sidebar-button > .pill-label > svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
 }
 
 .header-toggle-sidebar-button:hover {
@@ -1566,6 +1601,13 @@ body {
 
 .trae-suggestion-card .icon {
   @apply text-lg flex shrink-0 items-center justify-center p-2 rounded-xl bg-slate-100 text-slate-700 transition-colors;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  flex: 0 0 44px;
+  padding: 0;
+  aspect-ratio: 1 / 1;
+  line-height: 1;
 }
 
 .trae-suggestion-card:hover .icon {
@@ -2196,29 +2238,36 @@ body {
 }
 
 .header-actions {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   max-width: 100%;
 }
 
-.header-actions > *,
-.model-header-pill,
-.header-toggle-sidebar-button {
+.header-actions > * {
   min-width: 0;
+}
+
+.header-actions > .header-toggle-sidebar-button {
+  min-width: 116px;
 }
 
 .model-header-pill {
-  max-width: 100%;
+  min-width: 260px;
+  max-width: min(100%, 360px);
 }
 
-.model-header-pill .pill-label,
+.model-header-pill .pill-label {
+  min-width: max-content;
+}
+
 .header-toggle-sidebar-button .pill-label {
-  min-width: 0;
+  min-width: max-content;
 }
 
 .header-model-select {
-  flex: 1 1 12rem;
-  width: 0;
+  flex: 1 1 auto;
+  width: auto;
   min-width: 0;
+  max-width: none;
 }
 
 .message-markdown,
@@ -2342,8 +2391,9 @@ body {
   }
 
   .header-actions {
-    flex: 1 1 auto;
-    justify-content: flex-end;
+    width: 100%;
+    flex: 1 1 100%;
+    justify-content: space-between;
   }
 
   .composer {
@@ -2408,11 +2458,14 @@ body {
   }
 
   .model-header-pill {
-    flex: 1 1 auto;
+    flex: 1 1 240px;
+    min-width: 0;
+    max-width: none;
   }
 
-  .header-toggle-sidebar-button {
+  .header-actions > .header-toggle-sidebar-button {
     flex: 0 0 auto;
+    min-width: 116px;
   }
 
   .message-scroller {
@@ -2527,6 +2580,17 @@ body {
 
   .header-model-select {
     flex-basis: 9rem;
+  }
+
+  .model-header-pill {
+    flex-basis: 9rem;
+  }
+
+  .header-actions > .header-toggle-sidebar-button {
+    min-width: 34px;
+    width: auto;
+    padding-left: 8px;
+    padding-right: 8px;
   }
 
   .trae-attachment-pill {
