@@ -408,9 +408,9 @@ function StreamActivityGlyph({ activity }: { activity: HermesStreamActivity }) {
       <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         {isThink ? (
           <>
-            <path d="M6.2 8.5a3.8 3.8 0 1 1 5.6 0c-.7.7-1.2 1.4-1.2 2.4H7.4c0-1-.5-1.7-1.2-2.4Z" />
-            <path d="M7.4 12.4h3.2M7.8 14.4h2.4" />
-            <path d="M9 1.8v1.4M3.8 4l1 1M14.2 4l-1 1" />
+            <path d="M6.1 8.3a3.2 3.2 0 1 1 5.8 0c-.6.7-.9 1.4-1 2.5H7.1c-.1-1.1-.4-1.8-1-2.5Z" />
+            <path d="M7.3 12.2h3.4M7.7 14.2h2.6" />
+            <path d="m13.4 2.4.35 1.1 1.1.35-1.1.35-.35 1.1-.35-1.1-1.1-.35 1.1-.35.35-1.1Z" />
           </>
         ) : isSkillView ? (
           <>
