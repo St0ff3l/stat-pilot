@@ -1,7 +1,7 @@
 {
   "name": "stat-pilot",
   "private": true,
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "面向深圳市统计政务工作的本地智能工作台，支持统计信息采集、数据分析、来源核验与公文起草。",
   "author": {
     "name": "深小统",
