@@ -258,6 +258,7 @@ async function ensureScopeSoul(homeDir) {
 const defaultSettings = {
   hermesBin: getDefaultHermesBinaryPath(),
   runtimeMode: "private",
+  yoloMode: true,
   model: "",
   cwd: "",
   defaultOutputDir: "output",
@@ -356,6 +357,7 @@ function normalizeSettings(settings) {
     ...input,
     hermesBin: getDefaultHermesBinaryPath(),
     runtimeMode: input.runtimeMode === "official" ? "official" : "private",
+    yoloMode: input.yoloMode !== false,
     model: typeof input.model === "string" && input.model.trim() ? input.model.trim() : defaultSettings.model,
     cwd: defaultCwd,
     defaultOutputDir: normalizeOutputDir(input.defaultOutputDir),
@@ -535,16 +537,167 @@ function mapStoredSession(session, settings) {
   };
 }
 
+function compactActivityText(value, maxLength = 520) {
+  const text = toSafeString(value).replace(/\s+/g, " ").trim();
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function narrativeActivityText(value, maxLength = 4000) {
+  const text = toSafeString(value)
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function fullActivityText(value) {
+  return toSafeString(value)
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function streamToolLabel(toolName) {
+  const normalized = toSafeString(toolName).trim().toLowerCase().replace(/[-\s]+/g, "_");
+  const labels = [
+    [["read", "read_file", "cat", "file_read"], "Read"],
+    [["terminal", "bash", "shell", "exec", "run_command", "command"], "Bash"],
+    [["grep", "rg", "search", "find", "file_search"], "Search"],
+    [["write", "write_file", "edit", "patch", "apply_patch", "file_write"], "Edit"],
+    [["web_search", "web_extract", "browser", "browser_navigate"], "Browse"],
+    [["todo", "task"], "Plan"],
+    [["skill", "skills", "skill_manage"], "Skill"],
+    [["memory", "memory_search"], "Memory"],
+  ];
+
+  for (const [names, label] of labels) {
+    if (names.includes(normalized)) {
+      return label;
+    }
+  }
+
+  if (!normalized) {
+    return "Tool";
+  }
+
+  return normalized
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function mapGatewayMessages(messages) {
-  return (messages ?? [])
-    .filter((message) => message?.role === "user" || message?.role === "assistant")
-    .map((message) => ({
+  const mapped = [];
+
+  const source = Array.isArray(messages) ? messages : [];
+  let cursor = 0;
+  while (cursor < source.length) {
+    const message = source[cursor];
+    if (message?.role === "user") {
+      mapped.push({
+        id: randomUUID(),
+        role: "user",
+        text: toSafeString(message.text),
+        turnId: null,
+      });
+      cursor += 1;
+      continue;
+    }
+
+    // A Hermes turn is persisted as assistant/tool/assistant/tool/.../assistant.
+    // Keep that sequence as one assistant transcript: commentary emitted before
+    // a tool belongs in the activity stream, while only the last assistant
+    // message (the one after the final tool) belongs in the answer area.
+    const turnItems = [];
+    while (cursor < source.length && source[cursor]?.role !== "user") {
+      if (source[cursor]?.role === "assistant" || source[cursor]?.role === "tool") {
+        turnItems.push(source[cursor]);
+      }
+      cursor += 1;
+    }
+
+    const assistantIndexes = turnItems
+      .map((item, index) => item?.role === "assistant" ? index : -1)
+      .filter((index) => index >= 0);
+    if (assistantIndexes.length === 0) {
+      continue;
+    }
+
+    // The final assistant message is the last assistant item that is not
+    // followed by a tool. An interrupted turn can have no such message; in
+    // that case retain all visible assistant text as activity instead of
+    // presenting it as a completed final answer.
+    const finalAssistantIndex = [...assistantIndexes]
+      .reverse()
+      .find((index) => !turnItems.slice(index + 1).some((item) => item?.role === "tool"));
+    const finalAssistant = finalAssistantIndex === undefined
+      ? null
+      : turnItems[finalAssistantIndex];
+    const finalReasoning = toSafeString(
+      finalAssistant?.reasoning || finalAssistant?.reasoning_content || finalAssistant?.payload?.reasoning
+    ).trim();
+    const activities = [];
+
+    for (let index = 0; index < turnItems.length; index += 1) {
+      const item = turnItems[index];
+      if (item?.role === "tool") {
+        const toolName = toSafeString(item.name).trim() || "tool";
+        activities.push({
+          id: `history-${randomUUID()}`,
+          kind: "tool",
+          label: streamToolLabel(toolName),
+          detail: compactActivityText(item.context),
+          status: "complete",
+          toolName,
+        });
+        continue;
+      }
+
+      const reasoning = toSafeString(item.reasoning || item.reasoning_content || item.payload?.reasoning).trim();
+      if (reasoning) {
+        activities.push({
+          id: `history-thinking-${randomUUID()}`,
+          kind: "thinking",
+          label: "Think",
+          detail: fullActivityText(reasoning),
+          status: "complete",
+        });
+      }
+
+      if (index !== finalAssistantIndex) {
+        const narrative = narrativeActivityText(item.text);
+        if (narrative) {
+          activities.push({
+            id: `history-narrative-${randomUUID()}`,
+            kind: "narrative",
+            label: "正文",
+            detail: narrative,
+            status: "complete",
+          });
+        }
+      }
+    }
+
+    mapped.push({
       id: randomUUID(),
-      role: message.role,
-      text: toSafeString(message.text),
-      reasoning: toSafeString(message.reasoning || message.reasoning_content || message.payload?.reasoning).trim() || null,
+      role: "assistant",
+      text: finalAssistant ? toSafeString(finalAssistant.text) : "",
+      reasoning: finalReasoning || null,
       turnId: null,
-    }));
+      activities,
+    });
+  }
+
+  return mapped;
 }
 
 function isOfficialSessionModelStale(model) {
@@ -1140,12 +1293,19 @@ function buildHermesEnv(settings, launchConfig = null, sessionToken = "") {
   if (sessionToken) {
     env.HERMES_DASHBOARD_SESSION_TOKEN = sessionToken;
   }
+  // Never inherit a stale YOLO flag from the shell that launched Electron.
+  // The mode is controlled by the saved app setting below and is frozen by
+  // Hermes before the gateway imports its approval module.
+  delete env.HERMES_YOLO_MODE;
+  delete env.HERMES_EXEC_ASK;
   if (!isOfficialMode) {
     // Hermes freezes YOLO mode when the backend process imports its approval
     // module. The session.create `yolo` parameter is not honored by the
     // current gateway, so this must be set before spawning the process.
-    env.HERMES_YOLO_MODE = "1";
-    env.HERMES_EXEC_ASK = "0";
+    if (settings.yoloMode !== false) {
+      env.HERMES_YOLO_MODE = "1";
+      env.HERMES_EXEC_ASK = "0";
+    }
     env.HERMES_MODEL = toSafeString(settings.model).trim() || defaultSettings.model;
     env.HERMES_INFERENCE_MODEL = env.HERMES_MODEL;
     env.HERMES_TUI_PROVIDER = provider;
@@ -1679,7 +1839,7 @@ class HermesGatewayBridge {
     return this.request("session.create", {
       cwd,
       cols: 120,
-      yolo: true,
+      yolo: this.settings.yoloMode !== false,
       developerInstructions: await buildOutputInstructions(cwd, this.settings.defaultOutputDir),
     });
   }
@@ -1689,7 +1849,7 @@ class HermesGatewayBridge {
     return this.request("session.resume", {
       session_id: threadId,
       cols: 120,
-      yolo: true,
+      yolo: this.settings.yoloMode !== false,
       developerInstructions: await buildOutputInstructions(cwd, this.settings.defaultOutputDir),
     });
   }
@@ -1709,12 +1869,19 @@ class HermesGatewayBridge {
 
   async cancelPrompt(sessionId) {
     try {
-      await this.request("prompt.cancel", { session_id: sessionId });
+      // Hermes' gateway exposes interruption as session.interrupt. The old
+      // prompt.cancel/session.cancel fallback did not stop an in-flight agent
+      // turn, so the UI could clear while the backend kept working to the end.
+      await this.request("session.interrupt", { session_id: sessionId });
     } catch {
       try {
-        await this.request("session.cancel", { session_id: sessionId });
+        await this.request("prompt.cancel", { session_id: sessionId });
       } catch {
-        // ignore fallback errors
+        try {
+          await this.request("session.cancel", { session_id: sessionId });
+        } catch {
+          // ignore fallback errors
+        }
       }
     }
   }
@@ -1772,6 +1939,8 @@ let bridge = null;
 let activeGatewaySessionId = null;
 let activeSessionUnsubscribe = null;
 let activeSessionReject = null;
+let activeTurnCancelRequested = false;
+let activeTurnHasStarted = false;
 let activeOfficialLogin = null;
 
 let state = {
@@ -1845,6 +2014,126 @@ function broadcastState() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("hermes:state", state);
   }
+}
+
+function upsertActiveDraftActivity(activity) {
+  if (!state.activeDraft || !activity?.id) {
+    return;
+  }
+
+  const activities = Array.isArray(state.activeDraft.activities)
+    ? state.activeDraft.activities
+    : [];
+  const index = activities.findIndex((entry) => entry.id === activity.id);
+  if (index === -1) {
+    state.activeDraft.activities = [...activities, activity];
+    return;
+  }
+
+  state.activeDraft.activities = activities.map((entry, entryIndex) =>
+    entryIndex === index ? { ...entry, ...activity } : entry
+  );
+}
+
+function closeRunningThinkingActivities() {
+  if (!state.activeDraft || !Array.isArray(state.activeDraft.activities)) {
+    return;
+  }
+
+  state.activeDraft.activities = state.activeDraft.activities.map((activity) =>
+    activity.kind === "thinking" && activity.status === "running"
+      ? { ...activity, status: "complete" }
+      : activity
+  );
+}
+
+function flushActiveDraftNarrative() {
+  if (!state.activeDraft) {
+    return;
+  }
+
+  const text = narrativeActivityText(state.activeDraft.pendingText);
+  if (!text) {
+    return;
+  }
+
+  upsertActiveDraftActivity({
+    id: `narrative:${randomUUID()}`,
+    kind: "narrative",
+    label: "正文",
+    detail: text,
+    status: "complete",
+  });
+  state.activeDraft.pendingText = "";
+  state.activeDraft.text = "";
+}
+
+function upsertActiveDraftThinking(detail) {
+  const text = fullActivityText(detail);
+  if (!text || !state.activeDraft) {
+    return;
+  }
+
+  const activities = Array.isArray(state.activeDraft.activities)
+    ? state.activeDraft.activities
+    : [];
+  const current = [...activities]
+    .reverse()
+    .find((activity) => activity.kind === "thinking" && activity.status === "running");
+
+  upsertActiveDraftActivity(current
+    ? {
+        ...current,
+        detail: text,
+        status: "running",
+      }
+    : {
+        id: `thinking:${randomUUID()}`,
+        kind: "thinking",
+        label: "Think",
+        detail: text,
+        status: "running",
+      });
+}
+
+function finishActiveDraftActivities() {
+  if (!state.activeDraft || !Array.isArray(state.activeDraft.activities)) {
+    return;
+  }
+
+  state.activeDraft.activities = state.activeDraft.activities.map((activity) =>
+    activity.status === "running"
+      ? { ...activity, status: "complete" }
+      : activity
+  );
+}
+
+function preserveInterruptedDraft() {
+  if (!state.activeDraft) {
+    return;
+  }
+
+  // Move any still-buffered assistant text into the same ordered trail before
+  // detaching the live draft. This keeps the visible work history when the
+  // user stops a turn instead of leaving an empty assistant bubble.
+  flushActiveDraftNarrative();
+  finishActiveDraftActivities();
+  state.messages = [
+    ...state.messages,
+    {
+      id: randomUUID(),
+      role: "assistant",
+      text: "",
+      reasoning: toSafeString(state.activeDraft.reasoning).trim() || null,
+      turnId: null,
+      meta: "interrupted",
+      activities: [...(state.activeDraft.activities ?? [])],
+    },
+  ];
+}
+
+function streamPayloadText(payload) {
+  return toSafeString(payload?.text || payload?.rendered);
 }
 
 async function refreshThreads() {
@@ -1922,6 +2211,8 @@ async function loadActiveThread(threadId) {
     state.activeThread = activeThreadObj;
     state.currentRuntimeModel = toSafeString(result.info?.model).trim() || null;
     state.messages = mapGatewayMessages(result.messages);
+    activeTurnCancelRequested = false;
+    activeTurnHasStarted = false;
     state.activeDraft = null;
     state.status = "Ready.";
   } catch (error) {
@@ -1971,6 +2262,8 @@ async function startNewConversation() {
   state.lastUsageModel = null;
   state.reasoningTrace = null;
   state.messages = [];
+  activeTurnCancelRequested = false;
+  activeTurnHasStarted = false;
   state.activeDraft = null;
   state.error = null;
   state.status = "Ready.";
@@ -2003,17 +2296,23 @@ async function waitForSessionCompletion(sessionId) {
 
   await new Promise((resolve, reject) => {
     const unsubscribe = bridge.onNotification((message) => {
-      if (message.session_id !== sessionId) {
+      if ((message.session_id || sessionId) !== sessionId) {
         return;
       }
 
       if (message.type === "message.complete") {
+        const completionStatus = toSafeString(message.payload?.status).trim().toLowerCase();
+        const wasInterrupted = activeTurnHasStarted && (completionStatus === "interrupted" || activeTurnCancelRequested);
         if (activeSessionUnsubscribe === unsubscribe) {
           activeSessionUnsubscribe = null;
           activeSessionReject = null;
         }
         unsubscribe();
-        resolve();
+        if (wasInterrupted) {
+          reject(new Error("用户已终止对话处理。"));
+        } else {
+          resolve();
+        }
         return;
       }
 
@@ -2029,6 +2328,30 @@ async function waitForSessionCompletion(sessionId) {
     activeSessionUnsubscribe = unsubscribe;
     activeSessionReject = reject;
   });
+}
+
+async function submitPromptAndWait(sessionId, text) {
+  // Register the completion listener before prompt.submit. The gateway can
+  // emit message.start/delta/complete immediately after accepting a prompt;
+  // attaching afterwards leaves short turns waiting forever even though the
+  // renderer already received the complete event.
+  const completionPromise = waitForSessionCompletion(sessionId);
+  try {
+    await bridge.sendPrompt(sessionId, text);
+  } catch (error) {
+    if (activeSessionUnsubscribe) {
+      activeSessionUnsubscribe();
+      activeSessionUnsubscribe = null;
+    }
+    if (activeSessionReject) {
+      activeSessionReject(error);
+      activeSessionReject = null;
+    }
+    await completionPromise.catch(() => {});
+    throw error;
+  }
+
+  await completionPromise;
 }
 
 function extractModelFromSessionStatus(output) {
@@ -2136,19 +2459,45 @@ async function initializeBridge() {
         command: toSafeString(payload.command || payload.cmd || payload.text),
         description: toSafeString(payload.description || payload.reason || payload.message || "Hermes 请求执行需要授权。"),
         patternKey: toSafeString(payload.pattern_key || payload.pattern || payload.rule),
+        allowPermanent: payload.allow_permanent !== false,
       };
       state.status = "等待安全授权...";
       broadcastState();
       return;
     }
 
-    if (!activeGatewaySessionId || message.session_id !== activeGatewaySessionId) {
+    const targetSessionId = message.session_id || activeGatewaySessionId;
+    if (!activeGatewaySessionId || targetSessionId !== activeGatewaySessionId) {
+      return;
+    }
+
+    // After an interrupt, the gateway may flush a few late events. Ignore
+    // them until the next turn announces its own message.start, otherwise an
+    // old turn can leak text or tool rows into a newly submitted turn.
+    if (activeTurnCancelRequested && !activeTurnHasStarted && message.type !== "message.start") {
+      return;
+    }
+
+    if (message.type === "message.start" && state.activeDraft) {
+      activeTurnHasStarted = true;
+      activeTurnCancelRequested = false;
+      state.status = "Running...";
+      broadcastState();
       return;
     }
 
     if (message.type === "message.delta" && state.activeDraft) {
-      const delta = toSafeString(message.payload?.text);
-      state.activeDraft.text += delta;
+      const delta = streamPayloadText(message.payload);
+      if (!delta) {
+        return;
+      }
+      closeRunningThinkingActivities();
+      state.activeDraft.pendingText = `${state.activeDraft.pendingText ?? ""}${delta}`;
+      // Keep only the current, not-yet-classified segment in the answer area.
+      // If a tool event follows, flushActiveDraftNarrative() moves this text
+      // into the ordered activity stream; if message.complete follows, it is
+      // the final answer segment.
+      state.activeDraft.text = state.activeDraft.pendingText;
 
       if (!state.activeDraft.segments) {
         state.activeDraft.segments = [{ reasoning: state.activeDraft.reasoning || "", text: "" }];
@@ -2164,8 +2513,12 @@ async function initializeBridge() {
       return;
     }
 
-    if (message.type === "reasoning.delta" && state.activeDraft) {
+    if ((message.type === "thinking.delta" || message.type === "reasoning.delta") && state.activeDraft) {
       const delta = toSafeString(message.payload?.text);
+      if (!delta) {
+        return;
+      }
+      flushActiveDraftNarrative();
       state.reasoningTrace = `${state.reasoningTrace ?? ""}${delta}`;
       state.activeDraft.reasoning = `${state.activeDraft.reasoning ?? ""}${delta}`;
 
@@ -2181,13 +2534,192 @@ async function initializeBridge() {
         state.activeDraft.segments.push(lastSeg);
       }
       lastSeg.reasoning = (lastSeg.reasoning || "") + delta;
+      upsertActiveDraftThinking(lastSeg.reasoning || delta);
 
       broadcastState();
       return;
     }
 
+    if ((message.type === "reasoning.available" || message.type === "review.summary") && state.activeDraft) {
+      const preview = fullActivityText(message.payload?.text);
+      if (preview) {
+        flushActiveDraftNarrative();
+        upsertActiveDraftThinking(preview);
+        broadcastState();
+      }
+      return;
+    }
+
+    if (message.type === "status.update" && state.activeDraft) {
+      const payload = message.payload || {};
+      const kind = toSafeString(payload.kind).trim().toLowerCase() || "status";
+      const text = compactActivityText(payload.text || kind);
+      const isReady = kind === "ready";
+      const isContext = kind.includes("context") || /context|agents\.md|skill-catalog|system prompt/i.test(text);
+      flushActiveDraftNarrative();
+      closeRunningThinkingActivities();
+      upsertActiveDraftActivity({
+        id: `status:${kind}`,
+        kind: isContext ? "context" : "status",
+        label: isContext ? "上下文注入" : "Status",
+        detail: text,
+        status: isReady ? "complete" : "running",
+      });
+      broadcastState();
+      return;
+    }
+
+    if (message.type === "tool.generating" && state.activeDraft) {
+      const toolName = toSafeString(message.payload?.name).trim() || "tool";
+      flushActiveDraftNarrative();
+      closeRunningThinkingActivities();
+      upsertActiveDraftActivity({
+        id: `tool-generating:${toolName}`,
+        kind: "tool",
+        label: streamToolLabel(toolName),
+        detail: "准备中…",
+        status: "running",
+        toolName,
+      });
+      broadcastState();
+      return;
+    }
+
+    if (message.type === "tool.start" && state.activeDraft) {
+      const payload = message.payload || {};
+      const toolName = toSafeString(payload.name).trim() || "tool";
+      flushActiveDraftNarrative();
+      closeRunningThinkingActivities();
+      const generatingActivity = Array.isArray(state.activeDraft.activities)
+        ? [...state.activeDraft.activities]
+          .reverse()
+          .find((activity) => activity.kind === "tool" && activity.toolName === toolName && activity.id.startsWith("tool-generating:") && activity.status === "running")
+        : null;
+      const toolId = toSafeString(payload.tool_id).trim() || generatingActivity?.id || `tool:${randomUUID()}`;
+      const detail = compactActivityText(payload.context || payload.preview || payload.args_text);
+      upsertActiveDraftActivity({
+        id: toolId,
+        kind: "tool",
+        label: streamToolLabel(toolName),
+        detail,
+        status: "running",
+        toolName,
+      });
+      broadcastState();
+      return;
+    }
+
+    if (message.type === "tool.progress" && state.activeDraft) {
+      const payload = message.payload || {};
+      const toolName = toSafeString(payload.name).trim() || "tool";
+      flushActiveDraftNarrative();
+      closeRunningThinkingActivities();
+      const activities = Array.isArray(state.activeDraft.activities) ? state.activeDraft.activities : [];
+      const activeTool = [...activities]
+        .reverse()
+        .find((activity) => activity.kind === "tool" && activity.toolName === toolName && activity.status === "running");
+      const detail = compactActivityText(payload.preview || payload.text || "处理中…");
+      upsertActiveDraftActivity({
+        id: activeTool?.id || `tool-progress:${toolName}:${randomUUID()}`,
+        kind: "tool",
+        label: streamToolLabel(toolName),
+        detail,
+        status: "running",
+        toolName,
+      });
+      broadcastState();
+      return;
+    }
+
+    if (message.type === "tool.complete" && state.activeDraft) {
+      const payload = message.payload || {};
+      const toolName = toSafeString(payload.name).trim() || "tool";
+      flushActiveDraftNarrative();
+      closeRunningThinkingActivities();
+      const openTool = Array.isArray(state.activeDraft.activities)
+        ? [...state.activeDraft.activities]
+          .reverse()
+          .find((activity) => activity.kind === "tool" && activity.toolName === toolName && activity.status === "running")
+        : null;
+      const toolId = toSafeString(payload.tool_id).trim() || openTool?.id || `tool:${randomUUID()}`;
+      const detail = compactActivityText(
+        payload.summary || payload.inline_diff || payload.result_text || payload.error || "完成"
+      );
+      const durationMs = Number.isFinite(Number(payload.duration_s))
+        ? Math.max(0, Number(payload.duration_s) * 1000)
+        : undefined;
+      upsertActiveDraftActivity({
+        id: toolId,
+        kind: "tool",
+        label: streamToolLabel(toolName),
+        detail,
+        status: payload.error ? "error" : "complete",
+        toolName,
+        ...(durationMs === undefined ? {} : { durationMs }),
+      });
+      broadcastState();
+      return;
+    }
+
+    if (typeof message.type === "string" && message.type.startsWith("subagent.") && state.activeDraft) {
+      const payload = message.payload || {};
+      const subagentId = toSafeString(payload.subagent_id || payload.child_session_id || payload.goal).trim() || randomUUID();
+      const isComplete = message.type === "subagent.complete";
+      const detail = compactActivityText(payload.tool_preview || payload.summary || payload.text || payload.goal);
+      flushActiveDraftNarrative();
+      closeRunningThinkingActivities();
+      upsertActiveDraftActivity({
+        id: `subagent:${subagentId}`,
+        kind: "subagent",
+        label: payload.tool_name ? streamToolLabel(payload.tool_name) : "Delegate",
+        detail,
+        status: isComplete ? "complete" : "running",
+        toolName: toSafeString(payload.tool_name).trim() || undefined,
+      });
+      broadcastState();
+      return;
+    }
+
     if (message.type === "message.complete" && state.activeDraft) {
-      state.activeDraft.text = toSafeString(message.payload?.text);
+      const completionStatus = toSafeString(message.payload?.status).trim().toLowerCase();
+      // If a user submits a new prompt immediately after stopping, an old
+      // interrupted completion can arrive before the new message.start. Do
+      // not let that stale event erase the new draft.
+      if (activeTurnCancelRequested && !activeTurnHasStarted) {
+        return;
+      }
+      if (completionStatus === "interrupted" || activeTurnCancelRequested) {
+        activeTurnHasStarted = false;
+        const interruptedError = new Error("用户已终止对话处理。");
+        if (activeSessionUnsubscribe) {
+          activeSessionUnsubscribe();
+          activeSessionUnsubscribe = null;
+        }
+        if (activeSessionReject) {
+          const reject = activeSessionReject;
+          activeSessionReject = null;
+          reject(interruptedError);
+        }
+        state.activeDraft = null;
+        state.pendingApproval = null;
+        state.pendingClarification = null;
+        state.busy = false;
+        state.status = "已终止处理。";
+        broadcastState();
+        return;
+      }
+      activeTurnHasStarted = false;
+      const completeText = streamPayloadText(message.payload);
+      const streamedText = toSafeString(state.activeDraft.pendingText);
+      state.activeDraft.text = completeText || streamedText;
+      state.activeDraft.pendingText = "";
+      const lastSegment = state.activeDraft.segments?.[state.activeDraft.segments.length - 1];
+      const renderedSegmentText = (state.activeDraft.segments || [])
+        .map((segment) => segment.text || "")
+        .join("");
+      if (lastSegment && completeText && renderedSegmentText.length < completeText.length) {
+        lastSegment.text = completeText;
+      }
       const usageModel = toSafeString(message.payload?.usage?.model).trim();
       if (usageModel) {
         state.lastUsageModel = usageModel;
@@ -2199,7 +2731,9 @@ async function initializeBridge() {
       if (reasoning) {
         state.reasoningTrace = reasoning;
         state.activeDraft.reasoning = reasoning;
+        upsertActiveDraftThinking(reasoning);
       }
+      finishActiveDraftActivities();
       state.pendingApproval = null;
       state.pendingClarification = null;
       broadcastState();
@@ -2478,9 +3012,12 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
       id: randomUUID(),
       threadId: state.activeThreadId ?? activeGatewaySessionId,
       text: "",
+      pendingText: "",
       reasoning: "",
       segments: [{ reasoning: "", text: "" }],
+      activities: [],
     };
+    activeTurnHasStarted = false;
     broadcastState();
 
     const targetCwd = state.settings.cwd || process.cwd();
@@ -2489,8 +3026,7 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
     let sendError = null;
     try {
       console.log("[hermes-send] submitting prompt", activeGatewaySessionId, text);
-      await bridge.sendPrompt(activeGatewaySessionId, text);
-      await waitForSessionCompletion(activeGatewaySessionId);
+      await submitPromptAndWait(activeGatewaySessionId, text);
     } catch (err) {
       sendError = err;
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -2502,8 +3038,7 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
           state.status = "首次启动较慢，正在继续初始化...";
           broadcastState();
           await sleep(1500);
-          await bridge.sendPrompt(activeGatewaySessionId, text);
-          await waitForSessionCompletion(activeGatewaySessionId);
+          await submitPromptAndWait(activeGatewaySessionId, text);
           sendError = null;
         } catch (retryErr) {
           console.error("[hermes-send] Cold-start retry failed:", retryErr);
@@ -2523,8 +3058,7 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
             activeGatewaySessionId = String(session.session_id ?? "");
             state.activeThreadId = String(session.stored_session_id ?? "");
             console.log("[hermes-send] Retrying prompt submission on new session:", activeGatewaySessionId);
-            await bridge.sendPrompt(activeGatewaySessionId, text);
-            await waitForSessionCompletion(activeGatewaySessionId);
+            await submitPromptAndWait(activeGatewaySessionId, text);
             sendError = null;
           } catch (retryErr) {
             console.error("[hermes-send] Auto-recovery retry failed:", retryErr);
@@ -2547,6 +3081,10 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
 
     const completedAssistantText = toSafeString(state.activeDraft?.text).trim();
     const completedAssistantReasoning = toSafeString(state.activeDraft?.reasoning).trim();
+    const completedAssistantActivities = (state.activeDraft?.activities ?? []).map((activity) => ({
+      ...activity,
+      status: activity.status === "running" ? "complete" : activity.status,
+    }));
     await syncMessagesFromGateway();
     if (completedAssistantText) {
       const lastAssistantIndex = [...state.messages].reverse().findIndex(
@@ -2557,6 +3095,9 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
         if (!state.messages[normalIndex].reasoning && completedAssistantReasoning) {
           state.messages[normalIndex].reasoning = completedAssistantReasoning;
         }
+        if (completedAssistantActivities.length > 0) {
+          state.messages[normalIndex].activities = completedAssistantActivities;
+        }
       } else {
         state.messages = [
           ...state.messages,
@@ -2566,6 +3107,7 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
             text: completedAssistantText,
             reasoning: completedAssistantReasoning || null,
             turnId: null,
+            activities: completedAssistantActivities,
           },
         ];
       }
@@ -2581,7 +3123,7 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
       // intentional cancellations; they must not overwrite the new state with
       // a stale error from the previous send task.
       state.error = null;
-      state.status = "Ready.";
+      state.status = /用户已终止对话处理/.test(errorMessage) ? "已终止处理。" : "Ready.";
       state.activeDraft = null;
     } else {
       state.error = errorMessage;
@@ -3188,7 +3730,13 @@ ipcMain.handle("hermes:respondApproval", async (_event, choice) => {
   const approval = state.pendingApproval;
   const sessionId = approval?.sessionId || activeGatewaySessionId || state.activeThreadId;
   if (bridge && sessionId) {
-    const cmd = choice === "approve" ? "/approve" : "/deny";
+    const commandByChoice = {
+      once: "/approve",
+      session: "/approve session",
+      always: "/approve always",
+      deny: "/deny",
+    };
+    const cmd = commandByChoice[choice] || "/deny";
     try {
       await bridge.execSlash(sessionId, cmd);
     } catch (err) {
@@ -3196,7 +3744,7 @@ ipcMain.handle("hermes:respondApproval", async (_event, choice) => {
     }
   }
   state.pendingApproval = null;
-  state.status = choice === "approve" ? "已批准安全授权，继续处理中..." : "已拒绝授权申请。";
+  state.status = choice === "deny" ? "已拒绝授权申请。" : "已批准安全授权，继续处理中...";
   broadcastState();
   return state;
 });
@@ -3288,13 +3836,12 @@ function getGitBranch(dirPath) {
 
 ipcMain.handle("hermes:stopMessage", async () => {
   const sessionId = activeGatewaySessionId || state.activeThreadId;
-  if (bridge && sessionId) {
-    try {
-      await bridge.cancelPrompt(sessionId);
-    } catch (e) {
-      console.error("Failed to send cancel prompt:", e);
-    }
-  }
+  activeTurnCancelRequested = true;
+  // Stop accepting late events immediately. The interrupt RPC can take a
+  // moment to return, but the UI should preserve the already-rendered trail
+  // and never let a final completion replace it during that window.
+  activeTurnHasStarted = false;
+
   if (activeSessionReject) {
     try {
       activeSessionReject(new Error("用户已终止对话处理。"));
@@ -3307,13 +3854,23 @@ ipcMain.handle("hermes:stopMessage", async () => {
     } catch {}
     activeSessionUnsubscribe = null;
   }
-  state.busy = false;
+
+  preserveInterruptedDraft();
   state.activeDraft = null;
+  state.busy = false;
   state.pendingClarification = null;
   state.pendingApproval = null;
   state.error = null;
   state.status = "已终止处理。";
   broadcastState();
+
+  if (bridge && sessionId) {
+    try {
+      await bridge.cancelPrompt(sessionId);
+    } catch (e) {
+      console.error("Failed to send cancel prompt:", e);
+    }
+  }
   return state;
 });
 

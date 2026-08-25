@@ -20,6 +20,17 @@ declare global {
     phase?: string | null;
     meta?: string;
     reasoning?: string | null;
+    activities?: HermesStreamActivity[];
+  };
+
+  type HermesStreamActivity = {
+    id: string;
+    kind: "context" | "thinking" | "narrative" | "tool" | "status" | "subagent" | "error";
+    label: string;
+    detail?: string;
+    status: "running" | "complete" | "error" | "info";
+    toolName?: string;
+    durationMs?: number;
   };
 
   type HermesSelectedFile = {
@@ -37,6 +48,7 @@ declare global {
     settings: {
       hermesBin: string;
       runtimeMode: "private" | "official";
+      yoloMode: boolean;
       model: string;
       cwd: string;
       defaultOutputDir?: string;
@@ -89,8 +101,10 @@ declare global {
       id: string;
       threadId: string;
       text: string;
+      pendingText?: string;
       reasoning?: string;
       segments?: Array<{ reasoning?: string; text?: string }>;
+      activities?: HermesStreamActivity[];
     } | null;
     busy: boolean;
     skills: Array<{ name: string; displayName?: string; description: string; path: string }>;
@@ -101,6 +115,7 @@ declare global {
       command: string;
       description: string;
       patternKey: string;
+      allowPermanent?: boolean;
     } | null;
     pendingClarification?: {
       sessionId: string;
@@ -129,7 +144,7 @@ declare global {
       onState: (handler: (state: HermesAppState) => void) => () => void;
       registerSkillFile: () => Promise<HermesAppState>;
       unregisterSkill: (path: string) => Promise<HermesAppState>;
-      respondApproval: (choice: "approve" | "deny") => Promise<HermesAppState>;
+      respondApproval: (choice: "once" | "session" | "always" | "deny") => Promise<HermesAppState>;
       respondClarification: (answer: string) => Promise<HermesAppState>;
     };
   }
