@@ -1515,10 +1515,10 @@ function App() {
   if (!state) {
     return (
       <div
-        className="shell"
+        className="shell startup-shell"
         style={{ "--sidebar-w": `${sidebarWidth}px` } as React.CSSProperties}
       >
-        <aside className="sidebar">
+        <aside className="sidebar startup-sidebar">
           <div className="sidebar-resizer" onMouseDown={startResizing} />
           <div className="brand">
             <div className="brand-main">
@@ -1530,16 +1530,37 @@ function App() {
               </div>
             </div>
           </div>
-          <div className="empty-state">
-            <strong>正在启动</strong>
-            <p>正在连接并启动本地深小统后台...</p>
+          <div className="startup-sidebar-status" role="status">
+            <span className="startup-sidebar-status-dot" aria-hidden="true" />
+            <div>
+              <strong>正在启动</strong>
+              <span>连接 Hermes Runtime</span>
+            </div>
           </div>
         </aside>
-        <main className="chat">
-          <div className="welcome-card">
-            <p className="eyebrow">Loading</p>
-            <h3>准备智能工作台控制台</h3>
-            <p>如果你是首次启动应用，连接本地进程需要几秒钟，请稍候。</p>
+        <main className="chat startup-chat">
+          <div className="startup-boot-panel" role="status" aria-live="polite" aria-busy="true">
+            <div className="startup-boot-mark" aria-hidden="true">
+              <span className="startup-boot-glow" />
+              <span className="startup-boot-ring startup-boot-ring-outer" />
+              <span className="startup-boot-ring startup-boot-ring-inner" />
+              <span className="startup-boot-ring-dot" />
+              <div className="startup-boot-logo">
+                <img src={szLogo} alt="" />
+              </div>
+            </div>
+            <div className="startup-boot-copy">
+              <p className="startup-loading-eyebrow">STATPILOT · DESKTOP WORKSPACE</p>
+              <h2>正在连接 Hermes</h2>
+              <p>正在启动本地智能运行时，准备你的工作台。</p>
+            </div>
+            <div className="startup-boot-loader" aria-hidden="true">
+              <span />
+            </div>
+            <div className="startup-boot-meta">
+              <span className="startup-boot-meta-dot" aria-hidden="true" />
+              <span>首次启动可能需要一点时间</span>
+            </div>
           </div>
         </main>
       </div>
