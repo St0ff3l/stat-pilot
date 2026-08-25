@@ -14,7 +14,7 @@ app.get("/api/health", async (_req, res) => {
   const skills = await listLocalSkills();
   res.json({
     ok: true,
-    service: "sz-gov-scope",
+    service: "stat-pilot",
     localSkillsDetected: skills.length,
   });
 });
