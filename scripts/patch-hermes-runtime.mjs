@@ -5,7 +5,8 @@ import os from "node:os";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDir, "..");
-const APP_NAME = "sz-gov-scope";
+const APP_NAME = "stat-pilot";
+const LEGACY_APP_NAMES = ["sz-gov-scope", "深小统"];
 const CHINESE_SENTINEL = "Return ONLY the title text in Chinese";
 const TITLE_PROMPT_ASSIGNMENT = /_TITLE_PROMPT\s*=\s*\([\s\S]*?\n\)\n/;
 const MODERN_LANGUAGE_RULE_ASSIGNMENT = /_LANGUAGE_RULE_MATCH_USER\s*=\s*["'][^"'\r\n]*["']/;
@@ -29,24 +30,24 @@ const localTitleGeneratorPath = path.join(
   "title_generator.py"
 );
 
-function getUserDataPath() {
+function getAppDataRoot() {
   const home = os.homedir();
   if (process.platform === "darwin") {
-    return path.join(home, "Library", "Application Support", APP_NAME);
+    return path.join(home, "Library", "Application Support");
   } else if (process.platform === "win32") {
-    return path.join(process.env.APPDATA || path.join(home, "AppData", "Roaming"), APP_NAME);
+    return process.env.APPDATA || path.join(home, "AppData", "Roaming");
   } else {
-    return path.join(process.env.XDG_CONFIG_HOME || path.join(home, ".config"), APP_NAME);
+    return process.env.XDG_CONFIG_HOME || path.join(home, ".config");
   }
 }
 
-const appSupportTitleGeneratorPath = path.join(
-  getUserDataPath(),
-  "hermes-runtime",
-  "hermes-agent",
-  "agent",
-  "title_generator.py"
-);
+function getUserDataPaths() {
+  return [...new Set([APP_NAME, ...LEGACY_APP_NAMES])].map((name) =>
+    path.join(getAppDataRoot(), name)
+  );
+}
+
+const activeAppUserDataPaths = getUserDataPaths();
 
 const localShellTargets = [
   {
@@ -54,11 +55,13 @@ const localShellTargets = [
     filePath: path.join(projectRoot, ".runtime", "hermes-agent", "tools", "environments", "local.py"),
     optional: false,
   },
-  {
-    label: "active app local terminal runtime",
-    filePath: path.join(getUserDataPath(), "hermes-runtime", "hermes-agent", "tools", "environments", "local.py"),
+  ...activeAppUserDataPaths.map((userDataPath, index) => ({
+    label: index === 0
+      ? "active app local terminal runtime"
+      : `legacy app local terminal runtime (${path.basename(userDataPath)})`,
+    filePath: path.join(userDataPath, "hermes-runtime", "hermes-agent", "tools", "environments", "local.py"),
     optional: true,
-  },
+  })),
 ];
 
 const patchTargets = [
@@ -67,11 +70,13 @@ const patchTargets = [
     filePath: localTitleGeneratorPath,
     optional: false,
   },
-  {
-    label: "active app runtime",
-    filePath: appSupportTitleGeneratorPath,
+  ...activeAppUserDataPaths.map((userDataPath, index) => ({
+    label: index === 0
+      ? "active app runtime"
+      : `legacy app runtime (${path.basename(userDataPath)})`,
+    filePath: path.join(userDataPath, "hermes-runtime", "hermes-agent", "agent", "title_generator.py"),
     optional: true,
-  },
+  })),
 ];
 
 const utf8DecodeTargets = [
