@@ -1,4 +1,4 @@
-# sz-gov-scope
+# StatPilot（深小统）
 
 A desktop Hermes client for Shenzhen government intelligence work, built with Electron and a Hermes runtime bridge.
 

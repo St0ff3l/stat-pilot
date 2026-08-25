@@ -1400,7 +1400,7 @@ function App() {
       if (rawCwd) {
         const parts = rawCwd.split(/[/\\]/).filter(Boolean);
         const name = parts.length > 0 ? parts[parts.length - 1] : "";
-        if (name && name !== "sz-gov-scope") {
+        if (name && name !== "sz-gov-scope" && name !== "stat-pilot") {
           folderName = name;
         }
       }

@@ -1,14 +1,14 @@
 {
-  "name": "sz-gov-scope",
+  "name": "stat-pilot",
   "private": true,
   "version": "0.1.11",
   "description": "面向深圳市统计政务工作的本地智能工作台，支持统计信息采集、数据分析、来源核验与公文起草。",
   "author": {
     "name": "深小统",
     "email": "st0ff3l@users.noreply.github.com",
-    "url": "https://github.com/St0ff3l/sz-gov-scope"
+    "url": "https://github.com/St0ff3l/stat-pilot"
   },
-  "homepage": "https://github.com/St0ff3l/sz-gov-scope",
+  "homepage": "https://github.com/St0ff3l/stat-pilot",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
@@ -129,7 +129,7 @@
       "target": [
         "dmg"
       ],
-      "artifactName": "${productName}-${version}-macOS-${arch}.${ext}",
+      "artifactName": "stat-pilot-${version}-macOS-${arch}.${ext}",
       "category": "public.app-category.productivity",
       "identity": "-",
       "hardenedRuntime": false
@@ -138,7 +138,7 @@
       "target": [
         "nsis"
       ],
-      "artifactName": "${productName}-${version}-Windows-${arch}.${ext}"
+      "artifactName": "stat-pilot-${version}-Windows-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -150,7 +150,7 @@
       "target": [
         "deb"
       ],
-      "artifactName": "${productName}-${version}-Linux-${arch}.${ext}",
+      "artifactName": "stat-pilot-${version}-Linux-${arch}.${ext}",
       "category": "Utility",
       "packageCategory": "utils",
       "synopsis": "深圳市统计局智能工作台",

@@ -6,8 +6,9 @@ This file captures migrated project context from a prior agent conversation and 
 
 ## Project
 
-- Name: `sz-gov-scope`
-- Path: `/Users/stoffel/CodeFile/sz-gov-scope`
+- Name: `StatPilot（深小统）`
+- Repository: `stat-pilot`
+- Path: `/Users/stoffel/CodeFile/stat-pilot`
 - Goal: build a desktop Hermes client for Shenzhen government intelligence work with a chat-style UI and conversation history.
 
 ## Decisions already made

@@ -10,8 +10,8 @@
 
 2. **内置索引优先准则**：
    - Agent 在需要查找或确定目标单位的官网及栏目地址时，**必须优先查阅本地内置数据文件**：
-     - [`src/data/china_gov_websites.json`](file:///Users/stoffel/CodeFile/sz-gov-scope/src/data/china_gov_websites.json)
-     - [`src/data/china_stats_websites.json`](file:///Users/stoffel/CodeFile/sz-gov-scope/src/data/china_stats_websites.json)
+     - [`src/data/china_gov_websites.json`](file:///Users/stoffel/CodeFile/stat-pilot/src/data/china_gov_websites.json)
+     - [`src/data/china_stats_websites.json`](file:///Users/stoffel/CodeFile/stat-pilot/src/data/china_stats_websites.json)
    - 严禁随意凭空猜测未验证的政府网站 URL。
 
 ## 铁律二：数据直连与来源追溯
