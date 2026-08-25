@@ -114,29 +114,6 @@ function MessageBody({ role, text }: { role: HermesChatMessage["role"]; text: st
   );
 }
 
-function TraceBlock({ text, open = false, title = "思考过程" }: { text: string; open?: boolean; title?: string }) {
-  const safeText = text ?? "";
-  const detailsRef = useRef<HTMLDetailsElement | null>(null);
-
-  useEffect(() => {
-    if (detailsRef.current) {
-      detailsRef.current.open = open;
-    }
-  }, [open]);
-
-  if (!safeText.trim()) return null;
-  return (
-    <details ref={detailsRef} className="trace-block" open={open}>
-      <summary>{title}</summary>
-      <div className="message-markdown">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-          {safeText}
-        </ReactMarkdown>
-      </div>
-    </details>
-  );
-}
-
 function BusyOverlay({ title, detail, elapsedSeconds }: { title: string; detail: string; elapsedSeconds: number }) {
   return (
     <div className="busy-overlay" role="status" aria-live="polite" aria-busy="true">
@@ -416,6 +393,203 @@ function formatFileSize(size?: number): string {
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
   return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function StreamActivityGlyph({ activity }: { activity: HermesStreamActivity }) {
+  const isBash = activity.label === "Bash";
+  const isRead = activity.label === "Read";
+  const isBrowse = activity.label === "Browse";
+  const isSkillView = activity.label === "Skill View" || activity.label === "技能视图";
+  const isPlan = activity.label === "Plan" || activity.label === "计划";
+  const isThink = activity.kind === "thinking" || activity.label === "Think";
+
+  return (
+    <span className="stream-activity-glyph" aria-hidden="true">
+      <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        {isThink ? (
+          <>
+            <path d="M6.1 8.3a3.2 3.2 0 1 1 5.8 0c-.6.7-.9 1.4-1 2.5H7.1c-.1-1.1-.4-1.8-1-2.5Z" />
+            <path d="M7.3 12.2h3.4M7.7 14.2h2.6" />
+          </>
+        ) : isSkillView ? (
+          <>
+            <path d="m10.8 2.4.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" />
+            <path d="m5.2 8.6.55 1.45 1.45.55-1.45.55-.55 1.45-.55-1.45-1.45-.55 1.45-.55.55-1.45Z" />
+            <path d="m8.5 13 2.6-2.6" />
+          </>
+        ) : isPlan ? (
+          <>
+            <rect x="4" y="3.5" width="10" height="12" rx="1.5" />
+            <path d="M7 3.5v-1h4v1" />
+            <path d="m6.2 7.5.9.9 1.5-1.7M10 7.5h2.2" />
+            <path d="m6.2 11 .9.9 1.5-1.7M10 11h2.2" />
+          </>
+        ) : activity.kind === "narrative" ? (
+          <>
+            <rect x="3" y="3" width="12" height="12" rx="2" />
+            <path d="M5.5 6.5h7M5.5 9h7M5.5 11.5h4.5" />
+          </>
+        ) : activity.kind === "context" ? (
+          <>
+            <rect x="3" y="3" width="12" height="12" rx="1.5" />
+            <path d="M5.5 6.2h7M5.5 9h7M5.5 11.8h4.5" />
+          </>
+        ) : activity.kind === "error" ? (
+          <>
+            <circle cx="9" cy="9" r="6.4" />
+            <path d="M9 5.6v4.2M9 12.6v.1" />
+          </>
+        ) : isBash ? (
+          <>
+            <path d="m4.5 4.4 4.3 4.6-4.3 4.6M10.8 13.6h2.8" />
+          </>
+        ) : isRead ? (
+          <>
+            <rect x="3" y="3" width="12" height="12" rx="1.2" />
+            <path d="m4.2 7.2 6.6 6.6M4.2 4.5l9.3 9.3M7.4 3.8l6.8 6.8" />
+          </>
+        ) : isBrowse ? (
+          <>
+            <circle cx="9" cy="9" r="6.4" />
+            <circle cx="9" cy="9" r="2" />
+            <path d="M9 1.7v2M9 14.3v2M1.7 9h2M14.3 9h2" />
+          </>
+        ) : activity.kind === "subagent" ? (
+          <>
+            <circle cx="5" cy="9" r="1.7" />
+            <circle cx="13" cy="5" r="1.7" />
+            <circle cx="13" cy="13" r="1.7" />
+            <path d="m6.5 8.2 4.8-2.4M6.5 9.8l4.8 2.4" />
+          </>
+        ) : (
+          <rect x="3" y="3" width="12" height="12" rx="1.5" />
+        )}
+      </svg>
+    </span>
+  );
+}
+
+function ThinkingActivityRow({ activity, detail }: { activity: HermesStreamActivity; detail: string }) {
+  const isComplete = activity.status === "complete";
+  const [expanded, setExpanded] = useState(() => !isComplete);
+  const canToggle = isComplete && Boolean(detail.trim());
+
+  return (
+    <div className={`stream-activity-row ${activity.status} thinking${expanded ? " expanded" : " collapsed"}`}>
+      <button
+        type="button"
+        className="stream-activity-thinking-toggle"
+        disabled={!canToggle}
+        aria-expanded={canToggle ? expanded : undefined}
+        aria-label={`${activity.label} · ${detail}`}
+        onClick={() => {
+          if (canToggle) {
+            setExpanded((current) => !current);
+          }
+        }}
+      >
+        <StreamActivityGlyph activity={activity} />
+        <span className="stream-activity-label">{activity.label}</span>
+        <span className="stream-activity-separator" aria-hidden="true">·</span>
+        {!isComplete ? (
+          <span className="stream-activity-thinking-detail">{detail}</span>
+        ) : (
+          expanded ? null : <span className="stream-activity-thinking-collapsed">已完成</span>
+        )}
+        {activity.status === "running" ? (
+          <span className="stream-activity-state" aria-label="进行中">
+            <span className="stream-activity-spinner" aria-hidden="true" />
+          </span>
+        ) : canToggle ? (
+          <span className="stream-activity-thinking-chevron" aria-hidden="true">
+            <svg viewBox="0 0 16 16" focusable="false">
+              <path d={expanded ? "m3.5 9.5 4.5-4 4.5 4" : "m3.5 6.5 4.5 4 4.5-4"} />
+            </svg>
+          </span>
+        ) : null}
+      </button>
+      {isComplete && expanded ? (
+        <div className="stream-activity-thinking-body">{detail}</div>
+      ) : null}
+    </div>
+  );
+}
+
+function StreamActivityTimeline({
+  activities,
+  live = false,
+  interrupted = false,
+}: {
+  activities: HermesStreamActivity[];
+  live?: boolean;
+  interrupted?: boolean;
+}) {
+  const visibleActivities = activities.slice(-80);
+  if (visibleActivities.length === 0 && !interrupted) return null;
+
+  return (
+    <div className={`stream-activity-feed ${live ? "live" : ""}`} role="list" aria-label="智能体活动流" aria-live={live ? "polite" : undefined}>
+      {visibleActivities.map((activity) => {
+        const detail = activity.detail || (
+          activity.status === "running"
+            ? "处理中…"
+            : activity.status === "error"
+              ? "执行失败"
+              : "已完成"
+        );
+        const duration = typeof activity.durationMs === "number"
+          ? ` · ${(activity.durationMs / 1000).toFixed(activity.durationMs < 10_000 ? 1 : 0)}s`
+          : "";
+        const isNarrative = activity.kind === "narrative";
+        const isThinking = activity.kind === "thinking";
+
+        if (isThinking) {
+          return (
+            <ThinkingActivityRow
+              key={`${activity.id}:${activity.status}`}
+              activity={activity}
+              detail={detail}
+            />
+          );
+        }
+
+        return (
+          <div
+            key={activity.id}
+            className={`stream-activity-row ${activity.status}${isThinking ? " thinking" : ""}${isNarrative ? " narrative" : ""}`}
+            role="listitem"
+            aria-label={`${activity.label} · ${detail}${duration}`}
+          >
+            <StreamActivityGlyph activity={activity} />
+            {isNarrative ? (
+              <div className="stream-activity-narrative">
+                <MessageBody role="assistant" text={detail} />
+              </div>
+            ) : (
+              <>
+                <span className="stream-activity-label">{activity.label}</span>
+                <span className="stream-activity-separator" aria-hidden="true">·</span>
+                <span className="stream-activity-detail">{detail}</span>
+                {duration ? <span className="stream-activity-duration">{duration}</span> : null}
+                {activity.status === "running" || activity.status === "error" ? (
+                  <span className="stream-activity-state" aria-label={activity.status === "running" ? "进行中" : "失败"}>
+                    {activity.status === "running" ? <span className="stream-activity-spinner" aria-hidden="true" /> : "×"}
+                  </span>
+                ) : null}
+              </>
+            )}
+          </div>
+        );
+      })}
+      {interrupted ? (
+        <div className="stream-activity-interrupted" role="status" aria-label="本次处理已终止">
+          <span className="stream-activity-interrupted-line" aria-hidden="true" />
+          <span>本次处理已终止</span>
+          <span className="stream-activity-interrupted-line" aria-hidden="true" />
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function App() {
@@ -723,6 +897,7 @@ function App() {
   const [draftSettings, setDraftSettings] = useState<HermesAppState["settings"]>({
     hermesBin: "hermes",
     runtimeMode: "private",
+    yoloMode: true,
     model: "",
     cwd: "",
     defaultOutputDir: "output",
@@ -1815,17 +1990,20 @@ function App() {
 
                   // Assistant turn group
                   const historyMsgs = group.messages;
-                  const activeSegments = isThisGroupStreaming
-                    ? (state?.activeDraft?.segments && state.activeDraft.segments.length > 0
-                        ? state.activeDraft.segments
-                        : [{ reasoning: state?.activeDraft?.reasoning, text: state?.activeDraft?.text }])
-                    : [];
-
-                  // Extract digest items from final text if available
-                  let fullTurnAnswerText = isThisGroupStreaming
-                    ? (state?.activeDraft?.text || "")
-                    : (historyMsgs.length > 0 ? (historyMsgs[historyMsgs.length - 1].text?.trim() || "") : "");
+                  // The official UI keeps the process trail above one final
+                  // answer. Reasoning is represented by Think activities, not
+                  // rendered again as a second block in the answer body.
+                  const answerTexts = (isThisGroupStreaming
+                    ? [state?.activeDraft?.text?.trim() || ""]
+                    : historyMsgs.map((message) => message.text?.trim() || "")
+                  ).filter((text, index, texts) => text.length > 0 && (index === 0 || text !== texts[index - 1]));
+                  const fullTurnAnswerText = answerTexts.join("\n\n").trim();
                   const digestItems = extractDigestItems(fullTurnAnswerText);
+                  const activityItems = [
+                    ...historyMsgs.flatMap((message) => message.activities ?? []),
+                    ...(isThisGroupStreaming ? (state?.activeDraft?.activities ?? []) : []),
+                  ];
+                  const isInterrupted = historyMsgs.some((message) => message.meta === "interrupted");
 
                   return (
                     <article key={group.id} className={`bubble assistant ${isThisGroupStreaming ? "streaming" : ""}`}>
@@ -1833,50 +2011,15 @@ function App() {
                         <strong>深小统</strong>
                       </div>
 
-                      {/* Chronological Interleaved rendering: 思考一段 -> 输出/动作一段 */}
-                      {historyMsgs.map((m, idx) => {
-                        const isLastHistoryMsg = idx === historyMsgs.length - 1;
+                      <StreamActivityTimeline
+                        activities={activityItems}
+                        live={isThisGroupStreaming}
+                        interrupted={isInterrupted}
+                      />
 
-                        return (
-                          <React.Fragment key={m.id || idx}>
-                            {/* 思考一段 */}
-                            {m.reasoning?.trim() ? (
-                              <TraceBlock
-                                text={m.reasoning.trim()}
-                                open={isThisGroupStreaming && isLastHistoryMsg && activeSegments.length === 0}
-                                title={isThisGroupStreaming && isLastHistoryMsg && activeSegments.length === 0 ? "思考中…" : "思考过程"}
-                              />
-                            ) : null}
-
-                            {/* 输出 / 动作一段 */}
-                            {m.text?.trim() ? (
-                              <MessageBody role="assistant" text={m.text.trim()} />
-                            ) : null}
-                          </React.Fragment>
-                        );
-                      })}
-
-                      {/* Real-time Streaming Active Draft Segments: 思考一段 -> 实时输出 */}
-                      {isThisGroupStreaming && activeSegments.map((seg, segIdx) => {
-                        const isLastSeg = segIdx === activeSegments.length - 1;
-                        const segReasoning = seg.reasoning?.trim() || "";
-                        const segText = seg.text || "";
-
-                        return (
-                          <React.Fragment key={segIdx}>
-                            {segReasoning ? (
-                              <TraceBlock
-                                text={segReasoning}
-                                open={isLastSeg}
-                                title={isLastSeg ? "思考中…" : "思考过程"}
-                              />
-                            ) : null}
-                            {segText ? (
-                              <MessageBody role="assistant" text={segText} />
-                            ) : null}
-                          </React.Fragment>
-                        );
-                      })}
+                      {answerTexts.map((text, index) => (
+                        <MessageBody key={`${group.id}-answer-${index}`} role="assistant" text={text} />
+                      ))}
 
                       {/* Streaming loading indicator while generating response */}
                       {isThisGroupStreaming ? (
@@ -1905,25 +2048,10 @@ function App() {
                     <div className="bubble-head">
                       <strong>深小统</strong>
                     </div>
-                    {((state.activeDraft.segments && state.activeDraft.segments.length > 0)
-                      ? state.activeDraft.segments
-                      : [{ reasoning: state.activeDraft.reasoning, text: state.activeDraft.text }]
-                    ).map((seg, segIdx, arr) => {
-                      const isLastSeg = segIdx === arr.length - 1;
-                      const segReasoning = seg.reasoning?.trim() || "";
-                      const segText = seg.text || "";
-
-                      return (
-                        <React.Fragment key={segIdx}>
-                          {segReasoning ? (
-                            <TraceBlock text={segReasoning} open={isLastSeg} title={isLastSeg ? "思考中…" : "思考过程"} />
-                          ) : null}
-                          {segText ? (
-                            <MessageBody role="assistant" text={segText} />
-                          ) : null}
-                        </React.Fragment>
-                      );
-                    })}
+                    <StreamActivityTimeline activities={state.activeDraft.activities ?? []} live />
+                    {state.activeDraft.text?.trim() ? (
+                      <MessageBody role="assistant" text={state.activeDraft.text.trim()} />
+                    ) : null}
                     <div className="streaming-loading-bar">
                       <span className="streaming-loading-dot" />
                       <span>
@@ -2020,16 +2148,32 @@ function App() {
                   <button
                     type="button"
                     className="composer-approval-btn approve"
-                    onClick={() => void window.hermesDesktop?.respondApproval?.("approve")}
+                    onClick={() => void window.hermesDesktop?.respondApproval?.("once")}
                   >
-                    ✓ 允许执行 (/approve)
+                    ✓ 本次允许
                   </button>
+                  <button
+                    type="button"
+                    className="composer-approval-btn session"
+                    onClick={() => void window.hermesDesktop?.respondApproval?.("session")}
+                  >
+                    ↻ 本会话允许
+                  </button>
+                  {state.pendingApproval.allowPermanent !== false ? (
+                    <button
+                      type="button"
+                      className="composer-approval-btn always"
+                      onClick={() => void window.hermesDesktop?.respondApproval?.("always")}
+                    >
+                      ✓ 始终允许
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="composer-approval-btn deny"
                     onClick={() => void window.hermesDesktop?.respondApproval?.("deny")}
                   >
-                    ✕ 拒绝并终止 (/deny)
+                    ✕ 拒绝
                   </button>
                 </div>
               </div>
@@ -2629,6 +2773,43 @@ function App() {
                         <option value="official">Hermes 官方模式</option>
                       </select>
                     </label>
+
+                    <div className={`yolo-setting-card ${draftSettings.yoloMode ? "enabled" : "disabled"}`}>
+                      <div className="yolo-setting-copy">
+                        <div className="yolo-setting-title">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M12 3 5 6v5c0 4.7 2.9 8.1 7 10 4.1-1.9 7-5.3 7-10V6l-7-3Z" />
+                            <path d="m9.2 12 1.8 1.8 3.9-4" />
+                          </svg>
+                          <strong>YOLO / 自动执行</strong>
+                          <span className={`yolo-setting-status ${draftSettings.yoloMode ? "on" : "off"}`}>
+                            {draftSettings.yoloMode ? "已开启" : "已关闭"}
+                          </span>
+                        </div>
+                        <p>
+                          {draftSettings.runtimeMode === "official"
+                            ? "应用到新建或恢复的 Hermes 会话。"
+                            : "启动私有 Hermes Runtime 前设置 HERMES_YOLO_MODE=1，减少普通命令的逐次确认。"}
+                          <br />
+                          即使开启，硬性安全规则仍可能要求授权，授权面板不会被静默跳过。
+                        </p>
+                      </div>
+                      <label className="yolo-toggle" title="切换 YOLO 自动执行模式">
+                        <input
+                          type="checkbox"
+                          checked={draftSettings.yoloMode}
+                          onChange={(event) =>
+                            setDraftSettings((current: HermesAppState["settings"]) => ({
+                              ...current,
+                              yoloMode: event.target.checked,
+                            }))
+                          }
+                        />
+                        <span className="yolo-toggle-track" aria-hidden="true">
+                          <span className="yolo-toggle-thumb" />
+                        </span>
+                      </label>
+                    </div>
 
                     <label>
                       Model (对话模型)
