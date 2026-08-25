@@ -2259,26 +2259,48 @@ function App() {
             ) : null}
 
             <div className="trae-composer-card">
+              {currentCwd && (
+                <div className="trae-workspace-selection" aria-label="已选择工作区">
+                  <span className="trae-workspace-selection-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+                    </svg>
+                  </span>
+                  <div className="trae-workspace-selection-copy">
+                    <span className="trae-workspace-selection-label">已选择工作区</span>
+                    <strong>{currentFolderName}</strong>
+                    <span className="trae-workspace-selection-path" title={currentCwd}>{currentCwd}</span>
+                  </div>
+                  {activeBranch && <span className="trae-workspace-selection-branch">⎇ {activeBranch}</span>}
+                </div>
+              )}
+
               {selectedAttachments.length > 0 && (
-                <div className="trae-attachment-list" aria-label="待提交文件">
-                  {selectedAttachments.map((file) => (
-                    <span key={file.path} className="trae-attachment-pill" title={file.path}>
-                      <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-                      </svg>
-                      <span className="trae-attachment-name">{file.name}</span>
-                      {formatFileSize(file.size) && <span className="trae-attachment-size">{formatFileSize(file.size)}</span>}
-                      <button
-                        type="button"
-                        className="trae-attachment-remove"
-                        onClick={() => removeAttachment(file.path)}
-                        title={`移除 ${file.name}`}
-                        aria-label={`移除 ${file.name}`}
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
+                <div className="trae-selected-files" aria-label="待提交文件">
+                  <div className="trae-selected-files-header">
+                    <span>已选择文件</span>
+                    <span>{selectedAttachments.length} 个</span>
+                  </div>
+                  <div className="trae-attachment-list">
+                    {selectedAttachments.map((file) => (
+                      <span key={file.path} className="trae-attachment-pill" title={file.path}>
+                        <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                        </svg>
+                        <span className="trae-attachment-name">{file.name}</span>
+                        {formatFileSize(file.size) && <span className="trae-attachment-size">{formatFileSize(file.size)}</span>}
+                        <button
+                          type="button"
+                          className="trae-attachment-remove"
+                          onClick={() => removeAttachment(file.path)}
+                          title={`移除 ${file.name}`}
+                          aria-label={`移除 ${file.name}`}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
               {selectedSkillTag && (

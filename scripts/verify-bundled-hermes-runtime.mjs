@@ -93,3 +93,31 @@ if (pythonCheck.error || pythonCheck.status !== 0) {
 console.log(
   `Bundled Hermes runtime verified for ${process.platform}: ${venvDir}; portable Python ${portablePythonPath}`
 );
+
+const localEnvironmentPath = path.join(
+  runtimeRoot,
+  "hermes-agent",
+  "tools",
+  "environments",
+  "local.py"
+);
+if (!(await exists(localEnvironmentPath))) {
+  throw new Error(`Bundled Hermes runtime is missing local.py: ${localEnvironmentPath}`);
+}
+
+const syntaxCheck = spawnSync(
+  portablePythonPath,
+  [
+    "-c",
+    "import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'), filename=sys.argv[1])",
+    localEnvironmentPath,
+  ],
+  { cwd: path.join(runtimeRoot, "hermes-agent"), encoding: "utf8" }
+);
+if (syntaxCheck.error || syntaxCheck.status !== 0) {
+  throw new Error(
+    `Bundled Hermes local.py syntax verification failed: ${syntaxCheck.error?.message || syntaxCheck.stderr?.trim() || `exit code ${syntaxCheck.status}`}`
+  );
+}
+
+console.log(`Bundled Hermes local.py syntax verified: ${localEnvironmentPath}`);
