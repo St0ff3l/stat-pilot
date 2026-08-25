@@ -2259,22 +2259,6 @@ function App() {
             ) : null}
 
             <div className="trae-composer-card">
-              {currentCwd && (
-                <div className="trae-workspace-selection" aria-label="已选择工作区">
-                  <span className="trae-workspace-selection-icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-                    </svg>
-                  </span>
-                  <div className="trae-workspace-selection-copy">
-                    <span className="trae-workspace-selection-label">已选择工作区</span>
-                    <strong>{currentFolderName}</strong>
-                    <span className="trae-workspace-selection-path" title={currentCwd}>{currentCwd}</span>
-                  </div>
-                  {activeBranch && <span className="trae-workspace-selection-branch">⎇ {activeBranch}</span>}
-                </div>
-              )}
-
               {selectedAttachments.length > 0 && (
                 <div className="trae-selected-files" aria-label="待提交文件">
                   <div className="trae-selected-files-header">

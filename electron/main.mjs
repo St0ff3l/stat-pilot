@@ -3914,7 +3914,8 @@ ipcMain.handle("hermes:selectWorkspaceFolder", async () => {
   state.settings = merged;
   await saveSettings(merged);
 
-  if (bridge) {
+  const activeBridge = bridge;
+  if (activeBridge) {
     activeGatewaySessionId = null;
     state.activeThreadId = null;
     state.activeThread = null;
@@ -3922,19 +3923,36 @@ ipcMain.handle("hermes:selectWorkspaceFolder", async () => {
     state.reasoningTrace = null;
     state.messages = [];
     state.activeDraft = null;
-    try {
-      await bridge.updateSettings(merged);
-      await refreshThreads();
-      await startNewConversation();
-    } catch (e) {
-      console.error("Failed to update bridge settings for new cwd:", e);
-    }
+    state.error = null;
+    state.status = "正在切换工作区…";
+  } else if (state.activeThread) {
+    state.activeThread = { ...state.activeThread, cwd: selectedPath };
   }
 
   broadcastState();
-  return {
+  const result = {
     cwd: selectedPath,
     folderName: path.basename(selectedPath),
     branch,
   };
+
+  // Return the folder selection immediately so the compact composer control
+  // can update without waiting for Hermes to restart. The bridge refresh runs
+  // in the background and publishes its final state when it is ready.
+  if (activeBridge) {
+    void (async () => {
+      try {
+        await activeBridge.updateSettings(merged);
+        await refreshThreads();
+        await startNewConversation();
+      } catch (error) {
+        state.error = error instanceof Error ? error.message : "切换工作区失败。";
+        state.status = state.error;
+        console.error("Failed to update bridge settings for new cwd:", error);
+      }
+      broadcastState();
+    })();
+  }
+
+  return result;
 });
