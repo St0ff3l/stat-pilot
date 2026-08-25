@@ -410,7 +410,6 @@ function StreamActivityGlyph({ activity }: { activity: HermesStreamActivity }) {
           <>
             <path d="M6.1 8.3a3.2 3.2 0 1 1 5.8 0c-.6.7-.9 1.4-1 2.5H7.1c-.1-1.1-.4-1.8-1-2.5Z" />
             <path d="M7.3 12.2h3.4M7.7 14.2h2.6" />
-            <path d="m13.4 2.4.35 1.1 1.1.35-1.1.35-.35 1.1-.35-1.1-1.1-.35 1.1-.35.35-1.1Z" />
           </>
         ) : isSkillView ? (
           <>
