@@ -8,6 +8,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 const SETTINGS_FILE = "settings.json";
 const RUNTIME_DIRNAME = "hermes-runtime";
+const RUNTIME_VERSION_FILE = ".stat-pilot-runtime-version";
 const OFFICIAL_HERMES_DIRNAME = ".hermes";
 const PORT_FLOOR = 9120;
 const PORT_CEILING = 9199;
@@ -67,6 +68,19 @@ function getRuntimeInstallDir() {
 
 function getRuntimeHomeDir() {
   return path.join(getRuntimeRoot(), "hermes-home");
+}
+
+function getRuntimeVersionPath(runtimeRoot = getRuntimeRoot()) {
+  return path.join(runtimeRoot, RUNTIME_VERSION_FILE);
+}
+
+async function isRuntimeVersionCurrent(runtimeRoot) {
+  const version = await fs.readFile(getRuntimeVersionPath(runtimeRoot), "utf8").catch(() => "");
+  return version.trim() === app.getVersion();
+}
+
+async function writeRuntimeVersion(runtimeRoot) {
+  await fs.writeFile(getRuntimeVersionPath(runtimeRoot), `${app.getVersion()}\n`, "utf8");
 }
 
 function getRuntimeEnvironmentDir(installDir = getRuntimeInstallDir()) {
@@ -1211,8 +1225,9 @@ async function ensureEmbeddedRuntimeInstalled({ force = false } = {}) {
   const installed =
     (await pathExists(runtimePython)) &&
     (await pathExists(runtimeEntryPoint));
+  const runtimeVersionCurrent = installed && (await isRuntimeVersionCurrent(runtimeRoot));
 
-  if (!installed || force) {
+  if (!installed || force || !runtimeVersionCurrent) {
     const sourceExists = await pathExists(sourceRoot);
     if (!sourceExists) {
       throw new Error(
@@ -1229,6 +1244,7 @@ async function ensureEmbeddedRuntimeInstalled({ force = false } = {}) {
   // runner's absolute interpreter path.
   await repairPortablePythonRuntime(runtimeRoot);
   await removeAppleDoubleFiles(runtimeRoot);
+  await writeRuntimeVersion(runtimeRoot);
 
   await fs.mkdir(getRuntimeHomeDir(), { recursive: true });
   if (process.platform !== "win32") {
