@@ -121,3 +121,29 @@ if (syntaxCheck.error || syntaxCheck.status !== 0) {
 }
 
 console.log(`Bundled Hermes local.py syntax verified: ${localEnvironmentPath}`);
+
+const tuiGatewayPath = path.join(
+  runtimeRoot,
+  "hermes-agent",
+  "tui_gateway",
+  "server.py"
+);
+if (!(await exists(tuiGatewayPath))) {
+  throw new Error(`Bundled Hermes runtime is missing tui_gateway/server.py: ${tuiGatewayPath}`);
+}
+
+const tuiGatewaySource = await fs.readFile(tuiGatewayPath, "utf8");
+if (
+  !tuiGatewaySource.includes("main_runtime={") ||
+  !tuiGatewaySource.includes('"api_key": getattr(agent, "api_key", None)') ||
+  !tuiGatewaySource.includes('status in {"complete", "interrupted"}') ||
+  !tuiGatewaySource.includes('raw if raw.strip() else "任务已被用户终止。"') ||
+  !tuiGatewaySource.includes('@method("session.auto_title")') ||
+  !tuiGatewaySource.includes("auto_title_session(")
+) {
+  throw new Error(
+    `Bundled Hermes TUI gateway is missing the active-runtime interrupted/restart-retry auto-title patch: ${tuiGatewayPath}. Run npm run hermes:patch.`
+  );
+}
+
+console.log(`Bundled Hermes TUI gateway auto-title patch verified for completed, interrupted, and restart-retry tasks: ${tuiGatewayPath}`);

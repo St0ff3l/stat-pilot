@@ -518,14 +518,12 @@ function ThinkingActivityRow({ activity, detail }: { activity: HermesStreamActiv
 function StreamActivityTimeline({
   activities,
   live = false,
-  interrupted = false,
 }: {
   activities: HermesStreamActivity[];
   live?: boolean;
-  interrupted?: boolean;
 }) {
   const visibleActivities = activities.slice(-80);
-  if (visibleActivities.length === 0 && !interrupted) return null;
+  if (visibleActivities.length === 0) return null;
 
   return (
     <div className={`stream-activity-feed ${live ? "live" : ""}`} role="list" aria-label="智能体活动流" aria-live={live ? "polite" : undefined}>
@@ -581,13 +579,18 @@ function StreamActivityTimeline({
           </div>
         );
       })}
-      {interrupted ? (
-        <div className="stream-activity-interrupted" role="status" aria-label="本次处理已终止">
-          <span className="stream-activity-interrupted-line" aria-hidden="true" />
-          <span>本次处理已终止</span>
-          <span className="stream-activity-interrupted-line" aria-hidden="true" />
-        </div>
-      ) : null}
+    </div>
+  );
+}
+
+function InterruptedTurnDivider() {
+  return (
+    <div className="interrupted-history">
+      <div className="stream-activity-interrupted" role="status" aria-label="本次处理已终止">
+        <span className="stream-activity-interrupted-line" aria-hidden="true" />
+        <span>本次处理已终止</span>
+        <span className="stream-activity-interrupted-line" aria-hidden="true" />
+      </div>
     </div>
   );
 }
@@ -623,6 +626,7 @@ function App() {
     }
   });
   const [isFolderMenuOpen, setIsFolderMenuOpen] = useState(false);
+  const [workspaceSelectionLocked, setWorkspaceSelectionLocked] = useState(false);
   const folderMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -672,6 +676,16 @@ function App() {
       }
       return next;
     });
+  }
+
+  function isWorkspaceLocked() {
+    return workspaceSelectionLocked || Boolean(
+      state?.settings.cwd ||
+      state?.activeThreadId ||
+      state?.messages.length ||
+      state?.activeDraft ||
+      state?.busy
+    );
   }
 
   function handleClearSelectedDigestItems() {
@@ -765,6 +779,10 @@ function App() {
     focusEditor();
   }
 
+  function handleQuickSuggestionUse(skillName: string) {
+    setStylePickerSkillName(skillName);
+  }
+
   function handleSkillPageUse(skillName: string) {
     if (REPORT_SKILL_NAMES.has(skillName)) {
       setStylePickerSkillName(skillName);
@@ -785,7 +803,9 @@ function App() {
 
     const prompt = skillName === "info_digest_html"
       ? `请生成动态信息汇总 HTML 报表，使用“${style.label}”风格（template_style: ${style.id}）。采集或整理统计、政务和信息化动态，输出可打开的 HTML 文件；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接。`
-      : `请采集最近 7 天统计信息化、数字化、人工智能和大数据相关动态，生成统计信息化动态周报 HTML，使用“${style.label}”风格（template_style: ${style.id}）；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接。`;
+      : skillName === "weekly_report"
+        ? `请采集最近 7 天统计信息化、数字化、人工智能和大数据相关动态，生成统计信息化动态周报 HTML，使用“${style.label}”风格（template_style: ${style.id}）；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接。`
+        : `${BUILTIN_SKILL_START_PROMPTS[skillName] || "请使用当前技能完成我的任务，并为所有事实性内容附发布单位或网站全称、文章来源/页面完整标题和具体原文链接。"}\n\n请按“${style.label}”风格组织最终输出：${style.description}`;
 
     setStylePickerSkillName(null);
     startSkillTask(skillName, prompt);
@@ -823,10 +843,11 @@ function App() {
   }
 
   async function handleSelectWorkspaceFolder() {
-    if (!window.hermesDesktop) return;
+    if (!window.hermesDesktop || isWorkspaceLocked()) return;
     setIsFolderMenuOpen(false);
     const result = await window.hermesDesktop.selectWorkspaceFolder();
     if (result) {
+      setWorkspaceSelectionLocked(true);
       setActiveBranch(result.branch);
       const newEntry = { path: result.cwd, name: result.folderName };
       setRecentFolders((prev) => {
@@ -841,9 +862,11 @@ function App() {
   }
 
   async function handleSwitchWorkspaceFolder(folderPath: string) {
-    if (!window.hermesDesktop) return;
+    if (!window.hermesDesktop || isWorkspaceLocked()) return;
     setIsFolderMenuOpen(false);
+    setActiveBranch(null);
     const nextState = await window.hermesDesktop.updateSettings({ cwd: folderPath });
+    setWorkspaceSelectionLocked(true);
     setState(nextState);
   }
 
@@ -1143,6 +1166,9 @@ function App() {
 
     setActiveMainTab("chat");
     setSelectedAttachments([]);
+    setWorkspaceSelectionLocked(false);
+    setIsFolderMenuOpen(false);
+    setActiveBranch(null);
     setIsThreadLoading(true);
     try {
       const nextState = await window.hermesDesktop.newThread();
@@ -1252,8 +1278,12 @@ function App() {
     }
 
     setSettingsBusyText("正在保存配置并应用...");
+    const workspaceChanged = draftSettings.cwd !== state?.settings.cwd;
     try {
       const nextState = await window.hermesDesktop.updateSettings(draftSettings);
+      if (workspaceChanged) {
+        setWorkspaceSelectionLocked(true);
+      }
       setState(nextState);
       setSettingsOpen(false);
     } catch (e) {
@@ -1389,7 +1419,30 @@ function App() {
   const currentCwd = state?.activeThread?.cwd || state?.settings.cwd || "";
   const currentFolderName = currentCwd ? currentCwd.split(/[/\\]/).filter(Boolean).pop() || currentCwd : "选择项目";
 
-  const orderedThreads = [...(state?.threads ?? [])].sort((a, b) => b.updatedAt - a.updatedAt);
+  const activeThread = state?.activeThread ?? null;
+  const activeMessages = state?.messages ?? EMPTY_MESSAGES;
+  const activeThreadTitle = activeMessages.find((message) => message.role === "user")?.text?.trim() || "";
+  const orderedThreads = useMemo(() => {
+    const threads = [...(state?.threads ?? [])];
+    const activeId = state?.activeThreadId;
+    if (activeId && activeThread && activeThreadTitle) {
+      const activeIndex = threads.findIndex((thread) => thread.id === activeId);
+      if (activeIndex === -1) {
+        threads.push({
+          ...activeThread,
+          name: activeThread.name || activeThreadTitle,
+          preview: activeThread.preview || activeThreadTitle,
+        });
+      } else if (!threads[activeIndex].name && !threads[activeIndex].preview) {
+        threads[activeIndex] = {
+          ...threads[activeIndex],
+          name: activeThreadTitle,
+          preview: activeThreadTitle,
+        };
+      }
+    }
+    return threads.sort((a, b) => b.updatedAt - a.updatedAt);
+  }, [activeThread, activeThreadTitle, state?.activeThreadId, state?.threads]);
   const groupedThreads = useMemo(() => {
     const groups: Array<{ folderName: string; threads: HermesThreadSummary[] }> = [];
     const map = new Map<string, HermesThreadSummary[]>();
@@ -1421,9 +1474,16 @@ function App() {
 
     return groups;
   }, [orderedThreads]);
-  const activeThread = state?.activeThread ?? null;
   const activeName = activeThread?.name || activeThread?.preview || "新对话";
-  const activeMessages = state?.messages ?? EMPTY_MESSAGES;
+  const hasUnresolvedHistoricalTurn = Boolean(
+    activeMessages.length > 0 &&
+      activeMessages[activeMessages.length - 1]?.role === "user" &&
+      !state?.activeDraft &&
+      !state?.busy &&
+      !state?.error &&
+      !isThreadLoading &&
+      state?.status === "Ready."
+  );
 
   const renderTurnGroups = useMemo(() => {
     interface RenderTurnGroup {
@@ -1945,7 +2005,7 @@ function App() {
                       <button
                         type="button"
                         className="trae-suggestion-card"
-                        onClick={() => startSkillTask("weekly_report", BUILTIN_SKILL_START_PROMPTS.weekly_report)}
+                        onClick={() => handleQuickSuggestionUse("weekly_report")}
                       >
                         <span className="icon">📊</span>
                         <div className="text-content">
@@ -1957,7 +2017,7 @@ function App() {
                       <button
                         type="button"
                         className="trae-suggestion-card"
-                        onClick={() => startSkillTask("price_index_gdp_impact", BUILTIN_SKILL_START_PROMPTS.price_index_gdp_impact)}
+                        onClick={() => handleQuickSuggestionUse("price_index_gdp_impact")}
                       >
                         <span className="icon">📈</span>
                         <div className="text-content">
@@ -1969,7 +2029,7 @@ function App() {
                       <button
                         type="button"
                         className="trae-suggestion-card"
-                        onClick={() => startSkillTask("source_verification", BUILTIN_SKILL_START_PROMPTS.source_verification)}
+                        onClick={() => handleQuickSuggestionUse("source_verification")}
                       >
                         <span className="icon">🔎</span>
                         <div className="text-content">
@@ -1981,7 +2041,7 @@ function App() {
                       <button
                         type="button"
                         className="trae-suggestion-card"
-                        onClick={() => startSkillTask("gov_official_document_drafting", BUILTIN_SKILL_START_PROMPTS.gov_official_document_drafting)}
+                        onClick={() => handleQuickSuggestionUse("gov_official_document_drafting")}
                       >
                         <span className="icon">📝</span>
                         <div className="text-content">
@@ -2027,7 +2087,8 @@ function App() {
                   const isInterrupted = historyMsgs.some((message) => message.meta === "interrupted");
 
                   return (
-                    <article key={group.id} className={`bubble assistant ${isThisGroupStreaming ? "streaming" : ""}`}>
+                    <React.Fragment key={group.id}>
+                      <article className={`bubble assistant ${isThisGroupStreaming ? "streaming" : ""}`}>
                       <div className="bubble-head">
                         <strong>深小统</strong>
                       </div>
@@ -2035,7 +2096,6 @@ function App() {
                       <StreamActivityTimeline
                         activities={activityItems}
                         live={isThisGroupStreaming}
-                        interrupted={isInterrupted}
                       />
 
                       {answerTexts.map((text, index) => (
@@ -2060,9 +2120,15 @@ function App() {
                         onToggleItem={handleToggleDigestItem}
                         onToggleAll={handleToggleAllDigestItems}
                       />
-                    </article>
+                      </article>
+                      {isInterrupted ? <InterruptedTurnDivider /> : null}
+                    </React.Fragment>
                   );
                 })}
+
+                {hasUnresolvedHistoricalTurn ? (
+                  <InterruptedTurnDivider />
+                ) : null}
 
                 {!isHermesMissing && state?.activeDraft && (renderTurnGroups.length === 0 || renderTurnGroups[renderTurnGroups.length - 1].role !== "assistant") ? (
                   <article className="bubble assistant streaming">
@@ -2351,6 +2417,7 @@ function App() {
                     {selectedAttachments.length > 0 && <span className="trae-attach-count">{selectedAttachments.length}</span>}
                   </button>
 
+                  {!isWorkspaceLocked() && (
                   <div ref={folderMenuRef} className="relative">
                   <button
                     type="button"
@@ -2436,6 +2503,7 @@ function App() {
                     </div>
                     )}
                   </div>
+                  )}
                 </div>
 
                 {/* Right Side: Send or Stop Button */}
@@ -2718,6 +2786,7 @@ function App() {
                       Workspace CWD (工作区路径)
                       <input
                         value={draftSettings.cwd}
+                        disabled={isWorkspaceLocked()}
                         onChange={(event) =>
                           setDraftSettings((current: HermesAppState["settings"]) => ({
                             ...current,
@@ -2726,6 +2795,7 @@ function App() {
                         }
                         placeholder="/path/to/workspace"
                       />
+                      {isWorkspaceLocked() && <small className="field-hint">当前对话已绑定工作区，请点击“新建任务”后再更换。</small>}
                     </label>
 
                     <label>
@@ -3417,6 +3487,7 @@ function ReportStylePicker({
   onSelect: (styleId: string) => void;
 }) {
   const skillDisplayName = BUILTIN_SKILL_DISPLAY_NAMES[skillName] || "HTML 报表技能";
+  const isReportSkill = REPORT_SKILL_NAMES.has(skillName);
 
   return (
     <div className="modal-backdrop report-style-picker-backdrop" onClick={onCancel}>
@@ -3425,7 +3496,10 @@ function ReportStylePicker({
           <div>
             <p className="eyebrow">先选输出风格</p>
             <h3>{skillDisplayName}</h3>
-            <p>选择后会自动进入对话输入框，技能会按该风格生成 HTML 报表。</p>
+            <p>
+              选择后会自动进入对话输入框，技能会按该风格组织输出
+              {isReportSkill ? "并生成 HTML 报表" : ""}。
+            </p>
           </div>
           <button type="button" className="report-style-picker-close" onClick={onCancel} aria-label="关闭风格选择">
             ×

@@ -502,9 +502,15 @@ async function copySkillFolderAsUtf8(sourceDir, targetDir) {
 }
 
 let threadCwdMap = {};
+let interruptedTurnMap = {};
+let interruptedTurnWriteQueue = Promise.resolve();
 
 function getThreadCwdsPath() {
   return path.join(app.getPath("userData"), "thread_cwds.json");
+}
+
+function getInterruptedTurnsPath() {
+  return path.join(app.getPath("userData"), "interrupted_turns.json");
 }
 
 async function loadThreadCwds() {
@@ -514,6 +520,244 @@ async function loadThreadCwds() {
   } catch {
     threadCwdMap = {};
   }
+}
+
+function normalizeInterruptedAutoTitle(input, fallbackUserMessage, fallbackAssistantResponse) {
+  const source = input && typeof input === "object" ? input : {};
+  const userMessage = toSafeString(
+    source.userMessage || source.user_message || fallbackUserMessage
+  ).trim();
+  if (!userMessage) {
+    return null;
+  }
+
+  const assistantResponse =
+    toSafeString(
+      source.assistantResponse || source.assistant_response || fallbackAssistantResponse
+    ).trim() || "任务已被用户终止。";
+  const pending = source.pending === false ? false : true;
+  return {
+    pending,
+    userMessage,
+    assistantResponse,
+    ...(Number(source.completedAt) > 0 ? { completedAt: Number(source.completedAt) } : {}),
+  };
+}
+
+function normalizeInterruptedTurnRecord(threadId, input) {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const message = input.message && typeof input.message === "object"
+    ? input.message
+    : input;
+  const id = toSafeString(message.id || input.id).trim();
+  if (!id) {
+    return null;
+  }
+
+  const activities = Array.isArray(message.activities)
+    ? message.activities
+      .filter((activity) => activity && typeof activity === "object")
+      .map((activity) => ({
+        id: toSafeString(activity.id).trim() || randomUUID(),
+        kind: toSafeString(activity.kind).trim() || "status",
+        label: toSafeString(activity.label).trim() || "Activity",
+        detail: toSafeString(activity.detail),
+        status: toSafeString(activity.status).trim() || "complete",
+        ...(toSafeString(activity.toolName).trim()
+          ? { toolName: toSafeString(activity.toolName).trim() }
+          : {}),
+        ...(typeof activity.durationMs === "number" ? { durationMs: activity.durationMs } : {}),
+      }))
+    : [];
+
+  const userIndex = Number(input.anchorUserIndex);
+  const autoTitle = normalizeInterruptedAutoTitle(
+    input.autoTitle,
+    input.anchorUserText || toSafeString(message.text),
+    message.text
+  );
+  return {
+    id,
+    threadId: String(threadId),
+    createdAt: Number(input.createdAt) || Date.now(),
+    anchorUserIndex: Number.isInteger(userIndex) && userIndex >= 0 ? userIndex : null,
+    anchorUserText: toSafeString(input.anchorUserText),
+    message: {
+      id,
+      role: "assistant",
+      text: toSafeString(message.text),
+      reasoning: toSafeString(message.reasoning).trim() || null,
+      turnId: null,
+      meta: "interrupted",
+      activities,
+    },
+    ...(autoTitle ? { autoTitle } : {}),
+  };
+}
+
+async function loadInterruptedTurns() {
+  try {
+    const raw = await fs.readFile(getInterruptedTurnsPath(), "utf8");
+    const parsed = JSON.parse(raw);
+    const nextMap = {};
+
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      for (const [threadId, records] of Object.entries(parsed)) {
+        if (!Array.isArray(records)) {
+          continue;
+        }
+
+        const normalized = records
+          .map((record) => normalizeInterruptedTurnRecord(threadId, record))
+          .filter(Boolean)
+          .sort((left, right) => left.createdAt - right.createdAt);
+        if (normalized.length > 0) {
+          nextMap[threadId] = normalized;
+        }
+      }
+    }
+
+    interruptedTurnMap = nextMap;
+  } catch {
+    interruptedTurnMap = {};
+  }
+}
+
+function queueInterruptedTurnMapWrite() {
+  interruptedTurnWriteQueue = interruptedTurnWriteQueue
+    .catch(() => {})
+    .then(async () => {
+      const targetPath = getInterruptedTurnsPath();
+      const temporaryPath = `${targetPath}.tmp`;
+      await fs.mkdir(app.getPath("userData"), { recursive: true });
+      await fs.writeFile(temporaryPath, JSON.stringify(interruptedTurnMap, null, 2), "utf8");
+      await fs.rename(temporaryPath, targetPath);
+    })
+    .catch((error) => {
+      console.error("Failed to persist interrupted Hermes turns:", error);
+    });
+
+  return interruptedTurnWriteQueue;
+}
+
+async function persistInterruptedTurn(record) {
+  if (!record?.threadId || !record?.id) {
+    return;
+  }
+
+  const threadId = String(record.threadId);
+  const existing = Array.isArray(interruptedTurnMap[threadId])
+    ? interruptedTurnMap[threadId]
+    : [];
+  const normalized = normalizeInterruptedTurnRecord(threadId, record);
+  if (!normalized) {
+    return;
+  }
+
+  interruptedTurnMap[threadId] = [
+    ...existing.filter((entry) => entry.id !== normalized.id),
+    normalized,
+  ].sort((left, right) => left.createdAt - right.createdAt);
+  await queueInterruptedTurnMapWrite();
+}
+
+async function removeInterruptedTurns(threadId) {
+  if (!threadId || !interruptedTurnMap[String(threadId)]) {
+    return;
+  }
+
+  delete interruptedTurnMap[String(threadId)];
+  await queueInterruptedTurnMapWrite();
+}
+
+async function markInterruptedAutoTitleComplete(threadId, recordIds = null) {
+  const records = interruptedTurnMap[String(threadId)] ?? [];
+  if (records.length === 0) {
+    return;
+  }
+
+  const selectedIds = recordIds ? new Set(recordIds.map((id) => String(id))) : null;
+  let changed = false;
+  const completedAt = Date.now();
+  for (const record of records) {
+    if (selectedIds && !selectedIds.has(String(record.id))) {
+      continue;
+    }
+    if (!record.autoTitle?.pending) {
+      continue;
+    }
+    record.autoTitle = {
+      ...record.autoTitle,
+      pending: false,
+      completedAt,
+    };
+    changed = true;
+  }
+
+  if (changed) {
+    await queueInterruptedTurnMapWrite();
+  }
+}
+
+function mergeInterruptedTurnMessages(messages, threadId, alternateThreadId = "") {
+  const records = [
+    ...(interruptedTurnMap[String(threadId)] ?? []),
+    ...(alternateThreadId && String(alternateThreadId) !== String(threadId)
+      ? (interruptedTurnMap[String(alternateThreadId)] ?? [])
+      : []),
+  ].sort((left, right) => left.createdAt - right.createdAt);
+  if (records.length === 0) {
+    return messages;
+  }
+
+  const merged = [...messages];
+  for (const record of records) {
+    if (!record?.message || merged.some((message) => message.id === record.message.id)) {
+      continue;
+    }
+
+    let anchorIndex = -1;
+    if (Number.isInteger(record.anchorUserIndex) && record.anchorUserIndex >= 0) {
+      let userOrdinal = 0;
+      for (let index = 0; index < merged.length; index += 1) {
+        if (merged[index].role !== "user") {
+          continue;
+        }
+        if (userOrdinal === record.anchorUserIndex) {
+          anchorIndex = index;
+          break;
+        }
+        userOrdinal += 1;
+      }
+    }
+
+    if (anchorIndex === -1 && record.anchorUserText) {
+      anchorIndex = merged.findIndex(
+        (message) => message.role === "user" && message.text === record.anchorUserText
+      );
+    }
+
+    if (anchorIndex === -1) {
+      merged.push(record.message);
+      continue;
+    }
+
+    // Keep the interrupted marker at the end of the original turn, immediately
+    // before the next user prompt if the conversation continued afterwards.
+    let insertIndex = merged.length;
+    for (let index = anchorIndex + 1; index < merged.length; index += 1) {
+      if (merged[index].role === "user") {
+        insertIndex = index;
+        break;
+      }
+    }
+    merged.splice(insertIndex, 0, record.message);
+  }
+
+  return merged;
 }
 
 async function saveThreadCwd(threadId, cwd) {
@@ -1704,9 +1948,11 @@ class HermesGatewayBridge {
     }
   }
 
-  async updateSettings(nextSettings) {
+  async updateSettings(nextSettings, options = {}) {
     this.settings = normalizeSettings(nextSettings);
-    await this.restart();
+    if (options.restart !== false) {
+      await this.restart();
+    }
   }
 
   async restart() {
@@ -1883,6 +2129,14 @@ class HermesGatewayBridge {
     });
   }
 
+  async retryAutoTitle(sessionId, userMessage, assistantResponse) {
+    return this.request("session.auto_title", {
+      session_id: sessionId,
+      user_message: userMessage,
+      assistant_response: assistantResponse,
+    });
+  }
+
   async cancelPrompt(sessionId) {
     try {
       // Hermes' gateway exposes interruption as session.interrupt. The old
@@ -2009,6 +2263,12 @@ function settingsRequireBridgeRestart(previousSettings, nextSettings) {
     loginOfficial: undefined,
   };
 
+  // A workspace change only affects sessions created after the change. Keep
+  // the live Hermes process and current conversation intact while the user
+  // switches folders from the composer.
+  delete comparablePrevious.cwd;
+  delete comparableNext.cwd;
+
   return JSON.stringify(comparablePrevious) !== JSON.stringify(comparableNext);
 }
 
@@ -2126,26 +2386,90 @@ function finishActiveDraftActivities() {
 
 function preserveInterruptedDraft() {
   if (!state.activeDraft) {
-    return;
+    return null;
   }
+
+  const userMessages = state.messages.filter((message) => message.role === "user");
+  const titleUserMessage = toSafeString(userMessages.at(-1)?.text).trim();
+  const titleAssistantResponse = toSafeString(
+    state.activeDraft.text || state.activeDraft.pendingText
+  ).trim();
 
   // Move any still-buffered assistant text into the same ordered trail before
   // detaching the live draft. This keeps the visible work history when the
   // user stops a turn instead of leaving an empty assistant bubble.
   flushActiveDraftNarrative();
   finishActiveDraftActivities();
-  state.messages = [
-    ...state.messages,
-    {
-      id: randomUUID(),
+  const interruptedMessage = {
+    id: randomUUID(),
+    role: "assistant",
+    text: "",
+    reasoning: toSafeString(state.activeDraft.reasoning).trim() || null,
+    turnId: null,
+    meta: "interrupted",
+    activities: [...(state.activeDraft.activities ?? [])],
+  };
+  const record = {
+    id: interruptedMessage.id,
+    threadId: state.activeThreadId || state.activeDraft.threadId,
+    createdAt: Date.now(),
+    anchorUserIndex: userMessages.length > 0 ? userMessages.length - 1 : null,
+    anchorUserText: titleUserMessage,
+    message: interruptedMessage,
+    ...(titleUserMessage
+      ? {
+          autoTitle: {
+            pending: true,
+            userMessage: titleUserMessage,
+            assistantResponse: titleAssistantResponse || "任务已被用户终止。",
+          },
+        }
+      : {}),
+  };
+
+  state.messages = [...state.messages, interruptedMessage];
+  return record;
+}
+
+function buildOrphanedTurnRecord(threadId, messages, isRunning) {
+  if (!threadId || isRunning === true || !Array.isArray(messages) || messages.length === 0) {
+    return null;
+  }
+
+  const lastMessage = messages.at(-1);
+  if (!lastMessage || lastMessage.role !== "user") {
+    return null;
+  }
+
+  const userMessages = messages.filter((message) => message.role === "user");
+  const userIndex = userMessages.length - 1;
+  const id = `orphaned-interrupted:${String(threadId)}:${userIndex}`;
+  const userMessage = toSafeString(lastMessage.text).trim();
+  return {
+    id,
+    threadId: String(threadId),
+    createdAt: Date.now(),
+    anchorUserIndex: userIndex,
+    anchorUserText: userMessage,
+    message: {
+      id,
       role: "assistant",
       text: "",
-      reasoning: toSafeString(state.activeDraft.reasoning).trim() || null,
+      reasoning: null,
       turnId: null,
       meta: "interrupted",
-      activities: [...(state.activeDraft.activities ?? [])],
+      activities: [],
     },
-  ];
+    ...(userMessage
+      ? {
+          autoTitle: {
+            pending: true,
+            userMessage,
+            assistantResponse: "任务已被用户终止。",
+          },
+        }
+      : {}),
+  };
 }
 
 function streamPayloadText(payload) {
@@ -2162,6 +2486,116 @@ async function refreshThreads() {
     state.activeThread = state.threads.find((thread) => thread.id === state.activeThreadId) ?? state.activeThread;
   }
   broadcastState();
+}
+
+async function refreshThreadsUntilAutoTitle(threadId) {
+  if (!threadId) {
+    return false;
+  }
+
+  const hasAutoTitle = () => {
+    const thread = state.threads.find((candidate) => candidate.id === threadId);
+    return Boolean(thread?.name?.trim());
+  };
+  if (hasAutoTitle()) {
+    return true;
+  }
+
+  // Hermes writes the AI-generated title from a daemon thread after the
+  // response has completed. A single refresh races that write and leaves the
+  // sidebar showing the temporary prompt preview until the app is restarted.
+  const delays = [250, 750, 1500, 3000, 5000, 8000];
+  for (const delay of delays) {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    if (!bridge) {
+      return false;
+    }
+
+    try {
+      await refreshThreads();
+    } catch (error) {
+      console.warn("Unable to refresh the sidebar while waiting for the AI title:", error);
+      continue;
+    }
+
+    if (hasAutoTitle()) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function waitForAutoTitleAndMark(threadId, recordIds = null) {
+  const titled = await refreshThreadsUntilAutoTitle(threadId);
+  if (titled) {
+    await markInterruptedAutoTitleComplete(threadId, recordIds);
+  }
+  return titled;
+}
+
+let pendingAutoTitleRetryPromise = null;
+
+async function retryPendingAutoTitles() {
+  if (!bridge) {
+    return;
+  }
+  if (pendingAutoTitleRetryPromise) {
+    return pendingAutoTitleRetryPromise;
+  }
+
+  pendingAutoTitleRetryPromise = (async () => {
+    try {
+      await refreshThreads();
+    } catch (error) {
+      console.warn("Unable to refresh threads before retrying pending AI titles:", error);
+    }
+
+    const pendingByThread = new Map();
+    for (const [threadId, records] of Object.entries(interruptedTurnMap)) {
+      const pendingRecords = (Array.isArray(records) ? records : [])
+        .filter((record) => record?.autoTitle?.pending && record.autoTitle.userMessage)
+        .sort((left, right) => left.createdAt - right.createdAt);
+      if (pendingRecords.length > 0) {
+        pendingByThread.set(threadId, pendingRecords);
+      }
+    }
+
+    for (const [threadId, records] of pendingByThread) {
+      const recordIds = records.map((record) => record.id);
+      try {
+        const alreadyTitled = state.threads.find((thread) => thread.id === threadId)?.name?.trim();
+        let retryResult = null;
+        if (!alreadyTitled) {
+          const first = records[0].autoTitle;
+          retryResult = await bridge.retryAutoTitle(
+            threadId,
+            first.userMessage,
+            first.assistantResponse
+          );
+        }
+
+        if (alreadyTitled || retryResult?.title) {
+          await refreshThreads();
+          await markInterruptedAutoTitleComplete(threadId, recordIds);
+          continue;
+        }
+
+        const titled = await refreshThreadsUntilAutoTitle(threadId);
+        if (titled) {
+          await markInterruptedAutoTitleComplete(threadId, recordIds);
+        }
+      } catch (error) {
+        // Keep the record pending. The next app start can retry after a
+        // transient backend/API failure without losing the user's title job.
+        console.warn(`Unable to retry AI title for Hermes thread ${threadId}:`, error);
+      }
+    }
+  })().finally(() => {
+    pendingAutoTitleRetryPromise = null;
+  });
+
+  return pendingAutoTitleRetryPromise;
 }
 
 async function loadActiveThread(threadId) {
@@ -2188,6 +2622,10 @@ async function loadActiveThread(threadId) {
     }
 
     if (previousTurnWasActive && previousSessionId) {
+      const interruptedTurn = preserveInterruptedDraft();
+      if (interruptedTurn) {
+        await persistInterruptedTurn(interruptedTurn);
+      }
       await bridge.cancelPrompt(previousSessionId);
     }
 
@@ -2226,7 +2664,27 @@ async function loadActiveThread(threadId) {
     }
     state.activeThread = activeThreadObj;
     state.currentRuntimeModel = toSafeString(result.info?.model).trim() || null;
-    state.messages = mapGatewayMessages(result.messages);
+    const gatewayMessages = mapGatewayMessages(result.messages);
+    const orphanedTurn = buildOrphanedTurnRecord(
+      state.activeThreadId,
+      gatewayMessages,
+      result.running === true || Boolean(result.inflight)
+    );
+    if (orphanedTurn) {
+      // A previous renderer can disconnect while Hermes keeps the session
+      // alive. Once the resumed history ends with a user message, there is no
+      // completed assistant turn to resume: stop that orphaned worker before
+      // restoring the historical interruption marker.
+      if (result.running === true || Boolean(result.inflight)) {
+        await bridge.cancelPrompt(activeGatewaySessionId);
+      }
+      await persistInterruptedTurn(orphanedTurn);
+    }
+    state.messages = mergeInterruptedTurnMessages(
+      gatewayMessages,
+      state.activeThreadId,
+      threadId
+    );
     activeTurnCancelRequested = false;
     activeTurnHasStarted = false;
     state.activeDraft = null;
@@ -2256,6 +2714,10 @@ async function startNewConversation() {
   }
 
   if (bridge && previousTurnWasActive && previousSessionId) {
+    const interruptedTurn = preserveInterruptedDraft();
+    if (interruptedTurn) {
+      await persistInterruptedTurn(interruptedTurn);
+    }
     try {
       await bridge.cancelPrompt(previousSessionId);
     } catch (err) {
@@ -2293,7 +2755,10 @@ async function syncMessagesFromGateway() {
   }
 
   const history = await bridge.getSessionHistory(activeGatewaySessionId);
-  state.messages = mapGatewayMessages(history.messages);
+  state.messages = mergeInterruptedTurnMessages(
+    mapGatewayMessages(history.messages),
+    state.activeThreadId
+  );
 }
 
 async function waitForSessionCompletion(sessionId) {
@@ -2412,6 +2877,7 @@ async function waitForSessionModel(sessionId, targetModel, timeoutMs = 65000, po
 
 async function initializeBridge() {
   await loadThreadCwds();
+  await loadInterruptedTurns();
   let settings = await loadSettings();
   state.settings = settings;
   state.skills = settings.registeredSkills || [];
@@ -2705,6 +3171,10 @@ async function initializeBridge() {
         return;
       }
       if (completionStatus === "interrupted" || activeTurnCancelRequested) {
+        const interruptedTurn = preserveInterruptedDraft();
+        if (interruptedTurn) {
+          void persistInterruptedTurn(interruptedTurn);
+        }
         activeTurnHasStarted = false;
         const interruptedError = new Error("用户已终止对话处理。");
         if (activeSessionUnsubscribe) {
@@ -2781,6 +3251,7 @@ async function initializeBridge() {
     state.error = null;
     await refreshThreads();
     await startNewConversation();
+    void retryPendingAutoTitles();
   } catch (error) {
     state.error = error instanceof Error ? error.message : "Failed to start Hermes backend.";
     state.status = state.error;
@@ -2870,6 +3341,7 @@ function createWindow() {
           await bridge.updateSettings(state.settings);
           await refreshThreads();
           await startNewConversation();
+          void retryPendingAutoTitles();
         }
         broadcastState();
       }
@@ -3131,6 +3603,7 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
     state.activeDraft = null;
     await refreshThreads();
     state.status = "Ready.";
+    void waitForAutoTitleAndMark(state.activeThreadId);
   } catch (error) {
     console.error("[hermes-send] failed", error);
     const errorMessage = error instanceof Error ? error.message : "Failed to send message.";
@@ -3286,6 +3759,7 @@ ipcMain.handle("hermes:archiveThread", async (_event, threadId) => {
 
   try {
     await bridge.deleteThread(targetId);
+    await removeInterruptedTurns(targetId);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to delete session.";
     state.error = message;
@@ -3504,6 +3978,12 @@ ipcMain.handle("hermes:updateSettings", async (_event, nextSettings) => {
 
   const shouldSkipBridgeRestart = !shouldRestartBridge;
 
+  if (bridge && shouldSkipBridgeRestart) {
+    // Keep the live process/session when only the workspace changed. The new
+    // bridge settings will be used by the next session.create/resume call.
+    await bridge.updateSettings(merged, { restart: false });
+  }
+
   if (bridge && shouldRestartBridge) {
     activeGatewaySessionId = null;
     state.activeThreadId = null;
@@ -3521,6 +4001,7 @@ ipcMain.handle("hermes:updateSettings", async (_event, nextSettings) => {
         : "Ready.";
       await refreshThreads();
       await startNewConversation();
+      void retryPendingAutoTitles();
     } catch (error) {
       state.error = error instanceof Error ? error.message : "Failed to restart Hermes backend.";
       state.status = state.error;
@@ -3535,6 +4016,8 @@ ipcMain.handle("hermes:updateSettings", async (_event, nextSettings) => {
       state.status = "Ready. 官方登录状态已同步。";
     } else if (logoutOfficial) {
       state.status = "Ready. 官方登录状态已退出。";
+    } else if (previousSettings.cwd !== merged.cwd) {
+      state.status = state.busy ? "工作区已切换，当前任务继续运行。" : "Ready. 工作区已切换。";
     } else {
       state.status = "Ready.";
     }
@@ -3601,6 +4084,7 @@ ipcMain.handle("hermes:repairRuntime", async () => {
         ? `Ready. 已自动切换到免费模型 ${reconciled.autoSwitchedModel}.`
         : "Ready.";
       await startNewConversation();
+      void retryPendingAutoTitles();
     }
   } catch (error) {
     state.error = error instanceof Error ? error.message : "Failed to install Hermes runtime.";
@@ -3871,8 +4355,11 @@ ipcMain.handle("hermes:stopMessage", async () => {
     activeSessionUnsubscribe = null;
   }
 
-  preserveInterruptedDraft();
+  const interruptedTurn = preserveInterruptedDraft();
   state.activeDraft = null;
+  if (interruptedTurn) {
+    await persistInterruptedTurn(interruptedTurn);
+  }
   state.busy = false;
   state.pendingClarification = null;
   state.pendingApproval = null;
@@ -3886,6 +4373,17 @@ ipcMain.handle("hermes:stopMessage", async () => {
     } catch (e) {
       console.error("Failed to send cancel prompt:", e);
     }
+  }
+
+  // The current turn may have created the session after the last sidebar
+  // refresh. Pull the session list again after stopping so the new task title
+  // appears in the sidebar immediately instead of only after an app restart.
+  const stoppedThreadId = state.activeThreadId;
+  try {
+    await refreshThreads();
+    void waitForAutoTitleAndMark(stoppedThreadId, interruptedTurn?.id ? [interruptedTurn.id] : null);
+  } catch (e) {
+    console.error("Failed to refresh sidebar threads after stopping:", e);
   }
   return state;
 });
@@ -3916,43 +4414,32 @@ ipcMain.handle("hermes:selectWorkspaceFolder", async () => {
 
   const activeBridge = bridge;
   if (activeBridge) {
-    activeGatewaySessionId = null;
-    state.activeThreadId = null;
-    state.activeThread = null;
-    state.currentRuntimeModel = null;
-    state.reasoningTrace = null;
-    state.messages = [];
-    state.activeDraft = null;
-    state.error = null;
-    state.status = "正在切换工作区…";
+    await activeBridge.updateSettings(merged, { restart: false });
+    if (state.activeThreadId) {
+      await saveThreadCwd(state.activeThreadId, selectedPath);
+      if (state.activeThread) {
+        state.activeThread = { ...state.activeThread, cwd: selectedPath };
+      }
+      const activeThreadIndex = state.threads.findIndex((thread) => thread.id === state.activeThreadId);
+      if (activeThreadIndex !== -1) {
+        state.threads[activeThreadIndex] = {
+          ...state.threads[activeThreadIndex],
+          cwd: selectedPath,
+        };
+      }
+    }
   } else if (state.activeThread) {
     state.activeThread = { ...state.activeThread, cwd: selectedPath };
   }
 
+  state.error = null;
+  state.status = state.busy ? "工作区已切换，当前任务继续运行。" : "Ready. 工作区已切换。";
   broadcastState();
   const result = {
     cwd: selectedPath,
     folderName: path.basename(selectedPath),
     branch,
   };
-
-  // Return the folder selection immediately so the compact composer control
-  // can update without waiting for Hermes to restart. The bridge refresh runs
-  // in the background and publishes its final state when it is ready.
-  if (activeBridge) {
-    void (async () => {
-      try {
-        await activeBridge.updateSettings(merged);
-        await refreshThreads();
-        await startNewConversation();
-      } catch (error) {
-        state.error = error instanceof Error ? error.message : "切换工作区失败。";
-        state.status = state.error;
-        console.error("Failed to update bridge settings for new cwd:", error);
-      }
-      broadcastState();
-    })();
-  }
 
   return result;
 });

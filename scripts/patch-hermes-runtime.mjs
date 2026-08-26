@@ -81,6 +81,21 @@ const patchTargets = [
   })),
 ];
 
+const tuiGatewayTargets = [
+  {
+    label: "workspace TUI gateway runtime",
+    filePath: path.join(runtimeRoot, "hermes-agent", "tui_gateway", "server.py"),
+    optional: false,
+  },
+  ...activeAppUserDataPaths.map((userDataPath, index) => ({
+    label: index === 0
+      ? "active app TUI gateway runtime"
+      : `legacy app TUI gateway runtime (${path.basename(userDataPath)})`,
+    filePath: path.join(userDataPath, "hermes-runtime", "hermes-agent", "tui_gateway", "server.py"),
+    optional: true,
+  })),
+];
+
 const utf8DecodeTargets = [
   "hermes_cli/models.py",
   "hermes_cli/model_catalog.py",
@@ -145,6 +160,213 @@ async function patchFile({ label, filePath, optional }) {
     : content.replace(TITLE_PROMPT_ASSIGNMENT, `${CHINESE_TITLE_PROMPT}\n`);
   await fs.writeFile(filePath, updated, "utf8");
   console.log(`Patched ${label}: ${filePath}`);
+}
+
+async function patchTuiGatewayAutoTitle({ label, filePath, optional }) {
+  let content;
+  try {
+    content = await fs.readFile(filePath, "utf8");
+  } catch {
+    if (optional) {
+      console.log(`Skipped ${label}: file not found at ${filePath}`);
+      return;
+    }
+    console.error(`Missing ${label}: ${filePath}`);
+    console.error("Run `npm run hermes:bootstrap` first so the runtime is installed locally.");
+    process.exitCode = 1;
+    return;
+  }
+
+  const originalCall = [
+    "                    maybe_auto_title(",
+    "                        _get_db(),",
+    '                        session.get("session_key") or sid,',
+    "                        text,",
+    "                        raw,",
+    '                        session.get("history", []),',
+    "                    )",
+  ].join("\n");
+  const activeRuntimeCall = [
+    "                    maybe_auto_title(",
+    "                        _get_db(),",
+    '                        session.get("session_key") or sid,',
+    "                        text,",
+    "                        raw,",
+    '                        session.get("history", []),',
+    "                        main_runtime={",
+    '                            "model": getattr(agent, "model", None),',
+    '                            "provider": getattr(agent, "provider", None),',
+    '                            "base_url": getattr(agent, "base_url", None),',
+    '                            "api_key": getattr(agent, "api_key", None),',
+    '                            "api_mode": getattr(agent, "api_mode", None),',
+    "                        } if agent else None,",
+    "                    )",
+  ].join("\n");
+  const interruptedRuntimeCall = activeRuntimeCall.replace(
+    "                        raw,",
+    '                        raw if raw.strip() else "任务已被用户终止。",',
+  );
+  const originalGate = [
+    "            if (",
+    '                status == "complete"',
+    "                and isinstance(raw, str)",
+    "                and raw.strip()",
+    "                and isinstance(text, str)",
+    "                and text.strip()",
+    "            ):",
+  ].join("\n");
+  const interruptedGate = [
+    "            if (",
+    '                status in {"complete", "interrupted"}',
+    "                and isinstance(raw, str)",
+    '                and (raw.strip() or status == "interrupted")',
+    "                and isinstance(text, str)",
+    "                and text.strip()",
+    "            ):",
+  ].join("\n");
+  const autoTitleLongHandlerMarker = '        "session.branch",';
+  const autoTitleLongHandlerEntry = '        "session.auto_title",';
+  const autoTitleMethodMarker = '@method("session.auto_title")';
+  const autoTitleMethod = [
+    '@method("session.auto_title")',
+    "def _(rid, params: dict) -> dict:",
+    '    target = str(params.get("session_id") or "").strip()',
+    "    if not target:",
+    '        return _err(rid, 4006, "session_id required")',
+    "    db = _get_db()",
+    "    if db is None:",
+    "        return _db_unavailable_error(rid, code=5036)",
+    "    try:",
+    '        existing = (db.get_session_title(target) or "").strip()',
+    "    except Exception:",
+    '        existing = ""',
+    "    if existing:",
+    '        return _ok(rid, {"scheduled": False, "title": existing, "session_id": target})',
+    "",
+    '    user_message = str(params.get("user_message") or "").strip()',
+    '    assistant_response = str(params.get("assistant_response") or "").strip() or "任务已被用户终止。"',
+    "    history = []",
+    "    try:",
+    '        history = db.get_messages_as_conversation(target, include_ancestors=True) or []',
+    "    except Exception:",
+    "        history = []",
+    "    if not user_message:",
+    "        for message in history:",
+    '            if isinstance(message, dict) and message.get("role") == "user":',
+    '                user_message = str(message.get("content") or message.get("text") or "").strip()',
+    "                if user_message:",
+    "                    break",
+    "    if not user_message:",
+    '        return _err(rid, 4008, "user_message required")',
+    "",
+    "    live = _find_live_session_by_key(target)",
+    '    session = live[1] if live else None',
+    '    agent = session.get("agent") if session else None',
+    "    if agent is not None:",
+    "        main_runtime = {",
+    '            "model": getattr(agent, "model", None),',
+    '            "provider": getattr(agent, "provider", None),',
+    '            "base_url": getattr(agent, "base_url", None),',
+    '            "api_key": getattr(agent, "api_key", None),',
+    '            "api_mode": getattr(agent, "api_mode", None),',
+    "        }",
+    "    else:",
+    '        cfg = _load_cfg()',
+    '        cfg_model = cfg.get("model") if isinstance(cfg, dict) else {}',
+    '        cfg_provider = cfg_model.get("provider") if isinstance(cfg_model, dict) else ""',
+    "        main_runtime = {",
+    '            "model": _resolve_model(),',
+    '            "provider": (os.environ.get("HERMES_TUI_PROVIDER") or os.environ.get("HERMES_INFERENCE_PROVIDER") or cfg_provider or "").strip(),',
+    '            "base_url": (os.environ.get("HERMES_BASE_URL") or os.environ.get("OPENAI_BASE_URL") or "").strip(),',
+    '            "api_key": (os.environ.get("HERMES_API_KEY") or os.environ.get("HERMES_INFERENCE_API_KEY") or os.environ.get("OPENAI_API_KEY") or "").strip(),',
+    '            "api_mode": (os.environ.get("HERMES_API_MODE") or "").strip(),',
+    "        }",
+    "",
+    "    try:",
+    "        from agent.title_generator import auto_title_session",
+    "        auto_title_session(",
+    "            db,",
+    "            target,",
+    "            user_message,",
+    "            assistant_response,",
+    "            main_runtime=main_runtime,",
+    "        )",
+    '        title = (db.get_session_title(target) or "").strip()',
+    "    except Exception as exc:",
+    '        logger.warning("Failed to retry auto-title for %s: %s", target, exc)',
+    '        return _err(rid, 5008, f"auto-title failed: {exc}")',
+    "    if not title:",
+    '        return _err(rid, 5008, "auto-title did not produce a title")',
+    '    return _ok(rid, {"scheduled": False, "title": title, "session_id": target})',
+  ].join("\n");
+
+  let updated = content;
+  const hasActiveRuntime =
+    updated.includes("main_runtime={") &&
+    updated.includes('"api_key": getattr(agent, "api_key", None)');
+  if (!hasActiveRuntime) {
+    if (!updated.includes(originalCall)) {
+      console.error(`Unexpected TUI gateway auto-title format in ${label}: ${filePath}`);
+      console.error("Hermes upstream may have changed. Please review and update scripts/patch-hermes-runtime.mjs.");
+      process.exitCode = 1;
+      return;
+    }
+    updated = updated.replace(originalCall, activeRuntimeCall);
+  }
+
+  if (!updated.includes(interruptedGate)) {
+    if (!updated.includes(originalGate)) {
+      console.error(`Unexpected TUI gateway auto-title condition in ${label}: ${filePath}`);
+      console.error("Hermes upstream may have changed. Please review and update scripts/patch-hermes-runtime.mjs.");
+      process.exitCode = 1;
+      return;
+    }
+    updated = updated.replace(originalGate, interruptedGate);
+  }
+
+  if (!updated.includes('raw if raw.strip() else "任务已被用户终止。"')) {
+    if (!updated.includes(activeRuntimeCall)) {
+      console.error(`Unexpected TUI gateway auto-title call in ${label}: ${filePath}`);
+      console.error("Hermes upstream may have changed. Please review and update scripts/patch-hermes-runtime.mjs.");
+      process.exitCode = 1;
+      return;
+    }
+    updated = updated.replace(activeRuntimeCall, interruptedRuntimeCall);
+  }
+
+  if (!updated.includes(autoTitleLongHandlerEntry)) {
+    if (!updated.includes(autoTitleLongHandlerMarker)) {
+      console.error(`Unexpected TUI gateway long-handler list in ${label}: ${filePath}`);
+      console.error("Hermes upstream may have changed. Please review and update scripts/patch-hermes-runtime.mjs.");
+      process.exitCode = 1;
+      return;
+    }
+    updated = updated.replace(
+      autoTitleLongHandlerMarker,
+      `${autoTitleLongHandlerMarker}\n${autoTitleLongHandlerEntry}`
+    );
+  }
+
+  if (!updated.includes(autoTitleMethodMarker)) {
+    if (!updated.includes('@method("session.undo")')) {
+      console.error(`Unexpected TUI gateway session method layout in ${label}: ${filePath}`);
+      console.error("Hermes upstream may have changed. Please review and update scripts/patch-hermes-runtime.mjs.");
+      process.exitCode = 1;
+      return;
+    }
+    updated = updated.replace(
+      '@method("session.undo")',
+      `${autoTitleMethod}\n\n@method("session.undo")`
+    );
+  }
+
+  if (updated === content) {
+    console.log(`OK ${label}: auto-title supports completed, interrupted, and restart-retry tasks`);
+    return;
+  }
+
+  await fs.writeFile(filePath, updated, "utf8");
+  console.log(`Patched ${label}: auto-title now covers completed, interrupted, and restart-retry tasks`);
 }
 
 async function patchUtf8Decoders() {
@@ -260,6 +482,9 @@ async function main() {
   console.log("Applying Hermes runtime patches...");
   for (const target of patchTargets) {
     await patchFile(target);
+  }
+  for (const target of tuiGatewayTargets) {
+    await patchTuiGatewayAutoTitle(target);
   }
   await patchWindowsLocalShell();
   await patchUtf8Decoders();

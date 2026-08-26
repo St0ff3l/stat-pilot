@@ -581,6 +581,18 @@ body {
   white-space: nowrap;
 }
 
+.interrupted-history {
+  display: flex;
+  width: 100%;
+  align-self: stretch;
+}
+
+.interrupted-history .stream-activity-interrupted {
+  width: 100%;
+  margin: 12px 0 4px;
+  justify-content: center;
+}
+
 .stream-activity-interrupted-line {
   height: 1px;
   flex: 1 1 auto;
@@ -2461,6 +2473,18 @@ body {
 
 .trae-selector-pill {
   @apply flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200/90 text-slate-600 text-[0.76rem] font-medium cursor-pointer transition-all duration-150 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600 whitespace-nowrap shrink-0 max-w-[260px] truncate select-none;
+}
+
+.trae-selector-pill.locked,
+.trae-selector-pill:disabled {
+  @apply cursor-not-allowed bg-slate-50 text-slate-500 opacity-85;
+  border-color: #e2e8f0;
+}
+
+.trae-selector-pill.locked:hover,
+.trae-selector-pill:disabled:hover {
+  @apply bg-slate-50 text-slate-500;
+  border-color: #e2e8f0;
 }
 
 .trae-popover-menu {
