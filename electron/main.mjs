@@ -2332,29 +2332,62 @@ async function saveSettings(settings) {
   await fs.writeFile(getSettingsPath(), JSON.stringify(settings, null, 2), "utf8");
 }
 
+function getCombinedThreads() {
+  const baseThreads = Array.isArray(state.threads) ? [...state.threads] : [];
+
+  // 合并后台任务池（活跃运行中 + 排队中）
+  const allPoolTasks = [...activeTasks.values(), ...queuedTasks];
+  for (const task of allPoolTasks) {
+    const threadId = task.threadId || task.sessionId;
+    const existingIndex = baseThreads.findIndex(
+      (th) => th.id === threadId || th.id === task.sessionId
+    );
+
+    let taskStatus = task.status;
+    if (task.pendingApproval) {
+      taskStatus = "approving";
+    } else if (task.pendingClarification) {
+      taskStatus = "clarifying";
+    }
+
+    const titlePreview = task.text.replace(/@\w+\s*/g, "").trim().slice(0, 40) || "新分析任务";
+
+    if (existingIndex === -1) {
+      // 乐观会话：数据库尚未落盘时直接展示在侧边栏最前
+      baseThreads.unshift({
+        id: threadId,
+        name: titlePreview,
+        preview: titlePreview,
+        modelProvider: state.settings.runtimeMode === "official" ? "nous/free" : state.settings.apiProvider,
+        status: "running",
+        updatedAt: Math.floor(task.createdAt / 1000),
+        createdAt: Math.floor(task.createdAt / 1000),
+        cwd: task.cwd,
+        taskStatus,
+      });
+    } else {
+      baseThreads[existingIndex] = {
+        ...baseThreads[existingIndex],
+        taskStatus,
+      };
+    }
+  }
+
+  // 为其他已完成会话标记 completed 或 idle
+  return baseThreads.map((th) => {
+    if (th.taskStatus) return th;
+    let taskStatus = "idle";
+    if (completedThreads.has(th.id)) {
+      taskStatus = "completed";
+    }
+    return { ...th, taskStatus };
+  });
+}
+
 function broadcastState() {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    // 为每个 thread 注入实时并发任务状态
-    if (Array.isArray(state.threads)) {
-      state.threads = state.threads.map((th) => {
-        let taskStatus = "idle";
-        const activeTask = activeTasks.get(th.id);
-        if (activeTask) {
-          if (activeTask.pendingApproval) {
-            taskStatus = "approving";
-          } else if (activeTask.pendingClarification) {
-            taskStatus = "clarifying";
-          } else {
-            taskStatus = "running";
-          }
-        } else if (queuedTasks.some((t) => t.threadId === th.id)) {
-          taskStatus = "queued";
-        } else if (completedThreads.has(th.id)) {
-          taskStatus = "completed";
-        }
-        return { ...th, taskStatus };
-      });
-    }
+    // 注入合并后的完整会话列表（含乐观会话）
+    state.threads = getCombinedThreads();
 
     // 动态同步前台活动会话的状态与草稿投影
     if (state.activeThreadId) {
@@ -2706,7 +2739,12 @@ async function loadActiveThread(threadId) {
 
   const previousSessionId = activeGatewaySessionId;
   const previousThreadId = state.activeThreadId;
-  const isPreviousTaskRunning = previousThreadId && activeTasks.has(previousThreadId);
+
+  // 严格判断切走前的前序任务是否正在运行
+  const isPreviousTaskRunning =
+    (previousThreadId && activeTasks.has(previousThreadId)) ||
+    (previousSessionId && Array.from(activeTasks.values()).some((t) => t.sessionId === previousSessionId || t.threadId === previousSessionId)) ||
+    queuedTasks.some((t) => t.threadId === previousThreadId || t.sessionId === previousSessionId);
 
   // 消除进入目标任务的“已完成”绿勾标记
   if (completedThreads.has(threadId)) {
@@ -2718,17 +2756,17 @@ async function loadActiveThread(threadId) {
   state.pendingApproval = null;
 
   try {
-    if (activeSessionUnsubscribe) {
-      activeSessionUnsubscribe();
-      activeSessionUnsubscribe = null;
-    }
-    if (activeSessionReject) {
-      activeSessionReject(new Error("Thread switched."));
-      activeSessionReject = null;
-    }
-
     // 只有非后台并发运行的未管辖会话切走时才进行中断与关闭
     if (!isPreviousTaskRunning) {
+      if (activeSessionUnsubscribe) {
+        activeSessionUnsubscribe();
+        activeSessionUnsubscribe = null;
+      }
+      if (activeSessionReject) {
+        activeSessionReject(new Error("Thread switched."));
+        activeSessionReject = null;
+      }
+
       const previousTurnWasActive = state.busy || Boolean(state.pendingClarification);
       if (previousTurnWasActive && previousSessionId) {
         const interruptedTurn = preserveInterruptedDraft();
@@ -2747,11 +2785,22 @@ async function loadActiveThread(threadId) {
       }
     }
 
-    // 判断目标任务是否已经在后台任务池中运行
-    const targetRunningTask = activeTasks.get(threadId);
+    // 多维度精准查找目标活跃任务（支持 threadId、sessionId、双向映射）
+    let targetRunningTask = activeTasks.get(threadId);
+    if (!targetRunningTask) {
+      const mappedSessionId = threadIdToSessionId.get(threadId);
+      const mappedThreadId = sessionIdToThreadId.get(threadId);
+      targetRunningTask =
+        (mappedSessionId && activeTasks.get(mappedSessionId)) ||
+        (mappedThreadId && activeTasks.get(mappedThreadId)) ||
+        Array.from(activeTasks.values()).find(
+          (t) => t.threadId === threadId || t.sessionId === threadId
+        );
+    }
+
     if (targetRunningTask) {
       activeGatewaySessionId = targetRunningTask.sessionId;
-      state.activeThreadId = threadId;
+      state.activeThreadId = targetRunningTask.threadId || threadId;
       state.settings.cwd = targetRunningTask.cwd || state.settings.cwd;
       state.activeDraft = targetRunningTask.draft;
       state.reasoningTrace = targetRunningTask.draft.reasoning || null;
@@ -2763,15 +2812,17 @@ async function loadActiveThread(threadId) {
         : targetRunningTask.pendingClarification
         ? "等待补充信息..."
         : "Running...";
-      await syncMessagesFromGateway(targetRunningTask.sessionId, threadId);
+      await syncMessagesFromGateway(targetRunningTask.sessionId, state.activeThreadId);
       broadcastState();
       return;
     }
 
-    // 判断目标任务是否在排队中
-    const queuedIndex = queuedTasks.findIndex((t) => t.threadId === threadId);
-    if (queuedIndex !== -1) {
-      state.activeThreadId = threadId;
+    // 多维度判断目标任务是否在排队中
+    const queuedTask = queuedTasks.find((t) => t.threadId === threadId || t.sessionId === threadId);
+    if (queuedTask) {
+      const queuedIndex = queuedTasks.indexOf(queuedTask);
+      state.activeThreadId = queuedTask.threadId || threadId;
+      activeGatewaySessionId = queuedTask.sessionId;
       state.activeDraft = null;
       state.pendingClarification = null;
       state.pendingApproval = null;
@@ -2816,20 +2867,24 @@ async function loadActiveThread(threadId) {
     state.activeThread = activeThreadObj;
     state.currentRuntimeModel = toSafeString(result.info?.model).trim() || null;
     const gatewayMessages = mapGatewayMessages(result.messages);
-    const orphanedTurn = buildOrphanedTurnRecord(
-      state.activeThreadId,
-      gatewayMessages,
-      result.running === true || Boolean(result.inflight)
-    );
-    if (orphanedTurn) {
-      // A previous renderer can disconnect while Hermes keeps the session
-      // alive. Once the resumed history ends with a user message, there is no
-      // completed assistant turn to resume: stop that orphaned worker before
-      // restoring the historical interruption marker.
-      if (result.running === true || Boolean(result.inflight)) {
-        await bridge.cancelPrompt(activeGatewaySessionId);
+
+    // 检查此 session 是否属于任务池，绝不能误杀任务池里的会话
+    const isPoolManaged =
+      activeTasks.has(state.activeThreadId) ||
+      Array.from(activeTasks.values()).some((t) => t.sessionId === activeGatewaySessionId);
+
+    if (!isPoolManaged) {
+      const orphanedTurn = buildOrphanedTurnRecord(
+        state.activeThreadId,
+        gatewayMessages,
+        result.running === true || Boolean(result.inflight)
+      );
+      if (orphanedTurn) {
+        if (result.running === true || Boolean(result.inflight)) {
+          await bridge.cancelPrompt(activeGatewaySessionId);
+        }
+        await persistInterruptedTurn(orphanedTurn);
       }
-      await persistInterruptedTurn(orphanedTurn);
     }
     state.messages = mergeInterruptedTurnMessages(
       gatewayMessages,
@@ -2852,21 +2907,27 @@ async function loadActiveThread(threadId) {
 async function startNewConversation() {
   const previousSessionId = activeGatewaySessionId;
   const previousThreadId = state.activeThreadId;
-  const isPreviousTaskRunning = previousThreadId && activeTasks.has(previousThreadId);
+
+  // 严格判断前序任务是否属于活跃任务池或排队队列
+  const isPreviousTaskRunning =
+    (previousThreadId && activeTasks.has(previousThreadId)) ||
+    (previousSessionId && Array.from(activeTasks.values()).some((t) => t.sessionId === previousSessionId || t.threadId === previousSessionId)) ||
+    queuedTasks.some((t) => t.threadId === previousThreadId || t.sessionId === previousSessionId);
 
   state.pendingClarification = null;
   state.pendingApproval = null;
-  if (activeSessionUnsubscribe) {
-    activeSessionUnsubscribe();
-    activeSessionUnsubscribe = null;
-  }
-  if (activeSessionReject) {
-    activeSessionReject(new Error("Conversation was closed."));
-    activeSessionReject = null;
-  }
 
   // 只有当上一个任务并非被任务池管辖的并发任务时，才进行中断和关闭
   if (!isPreviousTaskRunning) {
+    if (activeSessionUnsubscribe) {
+      activeSessionUnsubscribe();
+      activeSessionUnsubscribe = null;
+    }
+    if (activeSessionReject) {
+      activeSessionReject(new Error("Conversation was closed."));
+      activeSessionReject = null;
+    }
+
     const previousTurnWasActive = state.busy || Boolean(state.pendingClarification);
     if (bridge && previousTurnWasActive && previousSessionId) {
       const interruptedTurn = preserveInterruptedDraft();
@@ -3786,7 +3847,7 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
       console.log("[hermes-send] creating session");
       const session = await bridge.createSession();
       activeGatewaySessionId = String(session.session_id ?? "");
-      state.activeThreadId = String(session.stored_session_id ?? "");
+      state.activeThreadId = String(session.stored_session_id || session.session_id || randomUUID());
       if (state.activeThreadId && state.settings.cwd) {
         void saveThreadCwd(state.activeThreadId, state.settings.cwd);
       }
