@@ -386,7 +386,21 @@ inputs:
 ```
 
 ### 输出 3：HTML 交互报表产物（必须直接生成）
-直接在输出目录生成对应的 `.html` 文件，并在对话末尾给出指向该 HTML 的 `[打开输出目录](file://...)` Markdown 链接。
+直接读取 `./templates/template_<style>.html`，在工作区 `output/` 目录（例如 `output/政务与统计信息化动态周报.html`）生成完整的独立 `.html` 文件，并在对话末尾给出指向该 HTML 的 `[打开输出目录](file:///.../output/)` Markdown 链接。严禁直接写入工作区根目录。
+
+#### HTML 排版安全与防遮挡规范（硬性准则）
+1. **吸顶导航与锚点留白**：所有 `section`、`.sec` 及带有 `id` 的锚点跳转容器**必须带有 `scroll-margin-top: 84px`**，确保页面定位时不被置顶控件遮盖。
+2. **【严禁项】表格安全排版**：周报中若包含统计表格，使用模板内置的 `.tbl-wrap` 和标准自然流 `thead th`，**绝对严禁**使用带有 top 像素偏移的 sticky 表头，避免覆盖表格内容。
+3. **【标准安全 CSS】**：
+```css
+section, .sec, [id] { scroll-margin-top: 84px; }
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--border-blue); border-radius: 12px; background: var(--surface); margin: 16px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 12.8px; min-width: 680px; }
+thead th { background: #eef4ff; color: #1e3a8a; font-size: 11.5px; padding: 10px 14px; text-align: left; white-space: nowrap; border-bottom: 2px solid var(--border-blue); }
+tbody td { padding: 10px 14px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+tbody tr:nth-child(even) { background: #fafcff; }
+tbody tr:hover { background: #f0f6ff; }
+```
 
 若无可匹配数据，txt 输出 "本次采集周期内无匹配文章。"，JSON 输出空数组 `[]`。
 **绝对禁止编造虚假内容。**

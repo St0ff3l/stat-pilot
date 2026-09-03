@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{REPORT_TITLE}} | 来源核验报告 (政务经典)</title>
+<style>
+  :root {
+    --bg:#fcfbf8; --surface:#ffffff; --ink:#2c1810; --ink2:#4a2c20;
+    --muted:#7a5c50; --faint:#a89085;
+    --brand:#8c1515; --brand-bg:rgba(140,21,21,.05); --border-blue:#eedac5;
+    --official:#15803d; --repost:#1d4ed8; --warn:#b45309; --error:#b91c1c;
+    --sans:"FangSong","STFangSong","SimSun","PingFang SC",serif;
+    --serif:"Songti SC","Noto Serif SC",serif;
+    --mono:"IBM Plex Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{font-family:var(--sans);color:var(--ink);line-height:1.6;-webkit-font-smoothing:antialiased;background:var(--bg);padding-bottom:80px}
+  a{color:var(--brand);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 20px}
+
+  /* HERO */
+  .hero{padding:34px 0 16px;background:linear-gradient(180deg,#dfebfb 0%,var(--bg) 100%);border-bottom:1px solid var(--border-blue)}
+  .sub-badge{display:inline-flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border-blue);border-radius:999px;padding:5px 14px;font-size:11px;font-weight:800;color:var(--brand);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:14px}
+  .sub-badge-dot{width:7px;height:7px;border-radius:50%;background:var(--brand);box-shadow:0 0 0 3px rgba(0,102,255,.15)}
+  .hero h1{font-family:var(--serif);font-weight:800;font-size:clamp(22px,4vw,32px);letter-spacing:-.5px;line-height:1.25;margin-bottom:8px}
+  .hero-meta{font-size:12.5px;color:var(--muted);line-height:1.9}
+
+  /* KPI Cards */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:18px 0 6px}
+  .kpi{background:var(--surface);border:1px solid var(--border-blue);border-radius:12px;padding:12px 14px;box-shadow:0 2px 10px rgba(0,102,255,.03)}
+  .kpi .lbl{font-size:11px;color:var(--muted);font-weight:600}
+  .kpi .val{font-family:var(--mono);font-size:22px;font-weight:700;line-height:1.3;margin-top:2px}
+  .kpi .sub{font-size:11px;color:var(--faint);margin-top:2px}
+
+  /* TOC */
+  .toc{position:sticky;top:0;z-index:50;background:rgba(243,247,251,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--border-blue);padding:9px 0}
+  .toc ul{display:flex;flex-wrap:wrap;gap:7px;list-style:none}
+  .toc a{font-size:12px;font-weight:600;color:var(--ink2);background:var(--surface);border:1px solid var(--border-blue);padding:4px 11px;border-radius:999px}
+  .toc a:hover{color:var(--brand);border-color:var(--brand)}
+
+  /* SECTIONS (安全留白，防止吸顶遮挡) */
+  section, .sec, [id]{margin-top:30px;scroll-margin-top:64px}
+  .sec-h{display:flex;align-items:center;gap:12px;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid var(--ink)}
+  .sec-no{font-family:var(--mono);font-size:12px;font-weight:800;color:var(--brand);background:var(--brand-bg);border:1px solid var(--border-blue);border-radius:8px;padding:3px 8px}
+  .sec-h h2{font-family:var(--serif);font-size:21px;font-weight:800;letter-spacing:-.3px}
+
+  /* BADGES */
+  .badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;font-family:var(--mono);white-space:nowrap}
+  .b-official{background:#ecfdf5;color:var(--official);border:1px solid #a7f3d0}
+  .b-repost{background:#eff6ff;color:var(--repost);border:1px solid #bfdbfe}
+  .b-warn{background:#fffbeb;color:var(--warn);border:1px solid #fde68a}
+  .b-error{background:#fef2f2;color:var(--error);border:1px solid #fecaca}
+
+  /* SAFE TABLES */
+  .tbl-wrap{overflow-x:auto;border:1px solid var(--border-blue);border-radius:12px;background:var(--surface);box-shadow:0 2px 12px rgba(0,102,255,.02);margin-top:4px}
+  table{border-collapse:collapse;width:100%;font-size:12.6px;min-width:760px}
+  thead th{background:#fbf2e7;color:#8c1515;font-size:11.5px;padding:10px 12px;text-align:left;white-space:nowrap;border-bottom:2px solid var(--border-blue)}
+  tbody td{padding:9px 12px;border-bottom:1px solid #eef3fa;vertical-align:top}
+  tbody tr:nth-child(even){background:#fafcff}
+  tbody tr:hover{background:#f0f6ff}
+  td.hd{font-weight:700;white-space:nowrap}
+
+  footer{margin-top:36px;text-align:center;font-size:11px;color:var(--faint)}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <div class="sub-badge"><span class="sub-badge-dot"></span>VERIFICATION · EVIDENCE REPORT</div>
+    <h1>{{REPORT_TITLE}}</h1>
+    <div class="hero-meta">
+      核验时间：<b>{{CHECK_DATE}}</b>｜核验范围：<b>{{SCOPE}}</b>
+    </div>
+    <div class="kpis">
+      {{KPIS_HTML}}
+    </div>
+  </div>
+</header>
+
+<nav class="toc"><div class="wrap"><ul>
+  <li><a href="#v1">01 结论摘要</a></li>
+  <li><a href="#v2">02 逐项核验明细</a></li>
+  <li><a href="#v3">03 重复与转载关系</a></li>
+  <li><a href="#v4">04 待复核与存疑项</a></li>
+  <li><a href="#v5">05 证据链与访问记录</a></li>
+</ul></div></nav>
+
+<div class="wrap">
+<section id="v1">
+  <div class="sec-h"><span class="sec-no">01</span><h2>核验结论摘要</h2></div>
+  {{SECTION_1_CONTENT}}
+</section>
+
+<section id="v2">
+  <div class="sec-h"><span class="sec-no">02</span><h2>逐项核验结果明细</h2></div>
+  <div class="tbl-wrap"><table>
+    <thead><tr>
+      <th>ID</th><th>标题/输入</th><th>结论</th><th>发布机构</th><th>发布日期</th><th>链接状态</th><th>原始来源 URL</th>
+    </tr></thead>
+    <tbody>
+      {{SECTION_2_ROWS}}
+    </tbody>
+  </table></div>
+</section>
+
+<section id="v3">
+  <div class="sec-h"><span class="sec-no">03</span><h2>重复与转载溯源关系</h2></div>
+  <div class="tbl-wrap"><table>
+    <thead><tr>
+      <th>记录 A</th><th>记录 B</th><th>关系判定</th><th>共同证据</th><th>原始候选</th>
+    </tr></thead>
+    <tbody>
+      {{SECTION_3_ROWS}}
+    </tbody>
+  </table></div>
+</section>
+
+<section id="v4">
+  <div class="sec-h"><span class="sec-no">04</span><h2>待人工复核与存疑项</h2></div>
+  {{SECTION_4_CONTENT}}
+</section>
+
+<section id="v5">
+  <div class="sec-h"><span class="sec-no">05</span><h2>证据链与访问记录</h2></div>
+  {{SECTION_5_CONTENT}}
+</section>
+
+<footer>
+  深小统智能工作台 · 官方来源与转载证据核验报告
+</footer>
+</div>
+</body>
+</html>

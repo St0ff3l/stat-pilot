@@ -16,8 +16,12 @@ inputs:
     description: 已整理的文章/文件记录，建议包含 title、organization、publish_time、summary、link。
   output_format:
     type: string
-    description: 可选 markdown、table、json 或 report，默认 markdown。
-    default: markdown
+    description: 输出格式，可选 html、markdown、both 或 json；若指定了 template_style 或报表风格，默认输出 html 或 both。
+    default: both
+  template_style:
+    type: string
+    description: 报表模版风格，可选 'geek' (默认极客卡片风), 'classic' (庄重朱红风), 'slate' (现代板岩风), 'dark' (暗黑海洋风), 'swiss' (先锋报刊风)。
+    default: "geek"
 ---
 
 # 官方来源、链接与重复转载核验
@@ -99,7 +103,37 @@ inputs:
 
 ## 输出格式
 
-默认输出以下表格，并在表后给汇总：
+### HTML 交互核验报告自动生成规则（核心交付物）
+
+当用户指定了视觉风格（如“极客卡片”、“政务经典”、“现代板岩”等）、传入了 `template_style`、或要求生成 HTML 报告时，**必须直接生成独立的 HTML 核验报告文件**：
+
+1. **读取内置模版**：读取 `./templates/template_<style>.html`（支持 `geek_weekly`、`authority_classic`、`slate_tech`、`dark_ocean`、`swiss_editorial`；默认 `geek_weekly`）。
+2. **填充核心内容**：
+   - 顶部 Hero 与核验范围概览；
+   - 顶部 KPI 卡片：核验总项数、已确认官方数、官方转载数、疑似/失效数；
+   - 逐项核验明细表格与重复转载对照表；
+   - 待人工复核与证据链记录；
+   - 每一个条目都带有官方状态色标（已确认官方、官方转载、疑似、失效）与可直接点击的原网链接。
+3. **输出路径与链接**：
+   - 统一保存在工作区 `output/` 目录下（如 `output/官方来源与转载核验报告.html`）；
+   - 对话末尾提供 Markdown 本地文件链接：`[打开输出目录](file:///.../output/)`。
+
+### HTML 排版安全与防遮挡规范
+
+1. **【严禁项】禁止在滚动容器内对表头添加 sticky 偏移**：如果表格外层包裹了 `.tbl-wrap { overflow-x: auto; }`，**绝对严禁**在 `thead th` 或 `thead` 上设置 `position: sticky; top: ...`！必须使用常规流（`position: static`）排版，保证表格第一行内容完全露出。
+2. **【必选设置】吸顶导航锚点安全留白**：带有吸顶导航（`position: sticky; top: 0`）时，所有章节（`<section>` 或带有 `id` 的锚点目标）**必须强制设置 `scroll-margin-top: 64px`**，确保页面滚动定位到指定章节时，标题不会被吸顶导航栏遮盖。
+3. **【标准安全 CSS 片段（请直接复用）】**：
+```css
+section, .sec, [id] { margin-top: 30px; scroll-margin-top: 64px; }
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--border-blue, #dbeafe); border-radius: 12px; background: var(--surface, #ffffff); margin-top: 4px; }
+table { border-collapse: collapse; width: 100%; font-size: 12.6px; min-width: 760px; }
+thead th { background: #eef4ff; color: #1e3a8a; font-size: 11.5px; padding: 10px 12px; text-align: left; white-space: nowrap; border-bottom: 2px solid var(--border-blue, #dbeafe); }
+tbody td { padding: 9px 12px; border-bottom: 1px solid #eef3fa; vertical-align: top; }
+tbody tr:nth-child(even) { background: #fafcff; }
+tbody tr:hover { background: #f0f6ff; }
+```
+
+### 聊天对话中的 Markdown 默认结构
 
 ```markdown
 # 文件与来源核验报告

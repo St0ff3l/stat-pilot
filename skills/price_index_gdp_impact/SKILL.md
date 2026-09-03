@@ -17,8 +17,12 @@ inputs:
     default: 深圳市
   output_format:
     type: string
-    description: 可选 markdown、table、json 或 report，默认 markdown。
-    default: markdown
+    description: 输出格式，可选 html、markdown、both 或 json；若指定了 template_style 或报表风格，默认输出 html 或 both。
+    default: both
+  template_style:
+    type: string
+    description: 报表模版风格，可选 'geek' (默认极客卡片速查风), 'classic' (庄重朱红风), 'slate' (现代板岩风), 'dark' (暗黑海洋风), 'swiss' (先锋报刊风)。
+    default: "geek"
 ---
 
 # 价格指数对 GDP 各项影响分析
@@ -97,7 +101,45 @@ inputs:
 
 本技能输出的每个事实、数字、图表、表格和分析结论都必须同时写发布单位或网站全称、文章来源/页面完整标题和指向具体原文的链接。只写单位、网站名、域名或栏目页均不合格；无法核验时写“来源：未提供/待核验”，不得编造 URL、标题、单位或数据。
 
-默认按以下结构输出，简洁结论后给证据和方法：
+### HTML 交互报表自动生成规则（核心交付物）
+
+当用户指定了视觉风格（如“极客卡片”、“政务经典”、“现代板岩”、“暗黑海洋”、“瑞士编辑”）、传入了 `template_style`、或要求生成 HTML/速查卡/报告时，**必须直接生成独立的 HTML 报表文件**：
+
+1. **读取内置模版**：直接读取本 Skill 目录下的 `./templates/template_<style>.html`（支持 `geek_weekly`、`authority_classic`、`slate_tech`、`dark_ocean`、`swiss_editorial`；未指定时默认使用 `geek_weekly` 极客卡片风）。
+2. **填充核心组件**：
+   - 顶部 Hero：报表大标题、地区名称、数据窗口、证据分级标签；
+   - 顶部 5 个 KPI 芯片：名义与实际 GDP、隐含平减指数、CPI、PPI 及涨跌幅对比；
+   - 吸顶章节导航条：包含 01 结论、02 口径、03 映射表、04 定量拆分、05 情景推演、06 局限待补、07 数据来源等锚点；
+   - 价格指数 ↔ GDP 分项映射大表与结论表：包含分项名称、对应指数、名义影响、实际量影响、传导渠道、时滞与证据等级；
+   - 规范来源清单（S1～Sn）：逐条提供发布机构全称、文章完整标题与具体原文超链接。
+3. **输出规范与路径**：
+   - 统一写入工作区 `output/` 目录（例如 `output/价格指数×深圳GDP影响速查卡.html`），不得直接写入工作区根目录。
+   - 对话中输出关键结论摘要，并在末尾给出可直接在本地浏览器中打开的 Markdown 链接：`[打开输出目录](file:///.../output/)`。
+
+### HTML 排版安全与无重叠硬性规范（防遮挡红线）
+
+为彻底避免排版崩溃，生成或调整 HTML 时必须严格遵守以下准则：
+1. **【严禁项】禁止在滚动容器内对表头添加 sticky 偏移**：如果表格外层包裹了 `.tbl-wrap { overflow-x: auto; }`，**绝对严禁**在 `thead th` 或 `thead` 上设置 `position: sticky; top: 44px;`！这会导致浏览器将其按滚动容器内部偏移计算，直接遮盖第一行内容。表头必须采用常规流（`position: static`）排版，保证表格第一行内容完全露出。
+2. **【必选设置】吸顶导航锚点安全留白**：带有吸顶导航（`position: sticky; top: 0`）时，所有章节（`<section>` 或带有 `id` 的锚点目标）**必须强制设置 `scroll-margin-top: 64px`**，确保页面滚动定位到指定章节时，标题不会被吸顶导航栏遮盖。
+3. **【标准安全 CSS 片段（请直接复用，切勿随意修改）】**：
+```css
+/* 必须包含的安全滚动间距，防止吸顶导航遮挡章节标题 */
+section, .sec, [id] { margin-top: 30px; scroll-margin-top: 64px; }
+
+/* 必须包含的安全表格，严禁添加 position: sticky; top: ... 避免遮盖第 1 行内容 */
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--border-blue, #dbeafe); border-radius: 12px; background: var(--surface, #ffffff); box-shadow: 0 2px 12px rgba(0,102,255,.02); margin-top: 4px; }
+table { border-collapse: collapse; width: 100%; font-size: 12.6px; min-width: 760px; }
+thead th { background: #eef4ff; color: #1e3a8a; font-size: 11.5px; padding: 10px 12px; text-align: left; white-space: nowrap; border-bottom: 2px solid var(--border-blue, #dbeafe); }
+tbody td { padding: 9px 12px; border-bottom: 1px solid #eef3fa; vertical-align: top; }
+tbody tr:nth-child(even) { background: #fafcff; }
+tbody tr:hover { background: #f0f6ff; }
+td.hd { font-weight: 700; white-space: nowrap; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+```
+
+### 对话中的结构化输出
+
+对话窗口内提供简洁的结构化 Markdown 输出，与 HTML 报表互为补充：
 
 ```markdown
 # 价格指数对 GDP 各项影响分析

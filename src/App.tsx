@@ -16,6 +16,7 @@ function formatRelativeTime(value: number): string {
 function withDisplayModel(appState: HermesAppState): HermesAppState["settings"] {
   return {
     defaultOutputDir: "output",
+    customModels: [],
     ...appState.settings,
     model: appState.settings.runtimeMode === "official" ? appState.official.defaultModel : appState.settings.model,
   };
@@ -27,6 +28,7 @@ const PROVIDER_PRESET_MODELS: Record<string, Array<{ id: string; label: string; 
   deepseek: [
     { id: "deepseek-v4-flash", label: "deepseek-v4-flash", desc: "DeepSeek-V4 Flash 快速" },
     { id: "deepseek-v4-pro", label: "deepseek-v4-pro", desc: "DeepSeek-V4 Pro 旗舰" },
+    { id: "deepseek-v4-flash-vision-exp", label: "deepseek-v4-flash-vision-exp", desc: "DeepSeek-V4 Flash Vision 视觉实验版" },
   ],
   openai: [
     { id: "gpt-5.5", label: "gpt-5.5", desc: "GPT-5.5 最新旗舰" },
@@ -160,6 +162,18 @@ const BUILTIN_SKILL_ICONS: Record<string, string> = {
   gov_official_document_drafting: "📝",
 };
 
+function formatCleanTaskTitle(title: string): string {
+  if (!title) return "";
+  const skillMatch = title.match(/^@([a-zA-Z0-9_\-]+)(?:\s+|$)/);
+  if (skillMatch) {
+    const skillName = skillMatch[1];
+    const displayName = BUILTIN_SKILL_DISPLAY_NAMES[skillName] || skillName;
+    const rest = title.replace(/^@[a-zA-Z0-9_\-]+\s*/, "").trim();
+    return rest ? `[${displayName}] ${rest}` : `[${displayName}]`;
+  }
+  return title;
+}
+
 const REPORT_STYLE_OPTIONS: ReportStyleOption[] = [
   {
     id: "geek",
@@ -193,7 +207,13 @@ const REPORT_STYLE_OPTIONS: ReportStyleOption[] = [
   },
 ];
 
-const REPORT_SKILL_NAMES = new Set(["info_digest_html", "weekly_report"]);
+const REPORT_SKILL_NAMES = new Set([
+  "info_digest_html",
+  "weekly_report",
+  "price_index_gdp_impact",
+  "source_verification",
+  "gov_official_document_drafting",
+]);
 
 const BUILTIN_SKILL_START_PROMPTS: Record<string, string> = {
   weekly_report:
@@ -679,12 +699,12 @@ function App() {
   }
 
   function isWorkspaceLocked() {
+    // 只有在当前会话已经产生真实交互消息或正在生成中时，才锁定工作区选择
+    // 在用户发消息前，允许自由切换工作区，并在输入框底部清晰展示当前选中的文件夹
     return workspaceSelectionLocked || Boolean(
-      state?.settings.cwd ||
-      state?.activeThreadId ||
-      state?.messages.length ||
+      (activeMessages && activeMessages.length > 0) ||
       state?.activeDraft ||
-      state?.busy
+      (state?.messages && state.messages.length > 0)
     );
   }
 
@@ -801,11 +821,20 @@ function App() {
     const style = REPORT_STYLE_OPTIONS.find((option) => option.id === styleId);
     if (!skillName || !style) return;
 
-    const prompt = skillName === "info_digest_html"
-      ? `请生成动态信息汇总 HTML 报表，使用“${style.label}”风格（template_style: ${style.id}）。采集或整理统计、政务和信息化动态，输出可打开的 HTML 文件；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接。`
-      : skillName === "weekly_report"
-        ? `请采集最近 7 天统计信息化、数字化、人工智能和大数据相关动态，生成统计信息化动态周报 HTML，使用“${style.label}”风格（template_style: ${style.id}）；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接。`
-        : `${BUILTIN_SKILL_START_PROMPTS[skillName] || "请使用当前技能完成我的任务，并为所有事实性内容附发布单位或网站全称、文章来源/页面完整标题和具体原文链接。"}\n\n请按“${style.label}”风格组织最终输出：${style.description}`;
+    let prompt = "";
+    if (skillName === "info_digest_html") {
+      prompt = `请生成动态信息汇总 HTML 报表，使用内置“${style.label}”风格模版（template_style: ${style.id}）。采集或整理统计、政务和信息化动态，直接在工作区 output/ 目录下生成完整的独立 HTML 文件；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接，并在对话末尾给出 [打开输出目录] 链接。`;
+    } else if (skillName === "weekly_report") {
+      prompt = `请采集最近 7 天统计信息化、数字化、人工智能和大数据相关动态，使用内置“${style.label}”风格模版（template_style: ${style.id}），生成统计信息化动态周报独立的 HTML 文件并写入工作区 output/ 目录；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接，并在对话末尾给出 [打开输出目录] 链接。`;
+    } else if (skillName === "price_index_gdp_impact") {
+      prompt = `请默认以深圳市为分析对象，分析 CPI、PPI、GDP 平减指数等价格指数对 GDP 各项（消费、投资、净出口及名义/实际 GDP）的影响；优先使用深圳市统计局及深圳市政府官方统计数据，国家和广东省数据只作口径或对照，区分相关性与因果性，并为每个事实附发布单位或网站全称、完整标题和具体原文链接。\n\n【输出要求】：请直接使用内置“${style.label}”风格模版（template_style: ${style.id}），生成完整的可视化独立 HTML 报告文件并写入工作区 output/ 目录（如 output/价格指数×深圳GDP影响速查卡.html）。页面必须包含顶部 KPI 芯片、吸顶章节导航、高密度映射表格、证据分级标签及可点击原文超链接；严格遵守表格自然流排版，严禁使用导致内容遮挡的样式；并在对话最后提供 [打开输出目录] 链接。`;
+    } else if (skillName === "source_verification") {
+      prompt = `请核验我接下来提交的文件或链接：确认是否为官方来源、发布日期、发布机构、具体原文链接是否有效，并识别重复、转载和二次改写关系；输出逐项证据和发布单位或网站全称、完整标题、具体原文链接。\n\n【输出要求】：请同时使用内置“${style.label}”风格模版（template_style: ${style.id}），直接在工作区 output/ 目录生成独立的 HTML 证据核验报告文件，包含核验结论 KPI、核验结果明细表、重复转载对照表和完整可点击来源链，并在对话末尾给出 [打开输出目录] 链接。`;
+    } else if (skillName === "gov_official_document_drafting") {
+      prompt = `请按深圳市统计局官方网站公开页面的政务文风起草公文：先根据我的任务判断合适的文种，保留文号、落款、联系人等待补字段，不虚构正式发布信息，并为事实、政策依据和数据附发布单位或网站全称、完整标题和具体原文链接。\n\n【输出要求】：除了在对话中提供可直接审阅的 Markdown 公文草案外，请同时使用内置“${style.label}”风格模版（template_style: ${style.id}），在工作区 output/ 目录生成一份排版规范、打印友好且来源标注完整的独立 HTML 参阅公文文件，并在对话末尾给出 [打开输出目录] 链接。`;
+    } else {
+      prompt = `${BUILTIN_SKILL_START_PROMPTS[skillName] || "请使用当前技能完成我的任务，并为所有事实性内容附发布单位或网站全称、文章来源/页面完整标题和具体原文链接。"}\n\n【输出要求】：请按“${style.label}”风格（template_style: ${style.id}）生成独立可打开的 HTML 成果文件并保存到工作区 output/ 目录，并在末尾给出可点击链接：${style.description}`;
+    }
 
     setStylePickerSkillName(null);
     startSkillTask(skillName, prompt);
@@ -866,7 +895,7 @@ function App() {
     setIsFolderMenuOpen(false);
     setActiveBranch(null);
     const nextState = await window.hermesDesktop.updateSettings({ cwd: folderPath });
-    setWorkspaceSelectionLocked(true);
+    // 选完文件夹不立即锁定，保留在输入框左下方展示当前选中的文件夹名称，等用户发消息后再锁定
     setState(nextState);
   }
 
@@ -917,6 +946,9 @@ function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [settingsBusyText, setSettingsBusyText] = useState<string | null>(null);
   const headerModelDirtyRef = useRef(false);
+  const [customModelInput, setCustomModelInput] = useState("");
+  const [selectedModelToAdd, setSelectedModelToAdd] = useState("");
+  const [isManualInputMode, setIsManualInputMode] = useState(false);
   const [draftSettings, setDraftSettings] = useState<HermesAppState["settings"]>({
     hermesBin: "hermes",
     runtimeMode: "private",
@@ -924,6 +956,7 @@ function App() {
     model: "",
     cwd: "",
     defaultOutputDir: "output",
+    customModels: [],
     apiProvider: "deepseek",
     apiKey: "",
     apiBaseUrl: "",
@@ -941,6 +974,8 @@ function App() {
   });
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLElement | null>(null);
+  const isAutoScrollUnlockedRef = useRef(false);
+  const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
   const activeDraftScrollKey = state?.activeDraft?.segments
     ?.map((segment) => `${segment.reasoning ?? ""}\u0000${segment.text ?? ""}`)
     .join("\u0001");
@@ -1099,6 +1134,11 @@ function App() {
   }, [state?.activeThreadId, state?.messages, state?.lastGeneratedFiles]);
 
   useEffect(() => {
+    // 如果用户手动向上滚动解锁了自动跟随，则保持在用户浏览位置，不强行将页面拽回底部
+    if (isAutoScrollUnlockedRef.current) {
+      return;
+    }
+
     // Reasoning is streamed separately from the final answer. Include both the
     // top-level fields and segment content so the viewport follows while the
     // model is still thinking, not only after answer text arrives.
@@ -1133,6 +1173,45 @@ function App() {
     state?.activeDraft?.reasoning,
     activeDraftScrollKey,
   ]);
+
+  function handleMessagesScroll(event: React.UIEvent<HTMLElement>) {
+    const scroller = event.currentTarget;
+    const composerHeight = composerRef.current?.getBoundingClientRect().height ?? 180;
+    const distanceFromBottom = scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight);
+
+    // 用户手动向上翻阅（距离底部超过一定距离）时，解锁自动跟随并显示“回到底部”按钮
+    if (distanceFromBottom > composerHeight + 50) {
+      if (!isAutoScrollUnlockedRef.current) {
+        isAutoScrollUnlockedRef.current = true;
+        setShowScrollBottomBtn(true);
+      }
+    } else {
+      // 用户手动滚回了底部附近，重新恢复自动跟随锁定
+      if (isAutoScrollUnlockedRef.current) {
+        isAutoScrollUnlockedRef.current = false;
+        setShowScrollBottomBtn(false);
+      }
+    }
+  }
+
+  function scrollToBottom() {
+    isAutoScrollUnlockedRef.current = false;
+    setShowScrollBottomBtn(false);
+    const end = messagesEndRef.current;
+    const scroller = end?.closest(".message-scroller") as HTMLElement | null;
+    if (!end || !scroller) return;
+
+    const composerHeight = composerRef.current?.getBoundingClientRect().height ?? 180;
+    const scrollerRect = scroller.getBoundingClientRect();
+    const endRect = end.getBoundingClientRect();
+    const visibleBottom = scrollerRect.bottom - composerHeight - 24;
+    const delta = endRect.bottom - visibleBottom;
+
+    scroller.scrollTo({
+      top: Math.max(0, scroller.scrollTop + delta),
+      behavior: "smooth",
+    });
+  }
 
   useEffect(() => {
     const isModelSwitching = !!state?.busy && !!state?.status && state.status.includes("切换模型");
@@ -1170,6 +1249,8 @@ function App() {
     setIsFolderMenuOpen(false);
     setActiveBranch(null);
     setIsThreadLoading(true);
+    isAutoScrollUnlockedRef.current = false;
+    setShowScrollBottomBtn(false);
     try {
       const nextState = await window.hermesDesktop.newThread();
       setState(nextState);
@@ -1185,13 +1266,68 @@ function App() {
 
     setActiveMainTab("chat");
     setSelectedAttachments([]);
+    setWorkspaceSelectionLocked(false);
+    isAutoScrollUnlockedRef.current = false;
+    setShowScrollBottomBtn(false);
     setIsThreadLoading(true);
     try {
       const nextState = await window.hermesDesktop.selectThread(threadId);
       setState(nextState);
+      if (window.hermesDesktop.ackThreadCompleted) {
+        void window.hermesDesktop.ackThreadCompleted(threadId);
+      }
     } finally {
       setIsThreadLoading(false);
     }
+  }
+
+  const [navInterruptConfirm, setNavInterruptConfirm] = useState<{
+    open: boolean;
+    targetType: "newChat" | "selectThread";
+    targetThreadId?: string;
+  }>({ open: false, targetType: "newChat" });
+
+  function handleSafeCreateNewChat() {
+    if (state?.busy) {
+      setNavInterruptConfirm({ open: true, targetType: "newChat" });
+      return;
+    }
+    setActiveMainTab("chat");
+    void createNewChat();
+  }
+
+  function handleSafeSelectThread(threadId: string) {
+    if (threadId === state?.activeThreadId) {
+      return;
+    }
+    if (state?.busy) {
+      setNavInterruptConfirm({ open: true, targetType: "selectThread", targetThreadId: threadId });
+      return;
+    }
+    void selectThread(threadId);
+  }
+
+  async function handleConfirmNavInterrupt() {
+    const { targetType, targetThreadId } = navInterruptConfirm;
+    setNavInterruptConfirm({ open: false, targetType: "newChat" });
+    if (window.hermesDesktop && state?.busy) {
+      try {
+        const nextState = await window.hermesDesktop.stopMessage();
+        setState(nextState);
+      } catch (e) {
+        console.error("Failed to stop message on nav interrupt:", e);
+      }
+    }
+    if (targetType === "newChat") {
+      setActiveMainTab("chat");
+      await createNewChat();
+    } else if (targetType === "selectThread" && targetThreadId) {
+      await selectThread(targetThreadId);
+    }
+  }
+
+  function handleCancelNavInterrupt() {
+    setNavInterruptConfirm({ open: false, targetType: "newChat" });
   }
 
   async function deleteThread(threadId: string, threadName?: string | null) {
@@ -1240,6 +1376,9 @@ function App() {
     setDraft("");
     setSelectedSkillTag(null);
     setSelectedAttachments([]);
+    setWorkspaceSelectionLocked(true);
+    isAutoScrollUnlockedRef.current = false;
+    setShowScrollBottomBtn(false);
     try {
       const nextState = await window.hermesDesktop.sendMessage({ text });
       setState(nextState);
@@ -1279,8 +1418,18 @@ function App() {
 
     setSettingsBusyText("正在保存配置并应用...");
     const workspaceChanged = draftSettings.cwd !== state?.settings.cwd;
+
+    const customList = Array.isArray(draftSettings.customModels) ? [...draftSettings.customModels] : [];
+    if (draftSettings.model && draftSettings.runtimeMode !== "official" && !customList.includes(draftSettings.model)) {
+      customList.push(draftSettings.model);
+    }
+    const finalSettings = {
+      ...draftSettings,
+      customModels: Array.from(new Set(customList.map(String).map((s) => s.trim()).filter(Boolean))),
+    };
+
     try {
-      const nextState = await window.hermesDesktop.updateSettings(draftSettings);
+      const nextState = await window.hermesDesktop.updateSettings(finalSettings);
       if (workspaceChanged) {
         setWorkspaceSelectionLocked(true);
       }
@@ -1357,6 +1506,42 @@ function App() {
     }
   }
 
+  function handleAddCustomModel(modelToAdd?: string) {
+    const modelName = (modelToAdd || (isManualInputMode ? customModelInput : selectedModelToAdd) || customModelInput).trim();
+    if (!modelName) return;
+
+    setDraftSettings((current: HermesAppState["settings"]) => {
+      const presets = (PROVIDER_PRESET_MODELS[current.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
+      const existingList = Array.isArray(current.customModels) && current.customModels.length > 0
+        ? current.customModels
+        : presets;
+      const nextCustomModels = Array.from(new Set([...existingList, modelName]));
+      return {
+        ...current,
+        model: modelName,
+        customModels: nextCustomModels,
+      };
+    });
+    setCustomModelInput("");
+    setSelectedModelToAdd("");
+    setIsManualInputMode(false);
+  }
+
+  function handleRemoveCustomModel(modelToRemove: string) {
+    setDraftSettings((current: HermesAppState["settings"]) => {
+      const presets = (PROVIDER_PRESET_MODELS[current.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
+      const existingList = Array.isArray(current.customModels) && current.customModels.length > 0
+        ? current.customModels
+        : presets;
+      const nextCustomModels = existingList.filter((m) => m !== modelToRemove);
+      return {
+        ...current,
+        customModels: nextCustomModels,
+        model: current.model === modelToRemove ? (nextCustomModels[0] || "") : current.model,
+      };
+    });
+  }
+
   async function applyModelChange(selectedModel: string) {
     if (!window.hermesDesktop) {
       return;
@@ -1367,9 +1552,14 @@ function App() {
       const nextState = await window.hermesDesktop.switchSessionModel(selectedModel);
       setState(nextState);
     } else {
+      const customList = Array.isArray(state?.settings.customModels) ? [...state.settings.customModels] : [];
+      if (selectedModel && !customList.includes(selectedModel)) {
+        customList.push(selectedModel);
+      }
       const nextState = await window.hermesDesktop.updateSettings({
         ...state?.settings,
         model: selectedModel,
+        customModels: customList,
       });
       setState(nextState);
       await window.hermesDesktop.switchSessionModel(selectedModel);
@@ -1443,6 +1633,13 @@ function App() {
     }
     return threads.sort((a, b) => b.updatedAt - a.updatedAt);
   }, [activeThread, activeThreadTitle, state?.activeThreadId, state?.threads]);
+
+  const runningTaskCount = (state?.threads || []).filter((t) => t.taskStatus === "running").length;
+  const queuedTaskCount = (state?.threads || []).filter((t) => t.taskStatus === "queued").length;
+  const concurrencyOverview = runningTaskCount > 0
+    ? `${runningTaskCount} 个任务运行中${queuedTaskCount > 0 ? ` (${queuedTaskCount} 个排队)` : ""}`
+    : null;
+
   const groupedThreads = useMemo(() => {
     const groups: Array<{ folderName: string; threads: HermesThreadSummary[] }> = [];
     const map = new Map<string, HermesThreadSummary[]>();
@@ -1474,7 +1671,7 @@ function App() {
 
     return groups;
   }, [orderedThreads]);
-  const activeName = activeThread?.name || activeThread?.preview || "新对话";
+  const activeName = formatCleanTaskTitle(activeThread?.name || activeThread?.preview || "新对话");
   const hasUnresolvedHistoricalTurn = Boolean(
     activeMessages.length > 0 &&
       activeMessages[activeMessages.length - 1]?.role === "user" &&
@@ -1522,7 +1719,18 @@ function App() {
   const officialModelDirty = !!state && draftSettings.runtimeMode === "official" && draftSettings.model !== state.official.defaultModel;
   const currentProviderPresets = (PROVIDER_PRESET_MODELS[state?.settings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
   const currentSavedModel = isOfficialMode ? state?.official.defaultModel : state?.settings.model;
-  const customModelList = Array.from(new Set([currentSavedModel, ...currentProviderPresets].filter(Boolean) as string[]));
+  const savedCustomModels = Array.isArray(state?.settings.customModels) ? state.settings.customModels : [];
+  const draftCustomModels = Array.isArray(draftSettings.customModels) ? draftSettings.customModels : [];
+  const customModelList = Array.from(
+    new Set(
+      [
+        currentSavedModel,
+        ...savedCustomModels,
+        ...draftCustomModels,
+        ...currentProviderPresets,
+      ].filter(Boolean) as string[]
+    )
+  );
 
   const quickModelOptions = isOfficialMode
     ? ((state?.official.availableModels.length ?? 0) > 0 ? (state?.official.availableModels ?? []) : [state?.official.defaultModel ?? draftSettings.model])
@@ -1550,7 +1758,8 @@ function App() {
     state.status.startsWith("Connecting") ||
     !state.runtime.installed
   );
-  const canSend = !needsProviderSetup && !isHermesMissing && !state?.busy && !isThreadLoading && !isInitializing;
+  const isCurrentThreadBusy = Boolean(state?.busy);
+  const canSend = !needsProviderSetup && !isHermesMissing && !isCurrentThreadBusy && !isThreadLoading && !isInitializing;
 
   const statusDotClass = isInitializing
     ? "warning"
@@ -1560,7 +1769,9 @@ function App() {
       ? "warning"
       : state?.error
         ? "error"
-        : "";
+        : runningTaskCount > 0 || state?.busy
+          ? "busy"
+          : "";
 
   const statusLabel = isInitializing
     ? "加载中..."
@@ -1570,7 +1781,7 @@ function App() {
       ? (isOfficialMode ? "官方账号未登录" : "未配置 API 密钥")
       : state?.error
         ? "运行异常"
-        : (state?.status || "Ready.");
+        : (concurrencyOverview || state?.status || "Ready.");
 
   if (!state) {
     return (
@@ -1660,7 +1871,7 @@ function App() {
           <button
             type="button"
             className={`sidebar-action-item ${activeMainTab === "chat" ? "!bg-blue-50/80 !text-blue-600 font-bold" : ""}`}
-            onClick={() => { setActiveMainTab("chat"); void createNewChat(); }}
+            onClick={handleSafeCreateNewChat}
             disabled={isHermesMissing}
             title="新建任务"
           >
@@ -1720,16 +1931,48 @@ function App() {
                   </div>
                   <div className="thread-folder-items">
                     {threads.map((thread) => {
-                      const title = thread.name || thread.preview || "未命名对话";
+                      const title = formatCleanTaskTitle(thread.name || thread.preview || "未命名对话");
                       const isActive = thread.id === state.activeThreadId;
+                      const taskStatus = thread.taskStatus || "idle";
                       return (
                         <div
                           key={thread.id}
-                          className={`thread-item-slim group ${isActive ? "active" : ""}`}
-                          onClick={() => void selectThread(thread.id)}
+                          className={`thread-item-slim group ${isActive ? "active" : ""} ${taskStatus !== "idle" ? `task-${taskStatus}` : ""}`}
+                          onClick={() => handleSafeSelectThread(thread.id)}
                           title={`${title} • ${formatRelativeTime(thread.updatedAt)}`}
                         >
                           <span className="thread-item-slim-title">{title}</span>
+
+                          {taskStatus === "running" && (
+                            <span className="thread-task-badge running" title="后台正在执行分析中...">
+                              <span className="thread-task-spinner" />
+                              <span className="thread-task-text">运行中</span>
+                            </span>
+                          )}
+                          {taskStatus === "approving" && (
+                            <span className="thread-task-badge approving" title="任务需要安全授权，点击进入处理">
+                              <span className="thread-task-dot approving" />
+                              <span className="thread-task-text">待授权</span>
+                            </span>
+                          )}
+                          {taskStatus === "clarifying" && (
+                            <span className="thread-task-badge clarifying" title="任务需要补充确认信息，点击进入回复">
+                              <span className="thread-task-dot clarifying" />
+                              <span className="thread-task-text">待确认</span>
+                            </span>
+                          )}
+                          {taskStatus === "queued" && (
+                            <span className="thread-task-badge queued" title="排队等待空闲槽位...">
+                              <span className="thread-task-dot" />
+                              <span className="thread-task-text">排队中</span>
+                            </span>
+                          )}
+                          {taskStatus === "completed" && (
+                            <span className="thread-task-badge completed" title="任务已完成，点击查看">
+                              <span className="thread-task-text">✓ 完成</span>
+                            </span>
+                          )}
+
                           <button
                             type="button"
                             className="thread-item-slim-delete"
@@ -1840,7 +2083,7 @@ function App() {
             </div>
           </header>
 
-          <section className="message-scroller">
+          <section className="message-scroller" onScroll={handleMessagesScroll}>
             {isThreadLoading || isInitializing ? (
               <div className="thread-loading-wrapper flex flex-col gap-6 w-full max-w-[860px] mx-auto py-4 px-2 overflow-hidden animate-fade-in">
                 <div className="loading-status-bar flex items-center justify-center gap-2.5 py-1.5 px-4 rounded-full bg-blue-50/90 border border-blue-200/60 w-fit mx-auto shadow-xs text-xs font-medium text-blue-700">
@@ -2059,12 +2302,52 @@ function App() {
 
                   if (group.role === "user") {
                     const msg = group.messages[0];
+                    const rawText = msg.text || "";
+                    const skillMatch = rawText.match(/^@([a-zA-Z0-9_\-]+)(?:\s+|$)/);
+                    const invokedSkillName = skillMatch ? skillMatch[1] : null;
+                    const invokedSkillDisplayName = invokedSkillName
+                      ? state?.skills.find((s) => s.name === invokedSkillName)?.displayName ||
+                        BUILTIN_SKILL_DISPLAY_NAMES[invokedSkillName] ||
+                        invokedSkillName
+                      : null;
+                    const cleanText = invokedSkillName
+                      ? rawText.replace(/^@[a-zA-Z0-9_\-]+\s*/, "").trim()
+                      : rawText;
+
                     return (
                       <article key={group.id} className="bubble user">
                         <div className="bubble-head">
                           <strong>你</strong>
                         </div>
-                        <MessageBody role="user" text={msg.text} />
+                        {invokedSkillName && (
+                          <div style={{ marginBottom: "8px" }}>
+                            <span
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "5px",
+                                padding: "3px 10px 3px 8px",
+                                borderRadius: "20px",
+                                fontSize: "0.80rem",
+                                fontWeight: 500,
+                                whiteSpace: "nowrap",
+                                userSelect: "none",
+                                background: "#fef3c7",
+                                color: "#92400e",
+                                border: "1px solid rgba(217, 119, 6, 0.35)",
+                                boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+                                lineHeight: 1.2,
+                                verticalAlign: "middle",
+                              }}
+                            >
+                              <svg className="w-3.5 h-3.5 text-amber-700 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                              </svg>
+                              <span>{invokedSkillDisplayName}</span>
+                            </span>
+                          </div>
+                        )}
+                        <MessageBody role="user" text={cleanText} />
                       </article>
                     );
                   }
@@ -2149,6 +2432,21 @@ function App() {
                     </div>
                   </article>
                 ) : null}
+
+                {!isHermesMissing && state?.busy && !state?.activeDraft && state?.status?.includes("排队") ? (
+                  <article className="bubble assistant queued-bubble">
+                    <div className="bubble-head">
+                      <strong>深小统</strong>
+                    </div>
+                    <div className="task-queue-banner">
+                      <span className="task-queue-spinner" />
+                      <div className="task-queue-info">
+                        <span className="task-queue-title">任务已进入排队队列</span>
+                        <span className="task-queue-desc">{state.status}（前序任务完成释放槽位后，将自动无缝接力启动）</span>
+                      </div>
+                    </div>
+                  </article>
+                ) : null}
               </>
             )}
 
@@ -2156,6 +2454,21 @@ function App() {
           </section>
 
           <footer ref={composerRef} className="composer">
+            {showScrollBottomBtn && (
+              <div className="scroll-bottom-container">
+                <button
+                  type="button"
+                  className="scroll-to-bottom-pill"
+                  onClick={scrollToBottom}
+                  title="点击滚到最新内容"
+                >
+                  <svg className="w-3.5 h-3.5 text-blue-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                  <span>回到底部</span>
+                </button>
+              </div>
+            )}
             {selectedDigestList.length > 0 && (
               <div className="digest-composer-toolbar">
                 <div className="digest-bar-info">
@@ -2383,7 +2696,7 @@ function App() {
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
-                    if (state?.busy) {
+                    if (isCurrentThreadBusy) {
                       void handleStopMessage();
                     } else {
                       void sendMessage();
@@ -2421,11 +2734,11 @@ function App() {
                   <div ref={folderMenuRef} className="relative">
                   <button
                     type="button"
-                    className="trae-selector-pill"
+                    className={`trae-selector-pill ${currentCwd ? "!border-blue-300 !text-blue-700 !bg-blue-50/80 font-medium" : ""}`}
                     onClick={() => setIsFolderMenuOpen((prev) => !prev)}
-                    title={currentCwd || "选择项目工作区（可选）"}
+                    title={currentCwd ? `当前工作区：${currentCwd}（发消息前可点击更换）` : "选择项目工作区（可选）"}
                   >
-                    <svg className="w-3.5 h-3.5 text-slate-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <svg className={`w-3.5 h-3.5 ${currentCwd ? "text-blue-600" : "text-slate-500"} shrink-0`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
                     </svg>
                     <span className="truncate" style={{ maxWidth: "220px" }}>
@@ -2507,7 +2820,7 @@ function App() {
                 </div>
 
                 {/* Right Side: Send or Stop Button */}
-              {state?.busy ? (
+              {isCurrentThreadBusy ? (
                 <button
                   type="button"
                   className="trae-stop-icon-btn"
@@ -2946,44 +3259,241 @@ function App() {
                           </small>
                         </div>
                       ) : (
-                        <div>
-                          <input
-                            value={draftSettings.model}
-                            onChange={(event) =>
-                              setDraftSettings((current: HermesAppState["settings"]) => ({
-                                ...current,
-                                model: event.target.value,
-                              }))
-                            }
-                            placeholder="填写模型 ID，例如 gpt-5.5 或 deepseek-v4-flash"
-                          />
-                          <div className="model-preset-chips">
-                            <span className="preset-chips-label">快捷选择预设模型：</span>
-                            <div className="preset-chips-list">
-                              {(PROVIDER_PRESET_MODELS[draftSettings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((preset) => (
-                                <button
-                                  key={preset.id}
-                                  type="button"
-                                  className={`preset-chip-btn ${draftSettings.model === preset.id ? "active" : ""}`}
-                                  onClick={() => {
-                                    setDraftSettings((current) => ({
-                                      ...current,
-                                      model: preset.id,
-                                    }));
+                        <div className="provider-models-manager" style={{ marginTop: "4px" }}>
+                          <div style={{ fontSize: "12.5px", color: "#64748b", marginBottom: "8px", lineHeight: 1.4 }}>
+                            模型在下拉框选择或手动输入模型 ID 后，点击右侧 [+] 按钮添加到列表。
+                          </div>
+
+                          <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "14px" }}>
+                            {!isManualInputMode ? (
+                              <div style={{ position: "relative", flex: 1 }}>
+                                <select
+                                  value={selectedModelToAdd}
+                                  onChange={(e) => {
+                                    if (e.target.value === "__manual__") {
+                                      setIsManualInputMode(true);
+                                      setSelectedModelToAdd("");
+                                      setTimeout(() => {
+                                        document.getElementById("manual-model-input")?.focus();
+                                      }, 50);
+                                    } else {
+                                      setSelectedModelToAdd(e.target.value);
+                                    }
                                   }}
-                                  title={preset.desc}
+                                  style={{
+                                    width: "100%",
+                                    height: "36px",
+                                    padding: "0 34px 0 12px",
+                                    borderRadius: "8px",
+                                    border: "1px solid #cbd5e1",
+                                    fontSize: "13px",
+                                    backgroundColor: "#ffffff",
+                                    color: selectedModelToAdd ? "#0f172a" : "#64748b",
+                                    boxSizing: "border-box",
+                                    appearance: "none",
+                                    WebkitAppearance: "none",
+                                    cursor: "pointer",
+                                  }}
                                 >
-                                  <span className="preset-chip-name">{preset.label}</span>
-                                  <span className="preset-chip-desc">({preset.desc})</span>
+                                  <option value="">选择模型以添加...</option>
+                                  {(PROVIDER_PRESET_MODELS[draftSettings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((preset) => (
+                                    <option key={preset.id} value={preset.id}>
+                                      {preset.id}
+                                    </option>
+                                  ))}
+                                  <option value="__manual__">✍️ 手动输入模型 ID...</option>
+                                </select>
+                                <div style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none", display: "flex", alignItems: "center" }}>
+                                  <svg className="w-4 h-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="m6 9 6 6 6-6" />
+                                  </svg>
+                                </div>
+                              </div>
+                            ) : (
+                              <div style={{ position: "relative", flex: 1, display: "flex", alignItems: "center" }}>
+                                <input
+                                  id="manual-model-input"
+                                  type="text"
+                                  value={customModelInput}
+                                  onChange={(e) => setCustomModelInput(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      handleAddCustomModel();
+                                    }
+                                  }}
+                                  placeholder="输入模型 ID，例如 qwen-plus 或 claude-3-5-sonnet"
+                                  style={{
+                                    width: "100%",
+                                    height: "36px",
+                                    padding: "0 74px 0 12px",
+                                    borderRadius: "8px",
+                                    border: "1px solid #3b82f6",
+                                    fontSize: "13px",
+                                    backgroundColor: "#ffffff",
+                                    color: "#0f172a",
+                                    boxSizing: "border-box",
+                                    outline: "none",
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsManualInputMode(false);
+                                    setCustomModelInput("");
+                                  }}
+                                  title="返回下拉选择"
+                                  style={{
+                                    position: "absolute",
+                                    right: "6px",
+                                    height: "26px",
+                                    padding: "0 8px",
+                                    borderRadius: "5px",
+                                    fontSize: "11px",
+                                    color: "#64748b",
+                                    backgroundColor: "#f1f5f9",
+                                    border: "none",
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  切回下拉
                                 </button>
-                              ))}
+                              </div>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => handleAddCustomModel()}
+                              disabled={isManualInputMode ? !customModelInput.trim() : !selectedModelToAdd}
+                              title="添加到列表并设为当前生效模型"
+                              style={{
+                                width: "36px",
+                                height: "36px",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                borderRadius: "8px",
+                                border: "1px solid #cbd5e1",
+                                backgroundColor: (isManualInputMode ? customModelInput.trim() : selectedModelToAdd) ? "#2563eb" : "#f1f5f9",
+                                color: (isManualInputMode ? customModelInput.trim() : selectedModelToAdd) ? "#ffffff" : "#94a3b8",
+                                fontSize: "18px",
+                                fontWeight: 600,
+                                cursor: (isManualInputMode ? customModelInput.trim() : selectedModelToAdd) ? "pointer" : "not-allowed",
+                                transition: "all 0.15s ease",
+                                flexShrink: 0,
+                              }}
+                            >
+                              +
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const defaultPresets = (PROVIDER_PRESET_MODELS[draftSettings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
+                                setDraftSettings((current) => ({
+                                  ...current,
+                                  customModels: defaultPresets,
+                                  model: current.model && defaultPresets.includes(current.model) ? current.model : (defaultPresets[0] || ""),
+                                }));
+                              }}
+                              title="恢复当前 Provider 预设推荐模型列表"
+                              style={{
+                                height: "36px",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                padding: "0 12px",
+                                borderRadius: "8px",
+                                border: "1px solid #cbd5e1",
+                                backgroundColor: "#ffffff",
+                                color: "#334155",
+                                fontSize: "12.5px",
+                                cursor: "pointer",
+                                flexShrink: 0,
+                              }}
+                            >
+                              <svg className="w-3.5 h-3.5 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+                              </svg>
+                              <span>刷新列表</span>
+                            </button>
+                          </div>
+
+                          <div style={{ marginBottom: "10px" }}>
+                            <div style={{ fontSize: "12px", fontWeight: 600, color: "#475569", marginBottom: "8px" }}>
+                              已加入 Provider 的模型：
+                            </div>
+
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                              {(() => {
+                                const presets = (PROVIDER_PRESET_MODELS[draftSettings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
+                                const currentList = Array.isArray(draftSettings.customModels) && draftSettings.customModels.length > 0
+                                  ? draftSettings.customModels
+                                  : presets;
+                                const fullList = Array.from(new Set([draftSettings.model, ...currentList].filter(Boolean) as string[]));
+
+                                return fullList.map((modelId) => {
+                                  const isSelected = (draftSettings.model || presets[0]) === modelId;
+                                  return (
+                                    <div
+                                      key={modelId}
+                                      onClick={() => {
+                                        setDraftSettings((current) => ({
+                                          ...current,
+                                          model: modelId,
+                                        }));
+                                      }}
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: "8px",
+                                        padding: "6px 12px",
+                                        borderRadius: "8px",
+                                        fontSize: "13px",
+                                        fontFamily: "monospace",
+                                        cursor: "pointer",
+                                        border: isSelected ? "1.5px solid #3b82f6" : "1px solid #cbd5e1",
+                                        backgroundColor: isSelected ? "#eff6ff" : "#f8fafc",
+                                        color: isSelected ? "#1d4ed8" : "#334155",
+                                        fontWeight: isSelected ? 600 : 500,
+                                        boxShadow: isSelected ? "0 1px 3px rgba(59, 130, 246, 0.15)" : "none",
+                                        transition: "all 0.15s ease",
+                                      }}
+                                      title={isSelected ? "当前生效的默认模型" : "点击切换为此模型"}
+                                    >
+                                      <span>{modelId}</span>
+                                      <span
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleRemoveCustomModel(modelId);
+                                        }}
+                                        title="移除此模型"
+                                        style={{
+                                          display: "inline-flex",
+                                          alignItems: "center",
+                                          justifyContent: "center",
+                                          width: "16px",
+                                          height: "16px",
+                                          borderRadius: "50%",
+                                          fontSize: "11px",
+                                          color: isSelected ? "#2563eb" : "#94a3b8",
+                                          backgroundColor: isSelected ? "rgba(59, 130, 246, 0.15)" : "rgba(0, 0, 0, 0.06)",
+                                          cursor: "pointer",
+                                          transition: "background-color 0.15s",
+                                        }}
+                                      >
+                                        ✕
+                                      </span>
+                                    </div>
+                                  );
+                                });
+                              })()}
                             </div>
                           </div>
-                          {draftSettings.apiProvider === "deepseek" && (
-                            <small className="field-hint" style={{ marginTop: "4px", display: "block" }}>
-                              💡 <b>DeepSeek 官方模型：</b> <code>deepseek-v4-flash</code>（Flash 快速） | <code>deepseek-v4-pro</code>（Pro 旗舰）
-                            </small>
-                          )}
+
+                          <div style={{ fontSize: "12px", color: "#64748b", margin: "6px 0 0 0" }}>
+                            蓝色高亮项为当前生效的默认模型，点击其他模型标签可直接切换。
+                          </div>
                         </div>
                       )}
                     </label>
@@ -3473,6 +3983,78 @@ function App() {
           </div>
         </div>
       )}
+
+      {navInterruptConfirm.open && (
+        <div className="modal-backdrop" style={{ zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 420,
+              backgroundColor: "#ffffff",
+              borderRadius: 16,
+              boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)",
+              padding: "24px 26px",
+              border: "1px solid #e2e8f0",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 18 }}>
+              <div
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 10,
+                  backgroundColor: "#fef3c7",
+                  color: "#d97706",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+                  <line x1="12" y1="9" x2="12" y2="13" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+              </div>
+              <div style={{ flex: 1 }}>
+                <h3 style={{ fontSize: 16, fontWeight: 600, color: "#0f172a", margin: "0 0 6px 0" }}>确认中断当前任务？</h3>
+                <p style={{ fontSize: 13.5, color: "#64748b", margin: 0, lineHeight: 1.55 }}>
+                  当前任务正在分析生成中，新建或切换任务将中断当前执行，是否确认中断？
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={handleCancelNavInterrupt}
+                style={{ padding: "7px 16px", borderRadius: 8, fontSize: 13, cursor: "pointer" }}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleConfirmNavInterrupt()}
+                style={{
+                  padding: "7px 18px",
+                  borderRadius: 8,
+                  fontSize: 13,
+                  fontWeight: 500,
+                  backgroundColor: "#ef4444",
+                  color: "#ffffff",
+                  border: "none",
+                  cursor: "pointer",
+                  boxShadow: "0 1px 2px 0 rgba(239, 68, 68, 0.35)",
+                }}
+              >
+                确认中断
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -3487,7 +4069,6 @@ function ReportStylePicker({
   onSelect: (styleId: string) => void;
 }) {
   const skillDisplayName = BUILTIN_SKILL_DISPLAY_NAMES[skillName] || "HTML 报表技能";
-  const isReportSkill = REPORT_SKILL_NAMES.has(skillName);
 
   return (
     <div className="modal-backdrop report-style-picker-backdrop" onClick={onCancel}>
@@ -3497,8 +4078,7 @@ function ReportStylePicker({
             <p className="eyebrow">先选输出风格</p>
             <h3>{skillDisplayName}</h3>
             <p>
-              选择后会自动进入对话输入框，技能会按该风格组织输出
-              {isReportSkill ? "并生成 HTML 报表" : ""}。
+              选择后会自动进入对话输入框，技能将直接使用该风格模版生成可打开的 HTML 成果文件并保存到工作区 output/ 目录。
             </p>
           </div>
           <button type="button" className="report-style-picker-close" onClick={onCancel} aria-label="关闭风格选择">

@@ -20,8 +20,12 @@ inputs:
     description: 用户提供的事实、数据、政策依据、工作要求和时间节点。
   output_format:
     type: string
-    description: 输出格式，可选 markdown、html 或 both；默认 markdown。
-    default: markdown
+    description: 输出格式，可选 html、markdown 或 both；若指定了 template_style 或报表风格，默认输出 html 或 both。
+    default: both
+  template_style:
+    type: string
+    description: HTML 模版风格，可选 'classic' (默认政务经典红头风), 'geek' (极客卡片风), 'slate' (现代板岩风), 'dark' (暗黑海洋风), 'swiss' (先锋报刊风)。
+    default: "classic"
 ---
 
 # 政务公文起草（深圳统计官方风格）
@@ -83,4 +87,30 @@ inputs:
 
 ## 交付格式
 
-默认交付一份可直接审阅的 Markdown 公文草案，并在文末附“待核字段”和“来源清单”。如果用户要求 HTML，则同时生成打印友好的 HTML 文件，保存到工作区 `output/` 下的任务子目录，并在回复中列出文件名。输出前检查：文种是否匹配、标题是否准确、每个事实是否有来源、链接是否具体、是否误写正式文号或已发布状态。
+### HTML 独立公文页面自动生成规则（核心交付物）
+
+当用户指定了视觉风格（如“政务经典”、“极客卡片”、“现代板岩”等）、传入了 `template_style`、或要求生成 HTML 文件时，**必须直接生成排版规范、打印友好的独立 HTML 公文文件**：
+
+1. **读取内置模版**：读取 `./templates/template_<style>.html`（支持 `authority_classic`、`geek_weekly`、`slate_tech`、`dark_ocean`、`swiss_editorial`；默认 `authority_classic`）。
+2. **填充公文要素**：
+   - 红头双线发文单位名称、发文字号、签发类型、日期；
+   - 公文主标题、主送机关、层级分明的正文（一级标题用“一、”，二级用“（一）”）；
+   - 明确标注的 `[待补：……]` 字段醒目边框；
+   - 带有安全无遮挡排版的数据表格（若有）；
+   - 落款发文机构与日期；
+   - 文末详细的事实与政策依据来源清单（完整标题与可点击链接）。
+3. **输出规范与路径**：
+   - 统一保存在工作区 `output/` 目录下（如 `output/政务公文草案.html`）；
+   - 对话中提供 Markdown 公文草案与待核字段，并在末尾附带可点击的文件链接：`[打开输出目录](file:///.../output/)`。
+
+### HTML 排版安全规范
+1. **【严禁项】表头常规流排版**：公文内的统计表格采用无遮挡自然流表头，**绝对严禁**使用带有垂直 top 偏移的 sticky 表头，避免遮挡表格第一行内容。
+2. **【必选设置】打印样式优化**：`@media print` 下隐藏无用边框与背景色，分页友好。
+3. **【标准安全公文表格 CSS】**：
+```css
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--border, #eedac5); border-radius: 6px; background: #fff; margin: 20px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+thead th { background: #fbf5ee; color: #8c1515; font-size: 13px; padding: 10px 14px; text-align: left; border-bottom: 2px solid var(--border, #eedac5); white-space: nowrap; }
+tbody td { padding: 10px 14px; border-bottom: 1px solid #f5ede4; vertical-align: top; }
+tbody tr:nth-child(even) { background: #fdfbf7; }
+```

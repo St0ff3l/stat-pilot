@@ -10,6 +10,7 @@ declare global {
     updatedAt: number;
     createdAt: number;
     cwd: string;
+    taskStatus?: "idle" | "running" | "queued" | "completed" | "error" | "clarifying" | "approving";
   };
 
   type HermesChatMessage = {
@@ -52,6 +53,7 @@ declare global {
       model: string;
       cwd: string;
       defaultOutputDir?: string;
+      customModels?: string[];
       apiProvider: "openrouter" | "deepseek" | "openai" | "custom";
       apiKey: string;
       apiBaseUrl: string;
@@ -146,6 +148,7 @@ declare global {
       unregisterSkill: (path: string) => Promise<HermesAppState>;
       respondApproval: (choice: "once" | "session" | "always" | "deny") => Promise<HermesAppState>;
       respondClarification: (answer: string) => Promise<HermesAppState>;
+      ackThreadCompleted: (threadId: string) => Promise<HermesAppState>;
     };
   }
 }
