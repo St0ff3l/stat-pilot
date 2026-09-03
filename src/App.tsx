@@ -16,6 +16,7 @@ function formatRelativeTime(value: number): string {
 function withDisplayModel(appState: HermesAppState): HermesAppState["settings"] {
   return {
     defaultOutputDir: "output",
+    customModels: [],
     ...appState.settings,
     model: appState.settings.runtimeMode === "official" ? appState.official.defaultModel : appState.settings.model,
   };
@@ -27,6 +28,7 @@ const PROVIDER_PRESET_MODELS: Record<string, Array<{ id: string; label: string; 
   deepseek: [
     { id: "deepseek-v4-flash", label: "deepseek-v4-flash", desc: "DeepSeek-V4 Flash 快速" },
     { id: "deepseek-v4-pro", label: "deepseek-v4-pro", desc: "DeepSeek-V4 Pro 旗舰" },
+    { id: "deepseek-v4-flash-vision-exp", label: "deepseek-v4-flash-vision-exp", desc: "DeepSeek-V4 Flash Vision 视觉实验版" },
   ],
   openai: [
     { id: "gpt-5.5", label: "gpt-5.5", desc: "GPT-5.5 最新旗舰" },
@@ -159,6 +161,18 @@ const BUILTIN_SKILL_ICONS: Record<string, string> = {
   source_verification: "🔎",
   gov_official_document_drafting: "📝",
 };
+
+function formatCleanTaskTitle(title: string): string {
+  if (!title) return "";
+  const skillMatch = title.match(/^@([a-zA-Z0-9_\-]+)(?:\s+|$)/);
+  if (skillMatch) {
+    const skillName = skillMatch[1];
+    const displayName = BUILTIN_SKILL_DISPLAY_NAMES[skillName] || skillName;
+    const rest = title.replace(/^@[a-zA-Z0-9_\-]+\s*/, "").trim();
+    return rest ? `[${displayName}] ${rest}` : `[${displayName}]`;
+  }
+  return title;
+}
 
 const REPORT_STYLE_OPTIONS: ReportStyleOption[] = [
   {
@@ -932,6 +946,9 @@ function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [settingsBusyText, setSettingsBusyText] = useState<string | null>(null);
   const headerModelDirtyRef = useRef(false);
+  const [customModelInput, setCustomModelInput] = useState("");
+  const [selectedModelToAdd, setSelectedModelToAdd] = useState("");
+  const [isManualInputMode, setIsManualInputMode] = useState(false);
   const [draftSettings, setDraftSettings] = useState<HermesAppState["settings"]>({
     hermesBin: "hermes",
     runtimeMode: "private",
@@ -939,6 +956,7 @@ function App() {
     model: "",
     cwd: "",
     defaultOutputDir: "output",
+    customModels: [],
     apiProvider: "deepseek",
     apiKey: "",
     apiBaseUrl: "",
@@ -1263,6 +1281,55 @@ function App() {
     }
   }
 
+  const [navInterruptConfirm, setNavInterruptConfirm] = useState<{
+    open: boolean;
+    targetType: "newChat" | "selectThread";
+    targetThreadId?: string;
+  }>({ open: false, targetType: "newChat" });
+
+  function handleSafeCreateNewChat() {
+    if (state?.busy) {
+      setNavInterruptConfirm({ open: true, targetType: "newChat" });
+      return;
+    }
+    setActiveMainTab("chat");
+    void createNewChat();
+  }
+
+  function handleSafeSelectThread(threadId: string) {
+    if (threadId === state?.activeThreadId) {
+      return;
+    }
+    if (state?.busy) {
+      setNavInterruptConfirm({ open: true, targetType: "selectThread", targetThreadId: threadId });
+      return;
+    }
+    void selectThread(threadId);
+  }
+
+  async function handleConfirmNavInterrupt() {
+    const { targetType, targetThreadId } = navInterruptConfirm;
+    setNavInterruptConfirm({ open: false, targetType: "newChat" });
+    if (window.hermesDesktop && state?.busy) {
+      try {
+        const nextState = await window.hermesDesktop.stopMessage();
+        setState(nextState);
+      } catch (e) {
+        console.error("Failed to stop message on nav interrupt:", e);
+      }
+    }
+    if (targetType === "newChat") {
+      setActiveMainTab("chat");
+      await createNewChat();
+    } else if (targetType === "selectThread" && targetThreadId) {
+      await selectThread(targetThreadId);
+    }
+  }
+
+  function handleCancelNavInterrupt() {
+    setNavInterruptConfirm({ open: false, targetType: "newChat" });
+  }
+
   async function deleteThread(threadId: string, threadName?: string | null) {
     if (!window.hermesDesktop) {
       return;
@@ -1351,8 +1418,18 @@ function App() {
 
     setSettingsBusyText("正在保存配置并应用...");
     const workspaceChanged = draftSettings.cwd !== state?.settings.cwd;
+
+    const customList = Array.isArray(draftSettings.customModels) ? [...draftSettings.customModels] : [];
+    if (draftSettings.model && draftSettings.runtimeMode !== "official" && !customList.includes(draftSettings.model)) {
+      customList.push(draftSettings.model);
+    }
+    const finalSettings = {
+      ...draftSettings,
+      customModels: Array.from(new Set(customList.map(String).map((s) => s.trim()).filter(Boolean))),
+    };
+
     try {
-      const nextState = await window.hermesDesktop.updateSettings(draftSettings);
+      const nextState = await window.hermesDesktop.updateSettings(finalSettings);
       if (workspaceChanged) {
         setWorkspaceSelectionLocked(true);
       }
@@ -1429,6 +1506,42 @@ function App() {
     }
   }
 
+  function handleAddCustomModel(modelToAdd?: string) {
+    const modelName = (modelToAdd || (isManualInputMode ? customModelInput : selectedModelToAdd) || customModelInput).trim();
+    if (!modelName) return;
+
+    setDraftSettings((current: HermesAppState["settings"]) => {
+      const presets = (PROVIDER_PRESET_MODELS[current.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
+      const existingList = Array.isArray(current.customModels) && current.customModels.length > 0
+        ? current.customModels
+        : presets;
+      const nextCustomModels = Array.from(new Set([...existingList, modelName]));
+      return {
+        ...current,
+        model: modelName,
+        customModels: nextCustomModels,
+      };
+    });
+    setCustomModelInput("");
+    setSelectedModelToAdd("");
+    setIsManualInputMode(false);
+  }
+
+  function handleRemoveCustomModel(modelToRemove: string) {
+    setDraftSettings((current: HermesAppState["settings"]) => {
+      const presets = (PROVIDER_PRESET_MODELS[current.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
+      const existingList = Array.isArray(current.customModels) && current.customModels.length > 0
+        ? current.customModels
+        : presets;
+      const nextCustomModels = existingList.filter((m) => m !== modelToRemove);
+      return {
+        ...current,
+        customModels: nextCustomModels,
+        model: current.model === modelToRemove ? (nextCustomModels[0] || "") : current.model,
+      };
+    });
+  }
+
   async function applyModelChange(selectedModel: string) {
     if (!window.hermesDesktop) {
       return;
@@ -1439,9 +1552,14 @@ function App() {
       const nextState = await window.hermesDesktop.switchSessionModel(selectedModel);
       setState(nextState);
     } else {
+      const customList = Array.isArray(state?.settings.customModels) ? [...state.settings.customModels] : [];
+      if (selectedModel && !customList.includes(selectedModel)) {
+        customList.push(selectedModel);
+      }
       const nextState = await window.hermesDesktop.updateSettings({
         ...state?.settings,
         model: selectedModel,
+        customModels: customList,
       });
       setState(nextState);
       await window.hermesDesktop.switchSessionModel(selectedModel);
@@ -1553,7 +1671,7 @@ function App() {
 
     return groups;
   }, [orderedThreads]);
-  const activeName = activeThread?.name || activeThread?.preview || "新对话";
+  const activeName = formatCleanTaskTitle(activeThread?.name || activeThread?.preview || "新对话");
   const hasUnresolvedHistoricalTurn = Boolean(
     activeMessages.length > 0 &&
       activeMessages[activeMessages.length - 1]?.role === "user" &&
@@ -1601,7 +1719,18 @@ function App() {
   const officialModelDirty = !!state && draftSettings.runtimeMode === "official" && draftSettings.model !== state.official.defaultModel;
   const currentProviderPresets = (PROVIDER_PRESET_MODELS[state?.settings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
   const currentSavedModel = isOfficialMode ? state?.official.defaultModel : state?.settings.model;
-  const customModelList = Array.from(new Set([currentSavedModel, ...currentProviderPresets].filter(Boolean) as string[]));
+  const savedCustomModels = Array.isArray(state?.settings.customModels) ? state.settings.customModels : [];
+  const draftCustomModels = Array.isArray(draftSettings.customModels) ? draftSettings.customModels : [];
+  const customModelList = Array.from(
+    new Set(
+      [
+        currentSavedModel,
+        ...savedCustomModels,
+        ...draftCustomModels,
+        ...currentProviderPresets,
+      ].filter(Boolean) as string[]
+    )
+  );
 
   const quickModelOptions = isOfficialMode
     ? ((state?.official.availableModels.length ?? 0) > 0 ? (state?.official.availableModels ?? []) : [state?.official.defaultModel ?? draftSettings.model])
@@ -1629,18 +1758,7 @@ function App() {
     state.status.startsWith("Connecting") ||
     !state.runtime.installed
   );
-  const isCurrentThreadBusy = Boolean(
-    state?.activeThreadId
-      ? (state?.threads || []).some(
-          (t) =>
-            t.id === state.activeThreadId &&
-            (t.taskStatus === "running" ||
-              t.taskStatus === "queued" ||
-              t.taskStatus === "approving" ||
-              t.taskStatus === "clarifying")
-        ) || Boolean(state?.busy && state?.activeDraft?.threadId === state.activeThreadId)
-      : false
-  );
+  const isCurrentThreadBusy = Boolean(state?.busy);
   const canSend = !needsProviderSetup && !isHermesMissing && !isCurrentThreadBusy && !isThreadLoading && !isInitializing;
 
   const statusDotClass = isInitializing
@@ -1753,7 +1871,7 @@ function App() {
           <button
             type="button"
             className={`sidebar-action-item ${activeMainTab === "chat" ? "!bg-blue-50/80 !text-blue-600 font-bold" : ""}`}
-            onClick={() => { setActiveMainTab("chat"); void createNewChat(); }}
+            onClick={handleSafeCreateNewChat}
             disabled={isHermesMissing}
             title="新建任务"
           >
@@ -1813,14 +1931,14 @@ function App() {
                   </div>
                   <div className="thread-folder-items">
                     {threads.map((thread) => {
-                      const title = thread.name || thread.preview || "未命名对话";
+                      const title = formatCleanTaskTitle(thread.name || thread.preview || "未命名对话");
                       const isActive = thread.id === state.activeThreadId;
                       const taskStatus = thread.taskStatus || "idle";
                       return (
                         <div
                           key={thread.id}
                           className={`thread-item-slim group ${isActive ? "active" : ""} ${taskStatus !== "idle" ? `task-${taskStatus}` : ""}`}
-                          onClick={() => void selectThread(thread.id)}
+                          onClick={() => handleSafeSelectThread(thread.id)}
                           title={`${title} • ${formatRelativeTime(thread.updatedAt)}`}
                         >
                           <span className="thread-item-slim-title">{title}</span>
@@ -2184,12 +2302,52 @@ function App() {
 
                   if (group.role === "user") {
                     const msg = group.messages[0];
+                    const rawText = msg.text || "";
+                    const skillMatch = rawText.match(/^@([a-zA-Z0-9_\-]+)(?:\s+|$)/);
+                    const invokedSkillName = skillMatch ? skillMatch[1] : null;
+                    const invokedSkillDisplayName = invokedSkillName
+                      ? state?.skills.find((s) => s.name === invokedSkillName)?.displayName ||
+                        BUILTIN_SKILL_DISPLAY_NAMES[invokedSkillName] ||
+                        invokedSkillName
+                      : null;
+                    const cleanText = invokedSkillName
+                      ? rawText.replace(/^@[a-zA-Z0-9_\-]+\s*/, "").trim()
+                      : rawText;
+
                     return (
                       <article key={group.id} className="bubble user">
                         <div className="bubble-head">
                           <strong>你</strong>
                         </div>
-                        <MessageBody role="user" text={msg.text} />
+                        {invokedSkillName && (
+                          <div style={{ marginBottom: "8px" }}>
+                            <span
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "5px",
+                                padding: "3px 10px 3px 8px",
+                                borderRadius: "20px",
+                                fontSize: "0.80rem",
+                                fontWeight: 500,
+                                whiteSpace: "nowrap",
+                                userSelect: "none",
+                                background: "#fef3c7",
+                                color: "#92400e",
+                                border: "1px solid rgba(217, 119, 6, 0.35)",
+                                boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+                                lineHeight: 1.2,
+                                verticalAlign: "middle",
+                              }}
+                            >
+                              <svg className="w-3.5 h-3.5 text-amber-700 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                              </svg>
+                              <span>{invokedSkillDisplayName}</span>
+                            </span>
+                          </div>
+                        )}
+                        <MessageBody role="user" text={cleanText} />
                       </article>
                     );
                   }
@@ -3101,44 +3259,241 @@ function App() {
                           </small>
                         </div>
                       ) : (
-                        <div>
-                          <input
-                            value={draftSettings.model}
-                            onChange={(event) =>
-                              setDraftSettings((current: HermesAppState["settings"]) => ({
-                                ...current,
-                                model: event.target.value,
-                              }))
-                            }
-                            placeholder="填写模型 ID，例如 gpt-5.5 或 deepseek-v4-flash"
-                          />
-                          <div className="model-preset-chips">
-                            <span className="preset-chips-label">快捷选择预设模型：</span>
-                            <div className="preset-chips-list">
-                              {(PROVIDER_PRESET_MODELS[draftSettings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((preset) => (
-                                <button
-                                  key={preset.id}
-                                  type="button"
-                                  className={`preset-chip-btn ${draftSettings.model === preset.id ? "active" : ""}`}
-                                  onClick={() => {
-                                    setDraftSettings((current) => ({
-                                      ...current,
-                                      model: preset.id,
-                                    }));
+                        <div className="provider-models-manager" style={{ marginTop: "4px" }}>
+                          <div style={{ fontSize: "12.5px", color: "#64748b", marginBottom: "8px", lineHeight: 1.4 }}>
+                            模型在下拉框选择或手动输入模型 ID 后，点击右侧 [+] 按钮添加到列表。
+                          </div>
+
+                          <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "14px" }}>
+                            {!isManualInputMode ? (
+                              <div style={{ position: "relative", flex: 1 }}>
+                                <select
+                                  value={selectedModelToAdd}
+                                  onChange={(e) => {
+                                    if (e.target.value === "__manual__") {
+                                      setIsManualInputMode(true);
+                                      setSelectedModelToAdd("");
+                                      setTimeout(() => {
+                                        document.getElementById("manual-model-input")?.focus();
+                                      }, 50);
+                                    } else {
+                                      setSelectedModelToAdd(e.target.value);
+                                    }
                                   }}
-                                  title={preset.desc}
+                                  style={{
+                                    width: "100%",
+                                    height: "36px",
+                                    padding: "0 34px 0 12px",
+                                    borderRadius: "8px",
+                                    border: "1px solid #cbd5e1",
+                                    fontSize: "13px",
+                                    backgroundColor: "#ffffff",
+                                    color: selectedModelToAdd ? "#0f172a" : "#64748b",
+                                    boxSizing: "border-box",
+                                    appearance: "none",
+                                    WebkitAppearance: "none",
+                                    cursor: "pointer",
+                                  }}
                                 >
-                                  <span className="preset-chip-name">{preset.label}</span>
-                                  <span className="preset-chip-desc">({preset.desc})</span>
+                                  <option value="">选择模型以添加...</option>
+                                  {(PROVIDER_PRESET_MODELS[draftSettings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((preset) => (
+                                    <option key={preset.id} value={preset.id}>
+                                      {preset.id}
+                                    </option>
+                                  ))}
+                                  <option value="__manual__">✍️ 手动输入模型 ID...</option>
+                                </select>
+                                <div style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none", display: "flex", alignItems: "center" }}>
+                                  <svg className="w-4 h-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="m6 9 6 6 6-6" />
+                                  </svg>
+                                </div>
+                              </div>
+                            ) : (
+                              <div style={{ position: "relative", flex: 1, display: "flex", alignItems: "center" }}>
+                                <input
+                                  id="manual-model-input"
+                                  type="text"
+                                  value={customModelInput}
+                                  onChange={(e) => setCustomModelInput(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      handleAddCustomModel();
+                                    }
+                                  }}
+                                  placeholder="输入模型 ID，例如 qwen-plus 或 claude-3-5-sonnet"
+                                  style={{
+                                    width: "100%",
+                                    height: "36px",
+                                    padding: "0 74px 0 12px",
+                                    borderRadius: "8px",
+                                    border: "1px solid #3b82f6",
+                                    fontSize: "13px",
+                                    backgroundColor: "#ffffff",
+                                    color: "#0f172a",
+                                    boxSizing: "border-box",
+                                    outline: "none",
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsManualInputMode(false);
+                                    setCustomModelInput("");
+                                  }}
+                                  title="返回下拉选择"
+                                  style={{
+                                    position: "absolute",
+                                    right: "6px",
+                                    height: "26px",
+                                    padding: "0 8px",
+                                    borderRadius: "5px",
+                                    fontSize: "11px",
+                                    color: "#64748b",
+                                    backgroundColor: "#f1f5f9",
+                                    border: "none",
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  切回下拉
                                 </button>
-                              ))}
+                              </div>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => handleAddCustomModel()}
+                              disabled={isManualInputMode ? !customModelInput.trim() : !selectedModelToAdd}
+                              title="添加到列表并设为当前生效模型"
+                              style={{
+                                width: "36px",
+                                height: "36px",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                borderRadius: "8px",
+                                border: "1px solid #cbd5e1",
+                                backgroundColor: (isManualInputMode ? customModelInput.trim() : selectedModelToAdd) ? "#2563eb" : "#f1f5f9",
+                                color: (isManualInputMode ? customModelInput.trim() : selectedModelToAdd) ? "#ffffff" : "#94a3b8",
+                                fontSize: "18px",
+                                fontWeight: 600,
+                                cursor: (isManualInputMode ? customModelInput.trim() : selectedModelToAdd) ? "pointer" : "not-allowed",
+                                transition: "all 0.15s ease",
+                                flexShrink: 0,
+                              }}
+                            >
+                              +
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const defaultPresets = (PROVIDER_PRESET_MODELS[draftSettings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
+                                setDraftSettings((current) => ({
+                                  ...current,
+                                  customModels: defaultPresets,
+                                  model: current.model && defaultPresets.includes(current.model) ? current.model : (defaultPresets[0] || ""),
+                                }));
+                              }}
+                              title="恢复当前 Provider 预设推荐模型列表"
+                              style={{
+                                height: "36px",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                padding: "0 12px",
+                                borderRadius: "8px",
+                                border: "1px solid #cbd5e1",
+                                backgroundColor: "#ffffff",
+                                color: "#334155",
+                                fontSize: "12.5px",
+                                cursor: "pointer",
+                                flexShrink: 0,
+                              }}
+                            >
+                              <svg className="w-3.5 h-3.5 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+                              </svg>
+                              <span>刷新列表</span>
+                            </button>
+                          </div>
+
+                          <div style={{ marginBottom: "10px" }}>
+                            <div style={{ fontSize: "12px", fontWeight: 600, color: "#475569", marginBottom: "8px" }}>
+                              已加入 Provider 的模型：
+                            </div>
+
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                              {(() => {
+                                const presets = (PROVIDER_PRESET_MODELS[draftSettings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
+                                const currentList = Array.isArray(draftSettings.customModels) && draftSettings.customModels.length > 0
+                                  ? draftSettings.customModels
+                                  : presets;
+                                const fullList = Array.from(new Set([draftSettings.model, ...currentList].filter(Boolean) as string[]));
+
+                                return fullList.map((modelId) => {
+                                  const isSelected = (draftSettings.model || presets[0]) === modelId;
+                                  return (
+                                    <div
+                                      key={modelId}
+                                      onClick={() => {
+                                        setDraftSettings((current) => ({
+                                          ...current,
+                                          model: modelId,
+                                        }));
+                                      }}
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: "8px",
+                                        padding: "6px 12px",
+                                        borderRadius: "8px",
+                                        fontSize: "13px",
+                                        fontFamily: "monospace",
+                                        cursor: "pointer",
+                                        border: isSelected ? "1.5px solid #3b82f6" : "1px solid #cbd5e1",
+                                        backgroundColor: isSelected ? "#eff6ff" : "#f8fafc",
+                                        color: isSelected ? "#1d4ed8" : "#334155",
+                                        fontWeight: isSelected ? 600 : 500,
+                                        boxShadow: isSelected ? "0 1px 3px rgba(59, 130, 246, 0.15)" : "none",
+                                        transition: "all 0.15s ease",
+                                      }}
+                                      title={isSelected ? "当前生效的默认模型" : "点击切换为此模型"}
+                                    >
+                                      <span>{modelId}</span>
+                                      <span
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleRemoveCustomModel(modelId);
+                                        }}
+                                        title="移除此模型"
+                                        style={{
+                                          display: "inline-flex",
+                                          alignItems: "center",
+                                          justifyContent: "center",
+                                          width: "16px",
+                                          height: "16px",
+                                          borderRadius: "50%",
+                                          fontSize: "11px",
+                                          color: isSelected ? "#2563eb" : "#94a3b8",
+                                          backgroundColor: isSelected ? "rgba(59, 130, 246, 0.15)" : "rgba(0, 0, 0, 0.06)",
+                                          cursor: "pointer",
+                                          transition: "background-color 0.15s",
+                                        }}
+                                      >
+                                        ✕
+                                      </span>
+                                    </div>
+                                  );
+                                });
+                              })()}
                             </div>
                           </div>
-                          {draftSettings.apiProvider === "deepseek" && (
-                            <small className="field-hint" style={{ marginTop: "4px", display: "block" }}>
-                              💡 <b>DeepSeek 官方模型：</b> <code>deepseek-v4-flash</code>（Flash 快速） | <code>deepseek-v4-pro</code>（Pro 旗舰）
-                            </small>
-                          )}
+
+                          <div style={{ fontSize: "12px", color: "#64748b", margin: "6px 0 0 0" }}>
+                            蓝色高亮项为当前生效的默认模型，点击其他模型标签可直接切换。
+                          </div>
                         </div>
                       )}
                     </label>
@@ -3623,6 +3978,78 @@ function App() {
                 style={{ background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)", borderColor: "#1d4ed8" }}
               >
                 前往重新登录（设置 → 账号管理）
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {navInterruptConfirm.open && (
+        <div className="modal-backdrop" style={{ zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 420,
+              backgroundColor: "#ffffff",
+              borderRadius: 16,
+              boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)",
+              padding: "24px 26px",
+              border: "1px solid #e2e8f0",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 18 }}>
+              <div
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 10,
+                  backgroundColor: "#fef3c7",
+                  color: "#d97706",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+                  <line x1="12" y1="9" x2="12" y2="13" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+              </div>
+              <div style={{ flex: 1 }}>
+                <h3 style={{ fontSize: 16, fontWeight: 600, color: "#0f172a", margin: "0 0 6px 0" }}>确认中断当前任务？</h3>
+                <p style={{ fontSize: 13.5, color: "#64748b", margin: 0, lineHeight: 1.55 }}>
+                  当前任务正在分析生成中，新建或切换任务将中断当前执行，是否确认中断？
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={handleCancelNavInterrupt}
+                style={{ padding: "7px 16px", borderRadius: 8, fontSize: 13, cursor: "pointer" }}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleConfirmNavInterrupt()}
+                style={{
+                  padding: "7px 18px",
+                  borderRadius: 8,
+                  fontSize: 13,
+                  fontWeight: 500,
+                  backgroundColor: "#ef4444",
+                  color: "#ffffff",
+                  border: "none",
+                  cursor: "pointer",
+                  boxShadow: "0 1px 2px 0 rgba(239, 68, 68, 0.35)",
+                }}
+              >
+                确认中断
               </button>
             </div>
           </div>

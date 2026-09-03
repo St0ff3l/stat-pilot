@@ -53,6 +53,7 @@ declare global {
       model: string;
       cwd: string;
       defaultOutputDir?: string;
+      customModels?: string[];
       apiProvider: "openrouter" | "deepseek" | "openai" | "custom";
       apiKey: string;
       apiBaseUrl: string;
