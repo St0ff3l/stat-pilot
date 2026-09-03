@@ -1629,7 +1629,19 @@ function App() {
     state.status.startsWith("Connecting") ||
     !state.runtime.installed
   );
-  const canSend = !needsProviderSetup && !isHermesMissing && !state?.busy && !isThreadLoading && !isInitializing;
+  const isCurrentThreadBusy = Boolean(
+    state?.activeThreadId
+      ? (state?.threads || []).some(
+          (t) =>
+            t.id === state.activeThreadId &&
+            (t.taskStatus === "running" ||
+              t.taskStatus === "queued" ||
+              t.taskStatus === "approving" ||
+              t.taskStatus === "clarifying")
+        ) || Boolean(state?.busy && state?.activeDraft?.threadId === state.activeThreadId)
+      : false
+  );
+  const canSend = !needsProviderSetup && !isHermesMissing && !isCurrentThreadBusy && !isThreadLoading && !isInitializing;
 
   const statusDotClass = isInitializing
     ? "warning"
@@ -2526,7 +2538,7 @@ function App() {
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
-                    if (state?.busy) {
+                    if (isCurrentThreadBusy) {
                       void handleStopMessage();
                     } else {
                       void sendMessage();
@@ -2650,7 +2662,7 @@ function App() {
                 </div>
 
                 {/* Right Side: Send or Stop Button */}
-              {state?.busy ? (
+              {isCurrentThreadBusy ? (
                 <button
                   type="button"
                   className="trae-stop-icon-btn"

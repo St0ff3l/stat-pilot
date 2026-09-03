@@ -2292,6 +2292,8 @@ const completedThreads = new Set();
 // 双向会话映射
 const threadIdToSessionId = new Map();
 const sessionIdToThreadId = new Map();
+// 按会话隔离的已取消集合
+const cancelledSessionIds = new Set();
 
 function getSettingsPath() {
   return path.join(app.getPath("userData"), SETTINGS_FILE);
@@ -2416,9 +2418,11 @@ function broadcastState() {
         }
       }
     } else {
-      // 处于新建对话页，如果当前没有在跑新建的草稿，则 busy 为 false
-      if (!state.activeDraft) {
-        state.busy = false;
+      // 处于新建对话页，前台无专属运行中会话，busy 必定为 false
+      state.busy = false;
+      state.activeDraft = null;
+      if (!state.error) {
+        state.status = "Ready.";
       }
     }
 
@@ -3000,7 +3004,8 @@ async function waitForSessionCompletion(sessionId) {
 
       if (message.type === "message.complete") {
         const completionStatus = toSafeString(message.payload?.status).trim().toLowerCase();
-        const wasInterrupted = completionStatus === "interrupted" || activeTurnCancelRequested;
+        const wasInterrupted = completionStatus === "interrupted" || cancelledSessionIds.has(sessionId);
+        cancelledSessionIds.delete(sessionId);
         unsubscribe();
         if (wasInterrupted) {
           reject(new Error("用户已终止对话处理。"));
@@ -3174,17 +3179,22 @@ async function initializeBridge() {
       return;
     }
 
+    const isTaskCancelled = Boolean((task && task.cancelRequested) || cancelledSessionIds.has(targetSessionId));
+    const hasTaskStarted = task ? task.hasStarted : true;
+
     // After an interrupt, the gateway may flush a few late events. Ignore
     // them until the next turn announces its own message.start, otherwise an
     // old turn can leak text or tool rows into a newly submitted turn.
-    if (activeTurnCancelRequested && !activeTurnHasStarted && message.type !== "message.start") {
+    if (isTaskCancelled && !hasTaskStarted && message.type !== "message.start") {
       return;
     }
 
     if (message.type === "message.start") {
-      if (task) task.hasStarted = true;
-      activeTurnHasStarted = true;
-      activeTurnCancelRequested = false;
+      if (task) {
+        task.hasStarted = true;
+        task.cancelRequested = false;
+      }
+      cancelledSessionIds.delete(targetSessionId);
       if (isForeground) {
         state.status = "Running...";
         state.activeDraft = currentDraft;
@@ -3414,16 +3424,22 @@ async function initializeBridge() {
 
     if (message.type === "message.complete") {
       const completionStatus = toSafeString(message.payload?.status).trim().toLowerCase();
-      if (activeTurnCancelRequested && !activeTurnHasStarted) {
-        return;
-      }
-      if (completionStatus === "interrupted" || activeTurnCancelRequested) {
-        const interruptedTurn = preserveInterruptedDraft();
-        if (interruptedTurn) {
-          void persistInterruptedTurn(interruptedTurn);
+      const isTaskInterrupted =
+        completionStatus === "interrupted" ||
+        Boolean(task && task.cancelRequested) ||
+        cancelledSessionIds.has(targetSessionId);
+      cancelledSessionIds.delete(targetSessionId);
+
+      if (isTaskInterrupted) {
+        if (task) {
+          task.status = "error";
+          task.error = "用户已终止对话处理。";
         }
-        activeTurnHasStarted = false;
         if (isForeground) {
+          const interruptedTurn = preserveInterruptedDraft();
+          if (interruptedTurn) {
+            void persistInterruptedTurn(interruptedTurn);
+          }
           state.activeDraft = null;
           state.pendingApproval = null;
           state.pendingClarification = null;
@@ -4655,19 +4671,36 @@ function getGitBranch(dirPath) {
 
 ipcMain.handle("hermes:stopMessage", async () => {
   const targetThreadId = state.activeThreadId;
-  const sessionId = (targetThreadId ? activeTasks.get(targetThreadId)?.sessionId : null) || activeGatewaySessionId || targetThreadId;
-  activeTurnCancelRequested = true;
-  activeTurnHasStarted = false;
+  if (!targetThreadId) {
+    return state;
+  }
+
+  const task = activeTasks.get(targetThreadId);
+  const sessionId = task?.sessionId || threadIdToSessionId.get(targetThreadId) || (targetThreadId === state.activeThreadId ? activeGatewaySessionId : null) || targetThreadId;
 
   // 如果处于排队中，直接从队列移除
-  if (targetThreadId) {
-    const qIndex = queuedTasks.findIndex((t) => t.threadId === targetThreadId);
-    if (qIndex !== -1) {
-      queuedTasks.splice(qIndex, 1);
-      state.busy = false;
-      state.status = "已取消排队。";
-      broadcastState();
-      return state;
+  const qIndex = queuedTasks.findIndex((t) => t.threadId === targetThreadId);
+  if (qIndex !== -1) {
+    queuedTasks.splice(qIndex, 1);
+    state.busy = false;
+    state.status = "已取消排队。";
+    broadcastState();
+    return state;
+  }
+
+  if (task) {
+    task.cancelRequested = true;
+    task.hasStarted = false;
+  }
+
+  if (sessionId) {
+    cancelledSessionIds.add(sessionId);
+    if (bridge) {
+      try {
+        await bridge.cancelPrompt(sessionId);
+      } catch (e) {
+        console.error("Failed to send cancel prompt:", e);
+      }
     }
   }
 
@@ -4695,16 +4728,8 @@ ipcMain.handle("hermes:stopMessage", async () => {
   state.error = null;
   state.status = "已终止处理。";
 
-  if (targetThreadId && activeTasks.has(targetThreadId)) {
+  if (activeTasks.has(targetThreadId)) {
     activeTasks.delete(targetThreadId);
-  }
-
-  if (bridge && sessionId) {
-    try {
-      await bridge.cancelPrompt(sessionId);
-    } catch (e) {
-      console.error("Failed to send cancel prompt:", e);
-    }
   }
 
   // 释放了并发槽位，自动调度队列中下一个任务
