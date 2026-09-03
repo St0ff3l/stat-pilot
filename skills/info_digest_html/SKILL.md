@@ -49,7 +49,22 @@ Skill 内置 5 种经过严格审美设计与响应式调校的 HTML 模版（�
    - 替换更新时间为当前日期（如 `2026年7月10日`）。
    - 替换 KPI 统计卡片中的条目总数与各分类数量。
    - 动态渲染或替换卡片/时间轴列表 HTML 节点（填入各条目的 `title`, `organization`, `publish_time`, `summary`, `link` 等）。
-4. **输出文件**：将生成的完整 HTML 代码保存为 `.html` 文件（如 `output_report.html`），并给用户提供预览和浏览器直接打开提示。
+4. **输出文件**：将生成的完整 HTML 代码保存为工作区 `output/` 目录下的 `.html` 文件（如 `output/统计信息化与数字化转型动态监测.html`），严禁直接写入工作区根目录；并在对话回复中输出可直接点击的 Markdown 链接 `[打开输出目录](file:///.../output/)`。
+
+## HTML 排版安全与防遮挡规范（硬性准则）
+
+1. **吸顶导航与锚点留白**：带有置顶过滤或吸顶导航条时，所有 `section`、`.sec` 及具有 `id` 的锚点跳转容器**必须带有 `scroll-margin-top: 84px`**，确保通过锚点跳转定位时标题绝不被吸顶控件遮挡。
+2. **【严禁项】表格安全排版**：如果报表中包含数据表格，必须使用模板内置的 `.tbl-wrap` 和标准自然流 `thead th`，**绝对严禁**在横向滚动容器内对 `thead th` 添加带有 top 像素偏移的 sticky 定位，避免表头盖住首行文字。
+3. **【标准安全 CSS】**：
+```css
+section, .sec, [id] { scroll-margin-top: 84px; }
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--border-blue); border-radius: 12px; background: var(--surface); margin: 16px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 12.8px; min-width: 680px; }
+thead th { background: #eef4ff; color: #1e3a8a; font-size: 11.5px; padding: 10px 14px; text-align: left; white-space: nowrap; border-bottom: 2px solid var(--border-blue); }
+tbody td { padding: 10px 14px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+tbody tr:nth-child(even) { background: #fafcff; }
+tbody tr:hover { background: #f0f6ff; }
+```
 
 ## 来源展示硬性要求
 

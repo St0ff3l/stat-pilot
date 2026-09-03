@@ -193,7 +193,13 @@ const REPORT_STYLE_OPTIONS: ReportStyleOption[] = [
   },
 ];
 
-const REPORT_SKILL_NAMES = new Set(["info_digest_html", "weekly_report"]);
+const REPORT_SKILL_NAMES = new Set([
+  "info_digest_html",
+  "weekly_report",
+  "price_index_gdp_impact",
+  "source_verification",
+  "gov_official_document_drafting",
+]);
 
 const BUILTIN_SKILL_START_PROMPTS: Record<string, string> = {
   weekly_report:
@@ -679,12 +685,12 @@ function App() {
   }
 
   function isWorkspaceLocked() {
+    // 只有在当前会话已经产生真实交互消息或正在生成中时，才锁定工作区选择
+    // 在用户发消息前，允许自由切换工作区，并在输入框底部清晰展示当前选中的文件夹
     return workspaceSelectionLocked || Boolean(
-      state?.settings.cwd ||
-      state?.activeThreadId ||
-      state?.messages.length ||
+      (activeMessages && activeMessages.length > 0) ||
       state?.activeDraft ||
-      state?.busy
+      (state?.messages && state.messages.length > 0)
     );
   }
 
@@ -801,11 +807,20 @@ function App() {
     const style = REPORT_STYLE_OPTIONS.find((option) => option.id === styleId);
     if (!skillName || !style) return;
 
-    const prompt = skillName === "info_digest_html"
-      ? `请生成动态信息汇总 HTML 报表，使用“${style.label}”风格（template_style: ${style.id}）。采集或整理统计、政务和信息化动态，输出可打开的 HTML 文件；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接。`
-      : skillName === "weekly_report"
-        ? `请采集最近 7 天统计信息化、数字化、人工智能和大数据相关动态，生成统计信息化动态周报 HTML，使用“${style.label}”风格（template_style: ${style.id}）；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接。`
-        : `${BUILTIN_SKILL_START_PROMPTS[skillName] || "请使用当前技能完成我的任务，并为所有事实性内容附发布单位或网站全称、文章来源/页面完整标题和具体原文链接。"}\n\n请按“${style.label}”风格组织最终输出：${style.description}`;
+    let prompt = "";
+    if (skillName === "info_digest_html") {
+      prompt = `请生成动态信息汇总 HTML 报表，使用内置“${style.label}”风格模版（template_style: ${style.id}）。采集或整理统计、政务和信息化动态，直接在工作区 output/ 目录下生成完整的独立 HTML 文件；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接，并在对话末尾给出 [打开输出目录] 链接。`;
+    } else if (skillName === "weekly_report") {
+      prompt = `请采集最近 7 天统计信息化、数字化、人工智能和大数据相关动态，使用内置“${style.label}”风格模版（template_style: ${style.id}），生成统计信息化动态周报独立的 HTML 文件并写入工作区 output/ 目录；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接，并在对话末尾给出 [打开输出目录] 链接。`;
+    } else if (skillName === "price_index_gdp_impact") {
+      prompt = `请默认以深圳市为分析对象，分析 CPI、PPI、GDP 平减指数等价格指数对 GDP 各项（消费、投资、净出口及名义/实际 GDP）的影响；优先使用深圳市统计局及深圳市政府官方统计数据，国家和广东省数据只作口径或对照，区分相关性与因果性，并为每个事实附发布单位或网站全称、完整标题和具体原文链接。\n\n【输出要求】：请直接使用内置“${style.label}”风格模版（template_style: ${style.id}），生成完整的可视化独立 HTML 报告文件并写入工作区 output/ 目录（如 output/价格指数×深圳GDP影响速查卡.html）。页面必须包含顶部 KPI 芯片、吸顶章节导航、高密度映射表格、证据分级标签及可点击原文超链接；严格遵守表格自然流排版，严禁使用导致内容遮挡的样式；并在对话最后提供 [打开输出目录] 链接。`;
+    } else if (skillName === "source_verification") {
+      prompt = `请核验我接下来提交的文件或链接：确认是否为官方来源、发布日期、发布机构、具体原文链接是否有效，并识别重复、转载和二次改写关系；输出逐项证据和发布单位或网站全称、完整标题、具体原文链接。\n\n【输出要求】：请同时使用内置“${style.label}”风格模版（template_style: ${style.id}），直接在工作区 output/ 目录生成独立的 HTML 证据核验报告文件，包含核验结论 KPI、核验结果明细表、重复转载对照表和完整可点击来源链，并在对话末尾给出 [打开输出目录] 链接。`;
+    } else if (skillName === "gov_official_document_drafting") {
+      prompt = `请按深圳市统计局官方网站公开页面的政务文风起草公文：先根据我的任务判断合适的文种，保留文号、落款、联系人等待补字段，不虚构正式发布信息，并为事实、政策依据和数据附发布单位或网站全称、完整标题和具体原文链接。\n\n【输出要求】：除了在对话中提供可直接审阅的 Markdown 公文草案外，请同时使用内置“${style.label}”风格模版（template_style: ${style.id}），在工作区 output/ 目录生成一份排版规范、打印友好且来源标注完整的独立 HTML 参阅公文文件，并在对话末尾给出 [打开输出目录] 链接。`;
+    } else {
+      prompt = `${BUILTIN_SKILL_START_PROMPTS[skillName] || "请使用当前技能完成我的任务，并为所有事实性内容附发布单位或网站全称、文章来源/页面完整标题和具体原文链接。"}\n\n【输出要求】：请按“${style.label}”风格（template_style: ${style.id}）生成独立可打开的 HTML 成果文件并保存到工作区 output/ 目录，并在末尾给出可点击链接：${style.description}`;
+    }
 
     setStylePickerSkillName(null);
     startSkillTask(skillName, prompt);
@@ -866,7 +881,7 @@ function App() {
     setIsFolderMenuOpen(false);
     setActiveBranch(null);
     const nextState = await window.hermesDesktop.updateSettings({ cwd: folderPath });
-    setWorkspaceSelectionLocked(true);
+    // 选完文件夹不立即锁定，保留在输入框左下方展示当前选中的文件夹名称，等用户发消息后再锁定
     setState(nextState);
   }
 
@@ -941,6 +956,8 @@ function App() {
   });
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLElement | null>(null);
+  const isAutoScrollUnlockedRef = useRef(false);
+  const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
   const activeDraftScrollKey = state?.activeDraft?.segments
     ?.map((segment) => `${segment.reasoning ?? ""}\u0000${segment.text ?? ""}`)
     .join("\u0001");
@@ -1099,6 +1116,11 @@ function App() {
   }, [state?.activeThreadId, state?.messages, state?.lastGeneratedFiles]);
 
   useEffect(() => {
+    // 如果用户手动向上滚动解锁了自动跟随，则保持在用户浏览位置，不强行将页面拽回底部
+    if (isAutoScrollUnlockedRef.current) {
+      return;
+    }
+
     // Reasoning is streamed separately from the final answer. Include both the
     // top-level fields and segment content so the viewport follows while the
     // model is still thinking, not only after answer text arrives.
@@ -1133,6 +1155,45 @@ function App() {
     state?.activeDraft?.reasoning,
     activeDraftScrollKey,
   ]);
+
+  function handleMessagesScroll(event: React.UIEvent<HTMLElement>) {
+    const scroller = event.currentTarget;
+    const composerHeight = composerRef.current?.getBoundingClientRect().height ?? 180;
+    const distanceFromBottom = scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight);
+
+    // 用户手动向上翻阅（距离底部超过一定距离）时，解锁自动跟随并显示“回到底部”按钮
+    if (distanceFromBottom > composerHeight + 50) {
+      if (!isAutoScrollUnlockedRef.current) {
+        isAutoScrollUnlockedRef.current = true;
+        setShowScrollBottomBtn(true);
+      }
+    } else {
+      // 用户手动滚回了底部附近，重新恢复自动跟随锁定
+      if (isAutoScrollUnlockedRef.current) {
+        isAutoScrollUnlockedRef.current = false;
+        setShowScrollBottomBtn(false);
+      }
+    }
+  }
+
+  function scrollToBottom() {
+    isAutoScrollUnlockedRef.current = false;
+    setShowScrollBottomBtn(false);
+    const end = messagesEndRef.current;
+    const scroller = end?.closest(".message-scroller") as HTMLElement | null;
+    if (!end || !scroller) return;
+
+    const composerHeight = composerRef.current?.getBoundingClientRect().height ?? 180;
+    const scrollerRect = scroller.getBoundingClientRect();
+    const endRect = end.getBoundingClientRect();
+    const visibleBottom = scrollerRect.bottom - composerHeight - 24;
+    const delta = endRect.bottom - visibleBottom;
+
+    scroller.scrollTo({
+      top: Math.max(0, scroller.scrollTop + delta),
+      behavior: "smooth",
+    });
+  }
 
   useEffect(() => {
     const isModelSwitching = !!state?.busy && !!state?.status && state.status.includes("切换模型");
@@ -1170,6 +1231,8 @@ function App() {
     setIsFolderMenuOpen(false);
     setActiveBranch(null);
     setIsThreadLoading(true);
+    isAutoScrollUnlockedRef.current = false;
+    setShowScrollBottomBtn(false);
     try {
       const nextState = await window.hermesDesktop.newThread();
       setState(nextState);
@@ -1185,10 +1248,16 @@ function App() {
 
     setActiveMainTab("chat");
     setSelectedAttachments([]);
+    setWorkspaceSelectionLocked(false);
+    isAutoScrollUnlockedRef.current = false;
+    setShowScrollBottomBtn(false);
     setIsThreadLoading(true);
     try {
       const nextState = await window.hermesDesktop.selectThread(threadId);
       setState(nextState);
+      if (window.hermesDesktop.ackThreadCompleted) {
+        void window.hermesDesktop.ackThreadCompleted(threadId);
+      }
     } finally {
       setIsThreadLoading(false);
     }
@@ -1240,6 +1309,9 @@ function App() {
     setDraft("");
     setSelectedSkillTag(null);
     setSelectedAttachments([]);
+    setWorkspaceSelectionLocked(true);
+    isAutoScrollUnlockedRef.current = false;
+    setShowScrollBottomBtn(false);
     try {
       const nextState = await window.hermesDesktop.sendMessage({ text });
       setState(nextState);
@@ -1443,6 +1515,13 @@ function App() {
     }
     return threads.sort((a, b) => b.updatedAt - a.updatedAt);
   }, [activeThread, activeThreadTitle, state?.activeThreadId, state?.threads]);
+
+  const runningTaskCount = (state?.threads || []).filter((t) => t.taskStatus === "running").length;
+  const queuedTaskCount = (state?.threads || []).filter((t) => t.taskStatus === "queued").length;
+  const concurrencyOverview = runningTaskCount > 0
+    ? `${runningTaskCount} 个任务运行中${queuedTaskCount > 0 ? ` (${queuedTaskCount} 个排队)` : ""}`
+    : null;
+
   const groupedThreads = useMemo(() => {
     const groups: Array<{ folderName: string; threads: HermesThreadSummary[] }> = [];
     const map = new Map<string, HermesThreadSummary[]>();
@@ -1560,7 +1639,9 @@ function App() {
       ? "warning"
       : state?.error
         ? "error"
-        : "";
+        : runningTaskCount > 0 || state?.busy
+          ? "busy"
+          : "";
 
   const statusLabel = isInitializing
     ? "加载中..."
@@ -1570,7 +1651,7 @@ function App() {
       ? (isOfficialMode ? "官方账号未登录" : "未配置 API 密钥")
       : state?.error
         ? "运行异常"
-        : (state?.status || "Ready.");
+        : (concurrencyOverview || state?.status || "Ready.");
 
   if (!state) {
     return (
@@ -1722,14 +1803,46 @@ function App() {
                     {threads.map((thread) => {
                       const title = thread.name || thread.preview || "未命名对话";
                       const isActive = thread.id === state.activeThreadId;
+                      const taskStatus = thread.taskStatus || "idle";
                       return (
                         <div
                           key={thread.id}
-                          className={`thread-item-slim group ${isActive ? "active" : ""}`}
+                          className={`thread-item-slim group ${isActive ? "active" : ""} ${taskStatus !== "idle" ? `task-${taskStatus}` : ""}`}
                           onClick={() => void selectThread(thread.id)}
                           title={`${title} • ${formatRelativeTime(thread.updatedAt)}`}
                         >
                           <span className="thread-item-slim-title">{title}</span>
+
+                          {taskStatus === "running" && (
+                            <span className="thread-task-badge running" title="后台正在执行分析中...">
+                              <span className="thread-task-spinner" />
+                              <span className="thread-task-text">运行中</span>
+                            </span>
+                          )}
+                          {taskStatus === "approving" && (
+                            <span className="thread-task-badge approving" title="任务需要安全授权，点击进入处理">
+                              <span className="thread-task-dot approving" />
+                              <span className="thread-task-text">待授权</span>
+                            </span>
+                          )}
+                          {taskStatus === "clarifying" && (
+                            <span className="thread-task-badge clarifying" title="任务需要补充确认信息，点击进入回复">
+                              <span className="thread-task-dot clarifying" />
+                              <span className="thread-task-text">待确认</span>
+                            </span>
+                          )}
+                          {taskStatus === "queued" && (
+                            <span className="thread-task-badge queued" title="排队等待空闲槽位...">
+                              <span className="thread-task-dot" />
+                              <span className="thread-task-text">排队中</span>
+                            </span>
+                          )}
+                          {taskStatus === "completed" && (
+                            <span className="thread-task-badge completed" title="任务已完成，点击查看">
+                              <span className="thread-task-text">✓ 完成</span>
+                            </span>
+                          )}
+
                           <button
                             type="button"
                             className="thread-item-slim-delete"
@@ -1840,7 +1953,7 @@ function App() {
             </div>
           </header>
 
-          <section className="message-scroller">
+          <section className="message-scroller" onScroll={handleMessagesScroll}>
             {isThreadLoading || isInitializing ? (
               <div className="thread-loading-wrapper flex flex-col gap-6 w-full max-w-[860px] mx-auto py-4 px-2 overflow-hidden animate-fade-in">
                 <div className="loading-status-bar flex items-center justify-center gap-2.5 py-1.5 px-4 rounded-full bg-blue-50/90 border border-blue-200/60 w-fit mx-auto shadow-xs text-xs font-medium text-blue-700">
@@ -2149,6 +2262,21 @@ function App() {
                     </div>
                   </article>
                 ) : null}
+
+                {!isHermesMissing && state?.busy && !state?.activeDraft && state?.status?.includes("排队") ? (
+                  <article className="bubble assistant queued-bubble">
+                    <div className="bubble-head">
+                      <strong>深小统</strong>
+                    </div>
+                    <div className="task-queue-banner">
+                      <span className="task-queue-spinner" />
+                      <div className="task-queue-info">
+                        <span className="task-queue-title">任务已进入排队队列</span>
+                        <span className="task-queue-desc">{state.status}（前序任务完成释放槽位后，将自动无缝接力启动）</span>
+                      </div>
+                    </div>
+                  </article>
+                ) : null}
               </>
             )}
 
@@ -2156,6 +2284,21 @@ function App() {
           </section>
 
           <footer ref={composerRef} className="composer">
+            {showScrollBottomBtn && (
+              <div className="scroll-bottom-container">
+                <button
+                  type="button"
+                  className="scroll-to-bottom-pill"
+                  onClick={scrollToBottom}
+                  title="点击滚到最新内容"
+                >
+                  <svg className="w-3.5 h-3.5 text-blue-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                  <span>回到底部</span>
+                </button>
+              </div>
+            )}
             {selectedDigestList.length > 0 && (
               <div className="digest-composer-toolbar">
                 <div className="digest-bar-info">
@@ -2421,11 +2564,11 @@ function App() {
                   <div ref={folderMenuRef} className="relative">
                   <button
                     type="button"
-                    className="trae-selector-pill"
+                    className={`trae-selector-pill ${currentCwd ? "!border-blue-300 !text-blue-700 !bg-blue-50/80 font-medium" : ""}`}
                     onClick={() => setIsFolderMenuOpen((prev) => !prev)}
-                    title={currentCwd || "选择项目工作区（可选）"}
+                    title={currentCwd ? `当前工作区：${currentCwd}（发消息前可点击更换）` : "选择项目工作区（可选）"}
                   >
-                    <svg className="w-3.5 h-3.5 text-slate-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <svg className={`w-3.5 h-3.5 ${currentCwd ? "text-blue-600" : "text-slate-500"} shrink-0`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
                     </svg>
                     <span className="truncate" style={{ maxWidth: "220px" }}>
@@ -3487,7 +3630,6 @@ function ReportStylePicker({
   onSelect: (styleId: string) => void;
 }) {
   const skillDisplayName = BUILTIN_SKILL_DISPLAY_NAMES[skillName] || "HTML 报表技能";
-  const isReportSkill = REPORT_SKILL_NAMES.has(skillName);
 
   return (
     <div className="modal-backdrop report-style-picker-backdrop" onClick={onCancel}>
@@ -3497,8 +3639,7 @@ function ReportStylePicker({
             <p className="eyebrow">先选输出风格</p>
             <h3>{skillDisplayName}</h3>
             <p>
-              选择后会自动进入对话输入框，技能会按该风格组织输出
-              {isReportSkill ? "并生成 HTML 报表" : ""}。
+              选择后会自动进入对话输入框，技能将直接使用该风格模版生成可打开的 HTML 成果文件并保存到工作区 output/ 目录。
             </p>
           </div>
           <button type="button" className="report-style-picker-close" onClick={onCancel} aria-label="关闭风格选择">

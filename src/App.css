@@ -177,6 +177,92 @@ body {
   @apply hidden group-hover:flex items-center justify-center w-4 h-4 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 border-none cursor-pointer text-xs shrink-0 transition-colors font-bold;
 }
 
+.thread-task-badge {
+  @apply inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[0.68rem] font-medium shrink-0 transition-all select-none mr-1;
+}
+
+.thread-task-badge.running {
+  background: rgba(37, 99, 235, 0.08);
+  color: #2563eb;
+  border: 1px solid rgba(37, 99, 235, 0.2);
+}
+
+.thread-task-spinner {
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid rgba(37, 99, 235, 0.25);
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.thread-task-badge.queued {
+  background: rgba(217, 119, 6, 0.08);
+  color: #d97706;
+  border: 1px solid rgba(217, 119, 6, 0.2);
+}
+
+.thread-task-badge.approving {
+  background: rgba(239, 68, 68, 0.08);
+  color: #dc2626;
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  font-weight: 600;
+}
+
+.thread-task-badge.clarifying {
+  background: rgba(147, 51, 234, 0.08);
+  color: #9333ea;
+  border: 1px solid rgba(147, 51, 234, 0.25);
+  font-weight: 600;
+}
+
+.thread-task-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #d97706;
+  display: inline-block;
+  flex-shrink: 0;
+  animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.thread-task-dot.approving {
+  background: #dc2626;
+}
+
+.thread-task-dot.clarifying {
+  background: #9333ea;
+}
+
+.thread-task-badge.completed {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  font-weight: 600;
+  animation: badgeFadeIn 0.3s ease-out;
+}
+
+.thread-item-slim:hover .thread-task-badge {
+  opacity: 0.85;
+}
+
+.thread-item-slim.task-running {
+  background: rgba(37, 99, 235, 0.03);
+}
+
+@keyframes badgeFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .thread-row {
   @apply flex items-center gap-2 px-3 pt-3;
 }
@@ -385,6 +471,37 @@ body {
 .streaming-loading-dot {
   @apply w-2.5 h-2.5 rounded-full bg-blue-600 animate-ping shrink-0 inline-block;
   box-shadow: 0 0 8px rgba(37, 99, 235, 0.6);
+}
+
+.queued-bubble {
+  border-left: 3px solid #f59e0b !important;
+}
+
+.task-queue-banner {
+  @apply flex items-center gap-3 py-3 px-3.5 my-2 rounded-xl bg-amber-50/70 border border-amber-200/80 text-amber-900 select-none;
+}
+
+.task-queue-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(217, 119, 6, 0.25);
+  border-top-color: #d97706;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.task-queue-info {
+  @apply flex flex-col gap-0.5 min-w-0;
+}
+
+.task-queue-title {
+  @apply text-[0.84rem] font-semibold text-amber-900;
+}
+
+.task-queue-desc {
+  @apply text-[0.76rem] text-amber-700/90 leading-relaxed;
 }
 
 /* Hermes activity stream: quiet, line-oriented rows like the reference TUI. */
@@ -650,6 +767,45 @@ body {
 
 .step-action-text {
   @apply m-0 text-slate-700 text-[0.85rem] font-normal leading-relaxed;
+}
+
+/* Scroll To Bottom Button Pill */
+.scroll-bottom-container {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  pointer-events: none;
+  margin-bottom: -4px;
+}
+
+.scroll-to-bottom-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(0, 102, 255, 0.18);
+  border-radius: 999px;
+  box-shadow: 0 4px 14px rgba(0, 102, 255, 0.12);
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e40af;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.scroll-to-bottom-pill:hover {
+  background: #ffffff;
+  border-color: #0066ff;
+  box-shadow: 0 6px 18px rgba(0, 102, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.scroll-to-bottom-pill:active {
+  transform: translateY(0);
 }
 
 /* Composer Area (Full-width bottom dock) */

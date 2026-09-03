@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{REPORT_TITLE}} | 瑞士编辑</title>
+<style>
+  :root {
+    --bg:#ffffff; --surface:#ffffff; --ink:#111111; --ink2:#262626;
+    --muted:#525252; --faint:#a3a3a3;
+    --brand:#0038ff; --brand-bg:rgba(0,56,255,.04); --border-blue:#111111;
+    --up:#dc2626; --down:#16a34a; --warn:#ea580c; --tagbg:#f5f5f5;
+    --sans:"Helvetica Neue",Arial,-apple-system,"PingFang SC",sans-serif;
+    --serif:"Helvetica Neue",Arial,sans-serif;
+    --mono:"Courier New",monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{font-family:var(--sans);color:var(--ink);line-height:1.6;-webkit-font-smoothing:antialiased;background:var(--bg);padding-bottom:80px}
+  a{color:var(--brand);text-decoration:none}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 20px}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* HERO */
+  .hero{padding:34px 0 16px;background:#ffffff;border-bottom:3px solid #111111}
+  .sub-badge{display:inline-flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border-blue);border-radius:999px;padding:5px 14px;font-size:11px;font-weight:800;color:var(--brand);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:14px}
+  .sub-badge-dot{width:7px;height:7px;border-radius:50%;background:var(--brand);box-shadow:0 0 0 3px rgba(0,102,255,.15)}
+  .hero h1{font-family:var(--serif);font-weight:800;font-size:clamp(22px,4vw,32px);letter-spacing:-.5px;line-height:1.25;margin-bottom:8px}
+  .hero h1 em{font-style:normal;color:var(--brand)}
+  .hero-meta{font-size:12.5px;color:var(--muted);line-height:1.9}
+  .hero-meta b{color:var(--ink2);font-weight:600}
+
+  /* KPI strip */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:18px 0 6px}
+  .kpi{background:var(--surface);border:1px solid var(--border-blue);border-radius:12px;padding:12px 14px;box-shadow:0 2px 10px rgba(0,102,255,.03)}
+  .kpi .lbl{font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.3px}
+  .kpi .val{font-family:var(--mono);font-size:22px;font-weight:700;line-height:1.3;margin-top:2px}
+  .kpi .val small{font-size:12px;color:var(--muted);font-weight:500;font-family:var(--sans)}
+  .kpi .sub{font-size:11px;color:var(--faint);margin-top:2px}
+
+  /* TOC */
+  .toc{position:sticky;top:0;z-index:50;background:rgba(243,247,251,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--border-blue);padding:9px 0}
+  .toc ul{display:flex;flex-wrap:wrap;gap:7px;list-style:none}
+  .toc a{font-size:12px;font-weight:600;color:var(--ink2);background:var(--surface);border:1px solid var(--border-blue);padding:4px 11px;border-radius:999px}
+  .toc a:hover{color:var(--brand);border-color:var(--brand)}
+
+  /* SECTIONS & HEADINGS (带安全留白，绝不遮挡) */
+  section, .sec, [id]{margin-top:30px;scroll-margin-top:64px}
+  .sec-h{display:flex;align-items:center;gap:12px;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid var(--ink)}
+  .sec-no{font-family:var(--mono);font-size:12px;font-weight:800;color:var(--brand);background:var(--brand-bg);border:1px solid var(--border-blue);border-radius:8px;padding:3px 8px}
+  .sec-h h2{font-family:var(--serif);font-size:21px;font-weight:800;letter-spacing:-.3px}
+  .sec-h .tip{margin-left:auto;font-size:11px;color:var(--faint)}
+
+  /* TAGS & CHIPS */
+  .tag{display:inline-block;font-size:10.5px;font-weight:700;font-family:var(--mono);border-radius:5px;padding:1px 6px;margin-left:4px;vertical-align:1px}
+  .tA{background:#ecfdf5;color:#047857;border:1px solid #a7f3d0}
+  .tB{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}
+  .tC{background:#fff7ed;color:#c2410c;border:1px solid #fed7aa}
+  .tEst{background:#fdf4ff;color:#a21caf;border:1px solid #f5d0fe}
+  .chip{display:inline-block;font-size:11px;background:var(--surface);border:1px solid var(--border-blue);color:var(--ink2);border-radius:999px;padding:2px 10px;margin:2px 3px 2px 0;font-weight:600}
+  .up{color:var(--up)} .down{color:var(--down)} .flat{color:var(--ink2)} .warn{color:var(--warn)}
+
+  /* TABLES (安全设计：表头自然流动，绝不产生遮挡覆盖) */
+  .tbl-wrap{overflow-x:auto;border:1px solid var(--border-blue);border-radius:12px;background:var(--surface);box-shadow:0 2px 12px rgba(0,102,255,.02);margin-top:4px}
+  table{border-collapse:collapse;width:100%;font-size:12.6px;min-width:760px}
+  thead th{background:#f5f5f5;color:#111111;border-bottom:2px solid #111111;font-size:11.5px;text-transform:none;letter-spacing:.2px;padding:10px 12px;text-align:left;white-space:nowrap;border-bottom:2px solid var(--border-blue)}
+  tbody td{padding:9px 12px;border-bottom:1px solid #eef3fa;vertical-align:top}
+  tbody tr:nth-child(even){background:#fafcff}
+  tbody tr:hover{background:#f0f6ff}
+  td.hd{font-weight:700;white-space:nowrap}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .cite{font-size:10px;color:var(--faint);font-family:var(--mono)}
+  a.src{color:var(--brand);font-weight:600}
+
+  /* CARDS GRID */
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+  .card{background:var(--surface);border:1px solid var(--border-blue);border-radius:12px;padding:14px 16px;box-shadow:0 2px 10px rgba(0,102,255,.02)}
+  .card h4{font-size:13.5px;margin-bottom:6px}
+  .card h4 .cno{font-family:var(--mono);color:var(--brand)}
+  .card p,.card li{font-size:12.5px;color:var(--ink2)}
+  .card ul{padding-left:16px}
+  .flow{font-size:12px;color:var(--muted)}
+
+  .callout{border-left:4px solid var(--brand);background:var(--brand-bg);border-radius:0 10px 10px 0;padding:10px 14px;font-size:12.8px;color:var(--ink2);margin:12px 0}
+  .callout.warn-c{border-color:var(--warn);background:#fffbeb}
+  .legend{font-size:11.5px;color:var(--muted);background:var(--surface);border:1px dashed var(--border-blue);border-radius:10px;padding:8px 12px;margin:10px 0}
+
+  /* SOURCES */
+  ol.sources{list-style:none;counter-reset:s;display:grid;gap:8px}
+  ol.sources li{counter-increment:s;background:var(--surface);border:1px solid var(--border-blue);border-radius:10px;padding:9px 12px 9px 46px;position:relative;font-size:12.3px;color:var(--ink2);line-height:1.75;word-break:break-all}
+  ol.sources li::before{content:"S" counter(s);position:absolute;left:10px;top:10px;font-family:var(--mono);font-size:11px;font-weight:800;color:var(--brand);background:var(--brand-bg);border:1px solid var(--border-blue);border-radius:7px;padding:1px 6px}
+  ol.sources b{color:var(--ink)}
+  ol.sources .org{font-weight:700;color:var(--ink)}
+  ol.sources .u{color:var(--faint);font-family:var(--mono);font-size:11px}
+
+  footer{margin-top:36px;text-align:center;font-size:11px;color:var(--faint)}
+  @media print{
+    body{background:#fff;padding:0}
+    .toc,.sec-h .tip{display:none}
+    .tbl-wrap{border:none;box-shadow:none}
+    thead th{position:static;background:#eef4ff}
+    .card,.kpi,ol.sources li{box-shadow:none;break-inside:avoid}
+    section{break-inside:auto}
+    a{color:inherit}
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="sub-badge"><span class="sub-badge-dot"></span>SZ-STAT&nbsp;·&nbsp;PRICE × GDP TRACKER</div>
+    <h1>价格指数 × <em>{{REGION}} GDP</em> 影响速查卡</h1>
+    <div class="hero-meta">
+      分析地区：<b>{{REGION}}</b>（默认）｜检索日期：<b>{{CHECK_DATE}}</b>｜数据截至 <b>{{DATA_DATE}}</b><br>
+      口径说明：{{SCOPE_NOTE}}<br>
+      <b>证据分级：</b><span class="tag tA">A</span>官方核算口径 <span class="tag tB">B</span>官方数据推算/代理口径 <span class="tag tC">C</span>传导逻辑推断 <span class="tag tEst">★</span>隐含/估算
+    </div>
+    <!-- 5 个核心 KPI 芯片 -->
+    <div class="kpis">
+      {{KPIS_HTML}}
+    </div>
+  </div>
+</header>
+
+<nav class="toc"><div class="wrap"><ul>
+  <li><a href="#s1">01 结论</a></li>
+  <li><a href="#s2">02 口径核验</a></li>
+  <li><a href="#s3">03 指数×GDP映射</a></li>
+  <li><a href="#s4">04 定量拆分</a></li>
+  <li><a href="#s5">05 情景推演</a></li>
+  <li><a href="#s6">06 局限/待补</a></li>
+  <li><a href="#s7">07 数据来源</a></li>
+</ul></div></nav>
+
+<div class="wrap">
+
+<!-- 01 结论摘要 -->
+<section id="s1">
+  <div class="sec-h"><span class="sec-no">01</span><h2>结论摘要 · TL;DR</h2><span class="tip">速览十秒版</span></div>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th style="width:34px">#</th><th>结论</th><th>关键数</th><th style="width:96px">证据</th></tr></thead>
+    <tbody>
+      {{SECTION_1_ROWS}}
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 02 口径核验 -->
+<section id="s2">
+  <div class="sec-h"><span class="sec-no">02</span><h2>数据与口径核验</h2><span class="tip">先对口，再谈影响</span></div>
+  <div class="grid2">
+    {{SECTION_2_CARDS}}
+  </div>
+</section>
+
+<!-- 03 映射表 -->
+<section id="s3">
+  <div class="sec-h"><span class="sec-no">03</span><h2>价格指数 ↔ GDP 分项映射表</h2><span class="tip">核心工作表 · 横滑查看</span></div>
+  <div class="tbl-wrap"><table>
+    <thead><tr>
+      <th>GDP 分项</th><th>对应价格指数</th><th>名义影响</th><th>实际量影响</th><th>传导渠道</th><th>时滞</th><th>证据</th>
+    </tr></thead>
+    <tbody>
+      {{SECTION_3_ROWS}}
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 04 定量拆分 -->
+<section id="s4">
+  <div class="sec-h"><span class="sec-no">04</span><h2>定量拆分与因果分析</h2><span class="tip">统计分解与机制解释</span></div>
+  {{SECTION_4_CONTENT}}
+</section>
+
+<!-- 05 情景推演 -->
+<section id="s5">
+  <div class="sec-h"><span class="sec-no">05</span><h2>情景分析与敏感性推演</h2><span class="tip">前瞻测算</span></div>
+  {{SECTION_5_CONTENT}}
+</section>
+
+<!-- 06 局限与待补 -->
+<section id="s6">
+  <div class="sec-h"><span class="sec-no">06</span><h2>局限、待补数据与边界</h2><span class="tip">严谨统计底线</span></div>
+  {{SECTION_6_CONTENT}}
+</section>
+
+<!-- 07 数据来源 -->
+<section id="s7">
+  <div class="sec-h"><span class="sec-no">07</span><h2>数据与事实来源卡片</h2><span class="tip">每一项均可点击原文核验</span></div>
+  <ol class="sources">
+    {{SECTION_7_SOURCES}}
+  </ol>
+</section>
+
+<footer>
+  深小统智能工作台 · 价格指数与 GDP 影响速查分析报表
+</footer>
+
+</div>
+</body>
+</html>

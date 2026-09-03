@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{DOCUMENT_TITLE}} | 政务公文 (现代板岩)</title>
+<style>
+  :root {
+    --bg:#f8fafc; --surface:#ffffff; --ink:#0f172a; --ink2:#334155;
+    --muted:#64748b; --faint:#94a3b8;
+    --brand:#0f766e; --brand-bg:rgba(15,118,110,.05); --border:#cbd5e1;
+    --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;
+    --serif:"Inter",sans-serif;
+    --mono:"JetBrains Mono",monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{font-family:var(--sans);color:var(--ink);line-height:1.8;background:var(--bg);padding:40px 20px 80px}
+  a{color:var(--brand);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .doc-container{max-width:820px;margin:0 auto;background:var(--surface);border:1px solid var(--border);box-shadow:0 4px 20px rgba(140,21,21,.03);padding:60px 70px;border-radius:4px}
+  
+  /* 红头双线装饰（政务标准） */
+  .doc-header{text-align:center;margin-bottom:36px;border-bottom:3px double var(--brand);padding-bottom:24px}
+  .doc-dept{font-family:var(--serif);font-size:18px;font-weight:700;color:var(--brand);letter-spacing:4px;margin-bottom:12px}
+  .doc-meta{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);font-family:var(--sans)}
+
+  /* 标题 */
+  h1.doc-title{font-family:var(--serif);font-size:26px;font-weight:800;color:var(--ink);text-align:center;line-height:1.4;margin:24px 0 32px;letter-spacing:1px}
+  
+  /* 主送机关 */
+  .recipient{font-size:16px;font-weight:700;margin-bottom:16px;color:var(--ink)}
+
+  /* 正文 */
+  .doc-content{font-size:16px;line-height:2.0;text-indent:2em;margin-bottom:24px}
+  .doc-content p{margin-bottom:16px}
+  .doc-content h2{font-family:var(--serif);font-size:18px;font-weight:700;margin:24px 0 12px;text-indent:0;color:var(--ink)}
+  .doc-content h3{font-size:16px;font-weight:700;margin:16px 0 8px;text-indent:0;color:var(--ink2)}
+
+  /* 待补字段醒目提示 */
+  .placeholder{background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-weight:600;font-size:14px;border:1px dashed #f59e0b}
+
+  /* 安全表格 */
+  .tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:6px;background:var(--surface);margin:20px 0}
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  thead th{background:#f1f5f9;color:#0f172a;font-size:13px;padding:10px 14px;text-align:left;border-bottom:2px solid var(--border);white-space:nowrap}
+  tbody td{padding:10px 14px;border-bottom:1px solid #f5ede4;vertical-align:top}
+  tbody tr:nth-child(even){background:#fdfbf7}
+
+  /* 落款 */
+  .doc-footer{margin-top:48px;display:flex;flex-direction:column;align-items:flex-end;gap:8px;font-size:15px;color:var(--ink2)}
+  .doc-footer .org{font-family:var(--serif);font-weight:700;font-size:16px}
+
+  /* 来源附注 */
+  .sources-box{margin-top:54px;border-top:1px solid var(--border);padding-top:20px;font-size:12.5px;color:var(--muted);line-height:1.7}
+  .sources-box h4{font-size:13px;color:var(--brand);margin-bottom:8px}
+  .sources-box ol{padding-left:18px}
+
+  @media print{
+    body{padding:0;background:#fff}
+    .doc-container{border:none;box-shadow:none;padding:0}
+  }
+</style>
+</head>
+<body>
+<div class="doc-container">
+  <div class="doc-header">
+    <div class="doc-dept">{{ISSUING_ORG}}</div>
+    <div class="doc-meta">
+      <span>发文字号：<span class="placeholder">{{DOC_NUMBER}}</span></span>
+      <span>签发类型：{{DOC_TYPE}}</span>
+      <span>日期：{{DOC_DATE}}</span>
+    </div>
+  </div>
+
+  <h1 class="doc-title">{{DOCUMENT_TITLE}}</h1>
+
+  <div class="recipient">{{RECIPIENT}}：</div>
+
+  <div class="doc-content">
+    {{DOCUMENT_BODY}}
+  </div>
+
+  <div class="doc-footer">
+    <div class="org">{{ISSUING_ORG}}</div>
+    <div class="date">{{DOC_DATE}}</div>
+  </div>
+
+  <div class="sources-box">
+    <h4>政策依据与事实来源清单</h4>
+    <ol>
+      {{SOURCES_LIST}}
+    </ol>
+  </div>
+</div>
+</body>
+</html>

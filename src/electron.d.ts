@@ -10,6 +10,7 @@ declare global {
     updatedAt: number;
     createdAt: number;
     cwd: string;
+    taskStatus?: "idle" | "running" | "queued" | "completed" | "error" | "clarifying" | "approving";
   };
 
   type HermesChatMessage = {
@@ -146,6 +147,7 @@ declare global {
       unregisterSkill: (path: string) => Promise<HermesAppState>;
       respondApproval: (choice: "once" | "session" | "always" | "deny") => Promise<HermesAppState>;
       respondClarification: (answer: string) => Promise<HermesAppState>;
+      ackThreadCompleted: (threadId: string) => Promise<HermesAppState>;
     };
   }
 }

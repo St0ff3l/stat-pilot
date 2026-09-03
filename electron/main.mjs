@@ -2247,6 +2247,52 @@ let state = {
   skills: [],
 };
 
+// ==========================================
+// 多任务后台并发池与排队调度系统 (TaskPool)
+// ==========================================
+const MAX_CONCURRENT_TASKS = 3;
+
+class TaskItem {
+  constructor({ threadId, sessionId, text, cwd, isNewThread = false }) {
+    this.taskId = randomUUID();
+    this.threadId = threadId;
+    this.sessionId = sessionId;
+    this.text = text;
+    this.cwd = cwd;
+    this.isNewThread = isNewThread;
+    this.status = "queued"; // "queued" | "running" | "completed" | "error"
+    this.createdAt = Date.now();
+    this.startedAt = null;
+    this.completedAt = null;
+    this.error = null;
+    this.beforeFiles = [];
+    this.lastGeneratedFiles = null;
+    this.cancelRequested = false;
+    this.hasStarted = false;
+    this.pendingClarification = null;
+    this.pendingApproval = null;
+    this.draft = {
+      id: randomUUID(),
+      threadId: threadId || sessionId,
+      text: "",
+      pendingText: "",
+      reasoning: "",
+      segments: [{ reasoning: "", text: "" }],
+      activities: [],
+    };
+  }
+}
+
+// 活跃运行中的任务池（最多 MAX_CONCURRENT_TASKS 个并发）
+const activeTasks = new Map(); // key: threadId -> TaskItem
+// 排队队列 (FIFO)
+const queuedTasks = []; // Array<TaskItem>
+// 已完成但尚未在前端消除绿勾的 threadId 集合
+const completedThreads = new Set();
+// 双向会话映射
+const threadIdToSessionId = new Map();
+const sessionIdToThreadId = new Map();
+
 function getSettingsPath() {
   return path.join(app.getPath("userData"), SETTINGS_FILE);
 }
@@ -2288,47 +2334,102 @@ async function saveSettings(settings) {
 
 function broadcastState() {
   if (mainWindow && !mainWindow.isDestroyed()) {
+    // 为每个 thread 注入实时并发任务状态
+    if (Array.isArray(state.threads)) {
+      state.threads = state.threads.map((th) => {
+        let taskStatus = "idle";
+        const activeTask = activeTasks.get(th.id);
+        if (activeTask) {
+          if (activeTask.pendingApproval) {
+            taskStatus = "approving";
+          } else if (activeTask.pendingClarification) {
+            taskStatus = "clarifying";
+          } else {
+            taskStatus = "running";
+          }
+        } else if (queuedTasks.some((t) => t.threadId === th.id)) {
+          taskStatus = "queued";
+        } else if (completedThreads.has(th.id)) {
+          taskStatus = "completed";
+        }
+        return { ...th, taskStatus };
+      });
+    }
+
+    // 动态同步前台活动会话的状态与草稿投影
+    if (state.activeThreadId) {
+      if (activeTasks.has(state.activeThreadId)) {
+        const currentTask = activeTasks.get(state.activeThreadId);
+        state.busy = true;
+        state.activeDraft = currentTask.draft;
+        state.pendingClarification = currentTask.pendingClarification || null;
+        state.pendingApproval = currentTask.pendingApproval || null;
+        state.status = currentTask.pendingApproval
+          ? "等待安全授权..."
+          : currentTask.pendingClarification
+          ? "等待补充信息..."
+          : "Running...";
+      } else if (queuedTasks.some((t) => t.threadId === state.activeThreadId)) {
+        const queueIndex = queuedTasks.findIndex((t) => t.threadId === state.activeThreadId);
+        state.busy = true;
+        state.status = `排队等待执行中 (第 ${queueIndex + 1} 位)...`;
+        state.activeDraft = null;
+        state.pendingClarification = null;
+        state.pendingApproval = null;
+      } else {
+        // 当前查看的任务不在后台池中跑
+        if (!state.activeDraft || state.activeDraft.threadId !== state.activeThreadId) {
+          state.busy = false;
+        }
+      }
+    } else {
+      // 处于新建对话页，如果当前没有在跑新建的草稿，则 busy 为 false
+      if (!state.activeDraft) {
+        state.busy = false;
+      }
+    }
+
     mainWindow.webContents.send("hermes:state", state);
   }
 }
 
-function upsertActiveDraftActivity(activity) {
-  if (!state.activeDraft || !activity?.id) {
+function upsertActiveDraftActivity(activity, targetDraft = state.activeDraft) {
+  if (!targetDraft || !activity?.id) {
     return;
   }
 
-  const activities = Array.isArray(state.activeDraft.activities)
-    ? state.activeDraft.activities
+  const activities = Array.isArray(targetDraft.activities)
+    ? targetDraft.activities
     : [];
   const index = activities.findIndex((entry) => entry.id === activity.id);
   if (index === -1) {
-    state.activeDraft.activities = [...activities, activity];
+    targetDraft.activities = [...activities, activity];
     return;
   }
 
-  state.activeDraft.activities = activities.map((entry, entryIndex) =>
+  targetDraft.activities = activities.map((entry, entryIndex) =>
     entryIndex === index ? { ...entry, ...activity } : entry
   );
 }
 
-function closeRunningThinkingActivities() {
-  if (!state.activeDraft || !Array.isArray(state.activeDraft.activities)) {
+function closeRunningThinkingActivities(targetDraft = state.activeDraft) {
+  if (!targetDraft || !Array.isArray(targetDraft.activities)) {
     return;
   }
 
-  state.activeDraft.activities = state.activeDraft.activities.map((activity) =>
+  targetDraft.activities = targetDraft.activities.map((activity) =>
     activity.kind === "thinking" && activity.status === "running"
       ? { ...activity, status: "complete" }
       : activity
   );
 }
 
-function flushActiveDraftNarrative() {
-  if (!state.activeDraft) {
+function flushActiveDraftNarrative(targetDraft = state.activeDraft) {
+  if (!targetDraft) {
     return;
   }
 
-  const text = narrativeActivityText(state.activeDraft.pendingText);
+  const text = narrativeActivityText(targetDraft.pendingText);
   if (!text) {
     return;
   }
@@ -2339,19 +2440,19 @@ function flushActiveDraftNarrative() {
     label: "正文",
     detail: text,
     status: "complete",
-  });
-  state.activeDraft.pendingText = "";
-  state.activeDraft.text = "";
+  }, targetDraft);
+  targetDraft.pendingText = "";
+  targetDraft.text = "";
 }
 
-function upsertActiveDraftThinking(detail) {
+function upsertActiveDraftThinking(detail, targetDraft = state.activeDraft) {
   const text = fullActivityText(detail);
-  if (!text || !state.activeDraft) {
+  if (!text || !targetDraft) {
     return;
   }
 
-  const activities = Array.isArray(state.activeDraft.activities)
-    ? state.activeDraft.activities
+  const activities = Array.isArray(targetDraft.activities)
+    ? targetDraft.activities
     : [];
   const current = [...activities]
     .reverse()
@@ -2369,15 +2470,15 @@ function upsertActiveDraftThinking(detail) {
         label: "Think",
         detail: text,
         status: "running",
-      });
+      }, targetDraft);
 }
 
-function finishActiveDraftActivities() {
-  if (!state.activeDraft || !Array.isArray(state.activeDraft.activities)) {
+function finishActiveDraftActivities(targetDraft = state.activeDraft) {
+  if (!targetDraft || !Array.isArray(targetDraft.activities)) {
     return;
   }
 
-  state.activeDraft.activities = state.activeDraft.activities.map((activity) =>
+  targetDraft.activities = targetDraft.activities.map((activity) =>
     activity.status === "running"
       ? { ...activity, status: "complete" }
       : activity
@@ -2604,12 +2705,17 @@ async function loadActiveThread(threadId) {
   }
 
   const previousSessionId = activeGatewaySessionId;
-  const previousTurnWasActive = state.busy || Boolean(state.pendingClarification);
-  state.busy = true;
+  const previousThreadId = state.activeThreadId;
+  const isPreviousTaskRunning = previousThreadId && activeTasks.has(previousThreadId);
+
+  // 消除进入目标任务的“已完成”绿勾标记
+  if (completedThreads.has(threadId)) {
+    completedThreads.delete(threadId);
+  }
+
   state.error = null;
   state.pendingClarification = null;
   state.pendingApproval = null;
-  broadcastState();
 
   try {
     if (activeSessionUnsubscribe) {
@@ -2621,22 +2727,67 @@ async function loadActiveThread(threadId) {
       activeSessionReject = null;
     }
 
-    if (previousTurnWasActive && previousSessionId) {
-      const interruptedTurn = preserveInterruptedDraft();
-      if (interruptedTurn) {
-        await persistInterruptedTurn(interruptedTurn);
+    // 只有非后台并发运行的未管辖会话切走时才进行中断与关闭
+    if (!isPreviousTaskRunning) {
+      const previousTurnWasActive = state.busy || Boolean(state.pendingClarification);
+      if (previousTurnWasActive && previousSessionId) {
+        const interruptedTurn = preserveInterruptedDraft();
+        if (interruptedTurn) {
+          await persistInterruptedTurn(interruptedTurn);
+        }
+        try {
+          await bridge.cancelPrompt(previousSessionId);
+        } catch {}
       }
-      await bridge.cancelPrompt(previousSessionId);
+
+      if (previousSessionId) {
+        try {
+          await bridge.closeSession(previousSessionId);
+        } catch {}
+      }
     }
 
-    if (previousSessionId) {
-      await bridge.closeSession(previousSessionId);
+    // 判断目标任务是否已经在后台任务池中运行
+    const targetRunningTask = activeTasks.get(threadId);
+    if (targetRunningTask) {
+      activeGatewaySessionId = targetRunningTask.sessionId;
+      state.activeThreadId = threadId;
+      state.settings.cwd = targetRunningTask.cwd || state.settings.cwd;
+      state.activeDraft = targetRunningTask.draft;
+      state.reasoningTrace = targetRunningTask.draft.reasoning || null;
+      state.pendingClarification = targetRunningTask.pendingClarification || null;
+      state.pendingApproval = targetRunningTask.pendingApproval || null;
+      state.busy = true;
+      state.status = targetRunningTask.pendingApproval
+        ? "等待安全授权..."
+        : targetRunningTask.pendingClarification
+        ? "等待补充信息..."
+        : "Running...";
+      await syncMessagesFromGateway(targetRunningTask.sessionId, threadId);
+      broadcastState();
+      return;
+    }
+
+    // 判断目标任务是否在排队中
+    const queuedIndex = queuedTasks.findIndex((t) => t.threadId === threadId);
+    if (queuedIndex !== -1) {
+      state.activeThreadId = threadId;
+      state.activeDraft = null;
+      state.pendingClarification = null;
+      state.pendingApproval = null;
+      state.busy = true;
+      state.status = `排队等待执行中 (第 ${queuedIndex + 1} 位)...`;
+      broadcastState();
+      return;
     }
 
     const result = await bridge.resumeThread(threadId);
     activeGatewaySessionId = String(result.session_id ?? "");
-
     state.activeThreadId = String(result.session_key ?? threadId);
+
+    // 维护双向映射
+    threadIdToSessionId.set(state.activeThreadId, activeGatewaySessionId);
+    sessionIdToThreadId.set(activeGatewaySessionId, state.activeThreadId);
     const savedCwd = getThreadCwd(state.activeThreadId);
     const threadCwd = toSafeString(result.info?.cwd || result.cwd || savedCwd || state.settings.cwd).trim();
     if (state.activeThreadId && threadCwd) {
@@ -2700,7 +2851,8 @@ async function loadActiveThread(threadId) {
 
 async function startNewConversation() {
   const previousSessionId = activeGatewaySessionId;
-  const previousTurnWasActive = state.busy || Boolean(state.pendingClarification);
+  const previousThreadId = state.activeThreadId;
+  const isPreviousTaskRunning = previousThreadId && activeTasks.has(previousThreadId);
 
   state.pendingClarification = null;
   state.pendingApproval = null;
@@ -2713,23 +2865,27 @@ async function startNewConversation() {
     activeSessionReject = null;
   }
 
-  if (bridge && previousTurnWasActive && previousSessionId) {
-    const interruptedTurn = preserveInterruptedDraft();
-    if (interruptedTurn) {
-      await persistInterruptedTurn(interruptedTurn);
+  // 只有当上一个任务并非被任务池管辖的并发任务时，才进行中断和关闭
+  if (!isPreviousTaskRunning) {
+    const previousTurnWasActive = state.busy || Boolean(state.pendingClarification);
+    if (bridge && previousTurnWasActive && previousSessionId) {
+      const interruptedTurn = preserveInterruptedDraft();
+      if (interruptedTurn) {
+        await persistInterruptedTurn(interruptedTurn);
+      }
+      try {
+        await bridge.cancelPrompt(previousSessionId);
+      } catch (err) {
+        console.error("Failed to cancel previous session before starting a new conversation:", err);
+      }
     }
-    try {
-      await bridge.cancelPrompt(previousSessionId);
-    } catch (err) {
-      console.error("Failed to cancel previous session before starting a new conversation:", err);
-    }
-  }
 
-  if (bridge && previousSessionId) {
-    try {
-      await bridge.closeSession(previousSessionId);
-    } catch (err) {
-      console.error("Failed to close session:", err);
+    if (bridge && previousSessionId) {
+      try {
+        await bridge.closeSession(previousSessionId);
+      } catch (err) {
+        console.error("Failed to close session:", err);
+      }
     }
   }
 
@@ -2749,16 +2905,25 @@ async function startNewConversation() {
   broadcastState();
 }
 
-async function syncMessagesFromGateway() {
-  if (!bridge || !activeGatewaySessionId) {
-    return;
+async function syncMessagesFromGateway(targetSessionId = activeGatewaySessionId, targetThreadId = state.activeThreadId) {
+  if (!bridge || !targetSessionId) {
+    return [];
   }
 
-  const history = await bridge.getSessionHistory(activeGatewaySessionId);
-  state.messages = mergeInterruptedTurnMessages(
-    mapGatewayMessages(history.messages),
-    state.activeThreadId
-  );
+  try {
+    const history = await bridge.getSessionHistory(targetSessionId);
+    const mapped = mergeInterruptedTurnMessages(
+      mapGatewayMessages(history.messages),
+      targetThreadId
+    );
+    if (targetThreadId && targetThreadId === state.activeThreadId) {
+      state.messages = mapped;
+    }
+    return mapped;
+  } catch (err) {
+    console.error(`[sync-messages] Failed to sync session history for ${targetSessionId}:`, err);
+    return [];
+  }
 }
 
 async function waitForSessionCompletion(sessionId) {
@@ -2766,16 +2931,7 @@ async function waitForSessionCompletion(sessionId) {
     throw new Error("Hermes bridge is not ready.");
   }
 
-  if (activeSessionUnsubscribe) {
-    activeSessionUnsubscribe();
-    activeSessionUnsubscribe = null;
-  }
-  if (activeSessionReject) {
-    activeSessionReject(new Error("New session started."));
-    activeSessionReject = null;
-  }
-
-  await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const unsubscribe = bridge.onNotification((message) => {
       if ((message.session_id || sessionId) !== sessionId) {
         return;
@@ -2783,51 +2939,29 @@ async function waitForSessionCompletion(sessionId) {
 
       if (message.type === "message.complete") {
         const completionStatus = toSafeString(message.payload?.status).trim().toLowerCase();
-        const wasInterrupted = activeTurnHasStarted && (completionStatus === "interrupted" || activeTurnCancelRequested);
-        if (activeSessionUnsubscribe === unsubscribe) {
-          activeSessionUnsubscribe = null;
-          activeSessionReject = null;
-        }
+        const wasInterrupted = completionStatus === "interrupted" || activeTurnCancelRequested;
         unsubscribe();
         if (wasInterrupted) {
           reject(new Error("用户已终止对话处理。"));
         } else {
-          resolve();
+          resolve(message.payload);
         }
         return;
       }
 
       if (message.type === "error") {
-        if (activeSessionUnsubscribe === unsubscribe) {
-          activeSessionUnsubscribe = null;
-          activeSessionReject = null;
-        }
         unsubscribe();
         reject(new Error(message.payload?.message ?? "Failed to complete turn."));
       }
     });
-    activeSessionUnsubscribe = unsubscribe;
-    activeSessionReject = reject;
   });
 }
 
 async function submitPromptAndWait(sessionId, text) {
-  // Register the completion listener before prompt.submit. The gateway can
-  // emit message.start/delta/complete immediately after accepting a prompt;
-  // attaching afterwards leaves short turns waiting forever even though the
-  // renderer already received the complete event.
   const completionPromise = waitForSessionCompletion(sessionId);
   try {
     await bridge.sendPrompt(sessionId, text);
   } catch (error) {
-    if (activeSessionUnsubscribe) {
-      activeSessionUnsubscribe();
-      activeSessionUnsubscribe = null;
-    }
-    if (activeSessionReject) {
-      activeSessionReject(error);
-      activeSessionReject = null;
-    }
     await completionPromise.catch(() => {});
     throw error;
   }
@@ -2908,34 +3042,54 @@ async function initializeBridge() {
       return;
     }
 
+    const rawSessionId = message.session_id;
+    const eventType = typeof message.type === "string" ? message.type : "";
+
+    // 官方规范：未携带 session_id 的 subagent.* 事件属于内部或后台异步过程，禁止泄漏到当前前台
+    if (!rawSessionId && eventType.startsWith("subagent.")) {
+      return;
+    }
+
+    const targetSessionId = rawSessionId || activeGatewaySessionId || state.activeThreadId;
+    if (!targetSessionId) {
+      return;
+    }
+
+    const targetThreadId = sessionIdToThreadId.get(targetSessionId) || (targetSessionId === activeGatewaySessionId ? state.activeThreadId : null);
+    const task = targetThreadId ? activeTasks.get(targetThreadId) : null;
+    const isForeground = Boolean(state.activeThreadId && targetThreadId === state.activeThreadId);
+
     if (message.type === "clarify.request") {
-      const targetSessionId = message.session_id || activeGatewaySessionId || state.activeThreadId;
       const payload = message.payload || {};
       const question = toSafeString(payload.question || payload.prompt || payload.text).trim();
-      if (targetSessionId && question) {
-        state.pendingClarification = {
+      if (question) {
+        const clarificationData = {
           sessionId: String(targetSessionId),
           requestId: payload.request_id || payload.id || null,
           question,
           choices: Array.isArray(payload.choices) ? payload.choices.map((choice) => toSafeString(choice)).filter(Boolean) : null,
         };
-        state.status = "等待补充信息...";
+        if (task) {
+          task.pendingClarification = clarificationData;
+        }
+        if (isForeground) {
+          state.pendingClarification = clarificationData;
+          state.status = "等待补充信息...";
+        }
         broadcastState();
       }
       return;
     }
 
     const isApprovalType =
-      typeof message.type === "string" &&
-      (message.type.includes("approval") ||
-       message.type.includes("permission") ||
-       message.type.includes("confirm") ||
-       message.type.includes("consent"));
+      eventType.includes("approval") ||
+      eventType.includes("permission") ||
+      eventType.includes("confirm") ||
+      eventType.includes("consent");
 
     if (isApprovalType) {
-      const targetSessionId = message.session_id || activeGatewaySessionId || state.activeThreadId;
       const payload = message.payload || {};
-      state.pendingApproval = {
+      const approvalData = {
         sessionId: String(targetSessionId || ""),
         approvalId: payload.approval_id || payload.id || payload.request_id || null,
         command: toSafeString(payload.command || payload.cmd || payload.text),
@@ -2943,13 +3097,19 @@ async function initializeBridge() {
         patternKey: toSafeString(payload.pattern_key || payload.pattern || payload.rule),
         allowPermanent: payload.allow_permanent !== false,
       };
-      state.status = "等待安全授权...";
+      if (task) {
+        task.pendingApproval = approvalData;
+      }
+      if (isForeground) {
+        state.pendingApproval = approvalData;
+        state.status = "等待安全授权...";
+      }
       broadcastState();
       return;
     }
 
-    const targetSessionId = message.session_id || activeGatewaySessionId;
-    if (!activeGatewaySessionId || targetSessionId !== activeGatewaySessionId) {
+    const currentDraft = task?.draft || (targetSessionId === activeGatewaySessionId ? state.activeDraft : null);
+    if (!currentDraft) {
       return;
     }
 
@@ -2960,101 +3120,115 @@ async function initializeBridge() {
       return;
     }
 
-    if (message.type === "message.start" && state.activeDraft) {
+    if (message.type === "message.start") {
+      if (task) task.hasStarted = true;
       activeTurnHasStarted = true;
       activeTurnCancelRequested = false;
-      state.status = "Running...";
-      broadcastState();
-      return;
-    }
-
-    if (message.type === "message.delta" && state.activeDraft) {
-      const delta = streamPayloadText(message.payload);
-      if (!delta) {
-        return;
-      }
-      closeRunningThinkingActivities();
-      state.activeDraft.pendingText = `${state.activeDraft.pendingText ?? ""}${delta}`;
-      // Keep only the current, not-yet-classified segment in the answer area.
-      // If a tool event follows, flushActiveDraftNarrative() moves this text
-      // into the ordered activity stream; if message.complete follows, it is
-      // the final answer segment.
-      state.activeDraft.text = state.activeDraft.pendingText;
-
-      if (!state.activeDraft.segments) {
-        state.activeDraft.segments = [{ reasoning: state.activeDraft.reasoning || "", text: "" }];
-      }
-      let lastSeg = state.activeDraft.segments[state.activeDraft.segments.length - 1];
-      if (!lastSeg) {
-        lastSeg = { reasoning: "", text: "" };
-        state.activeDraft.segments.push(lastSeg);
-      }
-      lastSeg.text += delta;
-
-      broadcastState();
-      return;
-    }
-
-    if ((message.type === "thinking.delta" || message.type === "reasoning.delta") && state.activeDraft) {
-      const delta = toSafeString(message.payload?.text);
-      if (!delta) {
-        return;
-      }
-      flushActiveDraftNarrative();
-      state.reasoningTrace = `${state.reasoningTrace ?? ""}${delta}`;
-      state.activeDraft.reasoning = `${state.activeDraft.reasoning ?? ""}${delta}`;
-
-      if (!state.activeDraft.segments) {
-        state.activeDraft.segments = [{ reasoning: "", text: "" }];
-      }
-      let lastSeg = state.activeDraft.segments[state.activeDraft.segments.length - 1];
-      if (!lastSeg) {
-        lastSeg = { reasoning: "", text: "" };
-        state.activeDraft.segments.push(lastSeg);
-      } else if (lastSeg.text && lastSeg.text.trim().length > 0) {
-        lastSeg = { reasoning: "", text: "" };
-        state.activeDraft.segments.push(lastSeg);
-      }
-      lastSeg.reasoning = (lastSeg.reasoning || "") + delta;
-      upsertActiveDraftThinking(lastSeg.reasoning || delta);
-
-      broadcastState();
-      return;
-    }
-
-    if ((message.type === "reasoning.available" || message.type === "review.summary") && state.activeDraft) {
-      const preview = fullActivityText(message.payload?.text);
-      if (preview) {
-        flushActiveDraftNarrative();
-        upsertActiveDraftThinking(preview);
+      if (isForeground) {
+        state.status = "Running...";
+        state.activeDraft = currentDraft;
         broadcastState();
       }
       return;
     }
 
-    if (message.type === "status.update" && state.activeDraft) {
+    if (message.type === "message.delta") {
+      const delta = streamPayloadText(message.payload);
+      if (!delta) {
+        return;
+      }
+      closeRunningThinkingActivities(currentDraft);
+      currentDraft.pendingText = `${currentDraft.pendingText ?? ""}${delta}`;
+      currentDraft.text = currentDraft.pendingText;
+
+      if (!currentDraft.segments) {
+        currentDraft.segments = [{ reasoning: currentDraft.reasoning || "", text: "" }];
+      }
+      let lastSeg = currentDraft.segments[currentDraft.segments.length - 1];
+      if (!lastSeg) {
+        lastSeg = { reasoning: "", text: "" };
+        currentDraft.segments.push(lastSeg);
+      }
+      lastSeg.text += delta;
+
+      if (isForeground) {
+        state.activeDraft = currentDraft;
+        broadcastState();
+      }
+      return;
+    }
+
+    if (message.type === "thinking.delta" || message.type === "reasoning.delta") {
+      const delta = toSafeString(message.payload?.text);
+      if (!delta) {
+        return;
+      }
+      flushActiveDraftNarrative(currentDraft);
+      if (isForeground) {
+        state.reasoningTrace = `${state.reasoningTrace ?? ""}${delta}`;
+      }
+      currentDraft.reasoning = `${currentDraft.reasoning ?? ""}${delta}`;
+
+      if (!currentDraft.segments) {
+        currentDraft.segments = [{ reasoning: "", text: "" }];
+      }
+      let lastSeg = currentDraft.segments[currentDraft.segments.length - 1];
+      if (!lastSeg) {
+        lastSeg = { reasoning: "", text: "" };
+        currentDraft.segments.push(lastSeg);
+      } else if (lastSeg.text && lastSeg.text.trim().length > 0) {
+        lastSeg = { reasoning: "", text: "" };
+        currentDraft.segments.push(lastSeg);
+      }
+      lastSeg.reasoning = (lastSeg.reasoning || "") + delta;
+      upsertActiveDraftThinking(lastSeg.reasoning || delta, currentDraft);
+
+      if (isForeground) {
+        state.activeDraft = currentDraft;
+        broadcastState();
+      }
+      return;
+    }
+
+    if (message.type === "reasoning.available" || message.type === "review.summary") {
+      const preview = fullActivityText(message.payload?.text);
+      if (preview) {
+        flushActiveDraftNarrative(currentDraft);
+        upsertActiveDraftThinking(preview, currentDraft);
+        if (isForeground) {
+          state.activeDraft = currentDraft;
+          broadcastState();
+        }
+      }
+      return;
+    }
+
+    if (message.type === "status.update") {
       const payload = message.payload || {};
       const kind = toSafeString(payload.kind).trim().toLowerCase() || "status";
       const text = compactActivityText(payload.text || kind);
       const isReady = kind === "ready";
       const isContext = kind.includes("context") || /context|agents\.md|skill-catalog|system prompt/i.test(text);
-      flushActiveDraftNarrative();
-      closeRunningThinkingActivities();
+      flushActiveDraftNarrative(currentDraft);
+      closeRunningThinkingActivities(currentDraft);
       upsertActiveDraftActivity({
         id: `status:${kind}`,
         kind: isContext ? "context" : "status",
         label: isContext ? "上下文注入" : "Status",
         detail: text,
         status: isReady ? "complete" : "running",
-      });
-      broadcastState();
+      }, currentDraft);
+      if (isForeground) {
+        state.activeDraft = currentDraft;
+        broadcastState();
+      }
       return;
     }
 
-    if (message.type === "tool.generating" && state.activeDraft) {
+    if (message.type === "tool.generating") {
       const toolName = toSafeString(message.payload?.name).trim() || "tool";
-      flushActiveDraftNarrative();
-      closeRunningThinkingActivities();
+      flushActiveDraftNarrative(currentDraft);
+      closeRunningThinkingActivities(currentDraft);
       upsertActiveDraftActivity({
         id: `tool-generating:${toolName}`,
         kind: "tool",
@@ -3062,18 +3236,21 @@ async function initializeBridge() {
         detail: "准备中…",
         status: "running",
         toolName,
-      });
-      broadcastState();
+      }, currentDraft);
+      if (isForeground) {
+        state.activeDraft = currentDraft;
+        broadcastState();
+      }
       return;
     }
 
-    if (message.type === "tool.start" && state.activeDraft) {
+    if (message.type === "tool.start") {
       const payload = message.payload || {};
       const toolName = toSafeString(payload.name).trim() || "tool";
-      flushActiveDraftNarrative();
-      closeRunningThinkingActivities();
-      const generatingActivity = Array.isArray(state.activeDraft.activities)
-        ? [...state.activeDraft.activities]
+      flushActiveDraftNarrative(currentDraft);
+      closeRunningThinkingActivities(currentDraft);
+      const generatingActivity = Array.isArray(currentDraft.activities)
+        ? [...currentDraft.activities]
           .reverse()
           .find((activity) => activity.kind === "tool" && activity.toolName === toolName && activity.id.startsWith("tool-generating:") && activity.status === "running")
         : null;
@@ -3086,17 +3263,20 @@ async function initializeBridge() {
         detail,
         status: "running",
         toolName,
-      });
+      }, currentDraft);
+      if (isForeground) {
+        state.activeDraft = currentDraft;
+      }
       broadcastState();
       return;
     }
 
-    if (message.type === "tool.progress" && state.activeDraft) {
+    if (message.type === "tool.progress") {
       const payload = message.payload || {};
       const toolName = toSafeString(payload.name).trim() || "tool";
-      flushActiveDraftNarrative();
-      closeRunningThinkingActivities();
-      const activities = Array.isArray(state.activeDraft.activities) ? state.activeDraft.activities : [];
+      flushActiveDraftNarrative(currentDraft);
+      closeRunningThinkingActivities(currentDraft);
+      const activities = Array.isArray(currentDraft.activities) ? currentDraft.activities : [];
       const activeTool = [...activities]
         .reverse()
         .find((activity) => activity.kind === "tool" && activity.toolName === toolName && activity.status === "running");
@@ -3108,18 +3288,21 @@ async function initializeBridge() {
         detail,
         status: "running",
         toolName,
-      });
-      broadcastState();
+      }, currentDraft);
+      if (isForeground) {
+        state.activeDraft = currentDraft;
+        broadcastState();
+      }
       return;
     }
 
-    if (message.type === "tool.complete" && state.activeDraft) {
+    if (message.type === "tool.complete") {
       const payload = message.payload || {};
       const toolName = toSafeString(payload.name).trim() || "tool";
-      flushActiveDraftNarrative();
-      closeRunningThinkingActivities();
-      const openTool = Array.isArray(state.activeDraft.activities)
-        ? [...state.activeDraft.activities]
+      flushActiveDraftNarrative(currentDraft);
+      closeRunningThinkingActivities(currentDraft);
+      const openTool = Array.isArray(currentDraft.activities)
+        ? [...currentDraft.activities]
           .reverse()
           .find((activity) => activity.kind === "tool" && activity.toolName === toolName && activity.status === "running")
         : null;
@@ -3138,18 +3321,21 @@ async function initializeBridge() {
         status: payload.error ? "error" : "complete",
         toolName,
         ...(durationMs === undefined ? {} : { durationMs }),
-      });
+      }, currentDraft);
+      if (isForeground) {
+        state.activeDraft = currentDraft;
+      }
       broadcastState();
       return;
     }
 
-    if (typeof message.type === "string" && message.type.startsWith("subagent.") && state.activeDraft) {
+    if (typeof message.type === "string" && message.type.startsWith("subagent.")) {
       const payload = message.payload || {};
       const subagentId = toSafeString(payload.subagent_id || payload.child_session_id || payload.goal).trim() || randomUUID();
       const isComplete = message.type === "subagent.complete";
       const detail = compactActivityText(payload.tool_preview || payload.summary || payload.text || payload.goal);
-      flushActiveDraftNarrative();
-      closeRunningThinkingActivities();
+      flushActiveDraftNarrative(currentDraft);
+      closeRunningThinkingActivities(currentDraft);
       upsertActiveDraftActivity({
         id: `subagent:${subagentId}`,
         kind: "subagent",
@@ -3157,16 +3343,16 @@ async function initializeBridge() {
         detail,
         status: isComplete ? "complete" : "running",
         toolName: toSafeString(payload.tool_name).trim() || undefined,
-      });
-      broadcastState();
+      }, currentDraft);
+      if (isForeground) {
+        state.activeDraft = currentDraft;
+        broadcastState();
+      }
       return;
     }
 
-    if (message.type === "message.complete" && state.activeDraft) {
+    if (message.type === "message.complete") {
       const completionStatus = toSafeString(message.payload?.status).trim().toLowerCase();
-      // If a user submits a new prompt immediately after stopping, an old
-      // interrupted completion can arrive before the new message.start. Do
-      // not let that stale event erase the new draft.
       if (activeTurnCancelRequested && !activeTurnHasStarted) {
         return;
       }
@@ -3176,31 +3362,23 @@ async function initializeBridge() {
           void persistInterruptedTurn(interruptedTurn);
         }
         activeTurnHasStarted = false;
-        const interruptedError = new Error("用户已终止对话处理。");
-        if (activeSessionUnsubscribe) {
-          activeSessionUnsubscribe();
-          activeSessionUnsubscribe = null;
+        if (isForeground) {
+          state.activeDraft = null;
+          state.pendingApproval = null;
+          state.pendingClarification = null;
+          state.busy = false;
+          state.status = "已终止处理。";
+          broadcastState();
         }
-        if (activeSessionReject) {
-          const reject = activeSessionReject;
-          activeSessionReject = null;
-          reject(interruptedError);
-        }
-        state.activeDraft = null;
-        state.pendingApproval = null;
-        state.pendingClarification = null;
-        state.busy = false;
-        state.status = "已终止处理。";
-        broadcastState();
         return;
       }
       activeTurnHasStarted = false;
       const completeText = streamPayloadText(message.payload);
-      const streamedText = toSafeString(state.activeDraft.pendingText);
-      state.activeDraft.text = completeText || streamedText;
-      state.activeDraft.pendingText = "";
-      const lastSegment = state.activeDraft.segments?.[state.activeDraft.segments.length - 1];
-      const renderedSegmentText = (state.activeDraft.segments || [])
+      const streamedText = toSafeString(currentDraft.pendingText);
+      currentDraft.text = completeText || streamedText;
+      currentDraft.pendingText = "";
+      const lastSegment = currentDraft.segments?.[currentDraft.segments.length - 1];
+      const renderedSegmentText = (currentDraft.segments || [])
         .map((segment) => segment.text || "")
         .join("");
       if (lastSegment && completeText && renderedSegmentText.length < completeText.length) {
@@ -3215,13 +3393,18 @@ async function initializeBridge() {
       }
       const reasoning = toSafeString(message.payload?.reasoning).trim();
       if (reasoning) {
-        state.reasoningTrace = reasoning;
-        state.activeDraft.reasoning = reasoning;
-        upsertActiveDraftThinking(reasoning);
+        if (isForeground) {
+          state.reasoningTrace = reasoning;
+        }
+        currentDraft.reasoning = reasoning;
+        upsertActiveDraftThinking(reasoning, currentDraft);
       }
-      finishActiveDraftActivities();
-      state.pendingApproval = null;
-      state.pendingClarification = null;
+      finishActiveDraftActivities(currentDraft);
+      if (isForeground) {
+        state.activeDraft = currentDraft;
+        state.pendingApproval = null;
+        state.pendingClarification = null;
+      }
       broadcastState();
       return;
     }
@@ -3375,6 +3558,9 @@ function stopBridgeBeforeQuit() {
     return shutdownPromise;
   }
 
+  activeTasks.clear();
+  queuedTasks.length = 0;
+
   shutdownPromise = Promise.all([
     bridge ? bridge.dispose() : Promise.resolve(),
     activeOfficialLogin?.proc ? cancelOfficialHermesLogin() : Promise.resolve(),
@@ -3434,6 +3620,135 @@ ipcMain.handle("hermes:selectThread", async (_event, threadId) => {
   return state;
 });
 
+// ==========================================
+// 任务执行核心与排队调度
+// ==========================================
+async function executePromptTask(task) {
+  task.startedAt = Date.now();
+  console.log(`[task-pool:run] starting prompt task for thread ${task.threadId} (session: ${task.sessionId})`);
+
+  try {
+    task.beforeFiles = await scanDirectoryFiles(task.cwd);
+    let sendError = null;
+
+    try {
+      console.log("[task-pool:submit]", task.sessionId, task.text);
+      await submitPromptAndWait(task.sessionId, task.text);
+    } catch (err) {
+      sendError = err;
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (/agent initialization timed out/i.test(errMsg) && task.sessionId) {
+        console.warn(`[task-pool] Agent cold start timed out on ${task.sessionId}; retrying once...`);
+        try {
+          await sleep(1500);
+          await submitPromptAndWait(task.sessionId, task.text);
+          sendError = null;
+        } catch (retryErr) {
+          sendError = retryErr;
+        }
+      }
+    }
+
+    if (sendError) {
+      throw sendError;
+    }
+
+    console.log(`[task-pool:complete] task completed for thread ${task.threadId}`);
+    task.status = "completed";
+    task.completedAt = Date.now();
+
+    // 扫描生成的文件
+    const afterFiles = await scanDirectoryFiles(task.cwd);
+    const newFiles = afterFiles.filter((f) => !task.beforeFiles.includes(f));
+    if (newFiles.length > 0) {
+      task.lastGeneratedFiles = newFiles;
+      if (state.activeThreadId === task.threadId) {
+        state.lastGeneratedFiles = newFiles;
+      }
+    }
+
+    // 将后台草稿结果与历史消息合并落盘
+    const completedAssistantText = toSafeString(task.draft?.text).trim();
+    const completedAssistantReasoning = toSafeString(task.draft?.reasoning).trim();
+    const completedAssistantActivities = (task.draft?.activities ?? []).map((activity) => ({
+      ...activity,
+      status: activity.status === "running" ? "complete" : activity.status,
+    }));
+
+    const syncedMessages = await syncMessagesFromGateway(task.sessionId, task.threadId);
+    if (completedAssistantText) {
+      const targetMessages = task.threadId === state.activeThreadId ? state.messages : syncedMessages;
+      const lastAssistantIndex = [...targetMessages].reverse().findIndex(
+        (msg) => msg.role === "assistant" && toSafeString(msg.text).trim() === completedAssistantText
+      );
+      if (lastAssistantIndex !== -1) {
+        const normalIndex = targetMessages.length - 1 - lastAssistantIndex;
+        if (!targetMessages[normalIndex].reasoning && completedAssistantReasoning) {
+          targetMessages[normalIndex].reasoning = completedAssistantReasoning;
+        }
+        if (completedAssistantActivities.length > 0) {
+          targetMessages[normalIndex].activities = completedAssistantActivities;
+        }
+      } else {
+        targetMessages.push({
+          id: randomUUID(),
+          role: "assistant",
+          text: completedAssistantText,
+          reasoning: completedAssistantReasoning || null,
+          turnId: null,
+          activities: completedAssistantActivities,
+        });
+      }
+      if (task.threadId === state.activeThreadId) {
+        state.messages = targetMessages;
+      }
+    }
+
+    // 标记已完成（前端将展示绿勾）
+    completedThreads.add(task.threadId);
+    void waitForAutoTitleAndMark(task.threadId);
+  } catch (error) {
+    console.error(`[task-pool] task error for thread ${task.threadId}:`, error);
+    task.status = "error";
+    task.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    activeTasks.delete(task.threadId);
+    if (state.activeThreadId === task.threadId) {
+      state.activeDraft = null;
+      state.busy = false;
+      state.status = task.status === "completed" ? "Ready." : (task.error || "处理完成。");
+    }
+    await refreshThreads();
+    scheduleNextQueuedTask();
+    broadcastState();
+  }
+}
+
+function scheduleNextQueuedTask() {
+  while (activeTasks.size < MAX_CONCURRENT_TASKS && queuedTasks.length > 0) {
+    const nextTask = queuedTasks.shift();
+    if (!nextTask) break;
+    nextTask.status = "running";
+    activeTasks.set(nextTask.threadId, nextTask);
+    console.log(`[task-pool:dequeue] dequeued task for thread ${nextTask.threadId}, starting execution...`);
+    if (state.activeThreadId === nextTask.threadId) {
+      state.busy = true;
+      state.status = "Running...";
+      state.activeDraft = nextTask.draft;
+    }
+    void executePromptTask(nextTask);
+  }
+  broadcastState();
+}
+
+ipcMain.handle("hermes:ackThreadCompleted", async (_event, threadId) => {
+  if (threadId) {
+    completedThreads.delete(String(threadId));
+    broadcastState();
+  }
+  return state;
+});
+
 ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
   if (!bridge) {
     throw new Error("Hermes bridge is not ready.");
@@ -3451,12 +3766,13 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
     return state;
   }
 
-  state.busy = true;
-  state.error = null;
-  state.status = "Running...";
-  state.reasoningTrace = null;
-  state.lastGeneratedFiles = null;
-  broadcastState();
+  // 防重入校验：如果当前对话正在生成或处于排队中，禁止同一会话重复并发提交
+  if (state.activeThreadId && (activeTasks.has(state.activeThreadId) || queuedTasks.some((t) => t.threadId === state.activeThreadId))) {
+    state.error = "当前对话正在执行或排队中，请等待本轮生成完成后再发送。如需执行新分析，请点击左上角「新建任务」。";
+    state.status = state.error;
+    broadcastState();
+    return state;
+  }
 
   try {
     if (activeGatewaySessionId && isOfficialSessionModelStale(state.currentRuntimeModel)) {
@@ -3487,6 +3803,15 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
       state.currentRuntimeModel = null;
     }
 
+    const currentThreadId = state.activeThreadId;
+    const currentSessionId = activeGatewaySessionId;
+    const targetCwd = state.settings.cwd || process.cwd();
+
+    // 维护双向映射
+    threadIdToSessionId.set(currentThreadId, currentSessionId);
+    sessionIdToThreadId.set(currentSessionId, currentThreadId);
+
+    // 追加用户消息
     state.messages = [
       ...state.messages,
       {
@@ -3496,132 +3821,34 @@ ipcMain.handle("hermes:sendMessage", async (_event, payload) => {
         turnId: null,
       },
     ];
-    state.activeDraft = {
-      id: randomUUID(),
-      threadId: state.activeThreadId ?? activeGatewaySessionId,
-      text: "",
-      pendingText: "",
-      reasoning: "",
-      segments: [{ reasoning: "", text: "" }],
-      activities: [],
-    };
-    activeTurnHasStarted = false;
-    broadcastState();
 
-    const targetCwd = state.settings.cwd || process.cwd();
-    const beforeFiles = await scanDirectoryFiles(targetCwd);
+    const task = new TaskItem({
+      threadId: currentThreadId,
+      sessionId: currentSessionId,
+      text,
+      cwd: targetCwd,
+    });
 
-    let sendError = null;
-    try {
-      console.log("[hermes-send] submitting prompt", activeGatewaySessionId, text);
-      await submitPromptAndWait(activeGatewaySessionId, text);
-    } catch (err) {
-      sendError = err;
-      const errMsg = err instanceof Error ? err.message : String(err);
-      if (/agent initialization timed out/i.test(errMsg) && activeGatewaySessionId) {
-        console.warn("[hermes-send] Agent cold start timed out; retrying the same prompt once...");
-        try {
-          state.busy = true;
-          state.error = null;
-          state.status = "首次启动较慢，正在继续初始化...";
-          broadcastState();
-          await sleep(1500);
-          await submitPromptAndWait(activeGatewaySessionId, text);
-          sendError = null;
-        } catch (retryErr) {
-          console.error("[hermes-send] Cold-start retry failed:", retryErr);
-          sendError = retryErr;
-        }
-      }
-      if (/invalid refresh token|refresh_token|agent init failed/i.test(errMsg)) {
-        console.warn("[hermes-send] Token error on prompt submission. Checking disk for auto-recovery...");
-        activeGatewaySessionId = null;
-        const latestOfficial = await inspectOfficialHermesConfig();
-        state.official = latestOfficial;
-        if (latestOfficial.isLoggedIn) {
-          console.log("[hermes-send] Auto-recovering: valid token on disk, restarting bridge...");
-          try {
-            await bridge.restart();
-            const session = await bridge.createSession();
-            activeGatewaySessionId = String(session.session_id ?? "");
-            state.activeThreadId = String(session.stored_session_id ?? "");
-            console.log("[hermes-send] Retrying prompt submission on new session:", activeGatewaySessionId);
-            await submitPromptAndWait(activeGatewaySessionId, text);
-            sendError = null;
-          } catch (retryErr) {
-            console.error("[hermes-send] Auto-recovery retry failed:", retryErr);
-            sendError = retryErr;
-          }
-        }
-      }
-    }
-
-    if (sendError) {
-      throw sendError;
-    }
-    console.log("[hermes-send] message complete");
-
-    const afterFiles = await scanDirectoryFiles(targetCwd);
-    const newFiles = afterFiles.filter(f => !beforeFiles.includes(f));
-    if (newFiles.length > 0) {
-      state.lastGeneratedFiles = newFiles;
-    }
-
-    const completedAssistantText = toSafeString(state.activeDraft?.text).trim();
-    const completedAssistantReasoning = toSafeString(state.activeDraft?.reasoning).trim();
-    const completedAssistantActivities = (state.activeDraft?.activities ?? []).map((activity) => ({
-      ...activity,
-      status: activity.status === "running" ? "complete" : activity.status,
-    }));
-    await syncMessagesFromGateway();
-    if (completedAssistantText) {
-      const lastAssistantIndex = [...state.messages].reverse().findIndex(
-        (msg) => msg.role === "assistant" && toSafeString(msg.text).trim() === completedAssistantText
-      );
-      if (lastAssistantIndex !== -1) {
-        const normalIndex = state.messages.length - 1 - lastAssistantIndex;
-        if (!state.messages[normalIndex].reasoning && completedAssistantReasoning) {
-          state.messages[normalIndex].reasoning = completedAssistantReasoning;
-        }
-        if (completedAssistantActivities.length > 0) {
-          state.messages[normalIndex].activities = completedAssistantActivities;
-        }
-      } else {
-        state.messages = [
-          ...state.messages,
-          {
-            id: randomUUID(),
-            role: "assistant",
-            text: completedAssistantText,
-            reasoning: completedAssistantReasoning || null,
-            turnId: null,
-            activities: completedAssistantActivities,
-          },
-        ];
-      }
-    }
-    state.activeDraft = null;
-    await refreshThreads();
-    state.status = "Ready.";
-    void waitForAutoTitleAndMark(state.activeThreadId);
-  } catch (error) {
-    console.error("[hermes-send] failed", error);
-    const errorMessage = error instanceof Error ? error.message : "Failed to send message.";
-    if (/Conversation was closed|Thread switched|用户已终止对话处理/.test(errorMessage)) {
-      // Switching threads, starting a new conversation, and pressing stop are
-      // intentional cancellations; they must not overwrite the new state with
-      // a stale error from the previous send task.
-      state.error = null;
-      state.status = /用户已终止对话处理/.test(errorMessage) ? "已终止处理。" : "Ready.";
-      state.activeDraft = null;
+    if (activeTasks.size < MAX_CONCURRENT_TASKS) {
+      task.status = "running";
+      activeTasks.set(currentThreadId, task);
+      state.activeDraft = task.draft;
+      state.busy = true;
+      state.status = "Running...";
+      void executePromptTask(task);
     } else {
-      state.error = errorMessage;
-      state.status = state.error;
+      task.status = "queued";
+      queuedTasks.push(task);
+      state.activeDraft = null;
+      state.busy = true;
+      state.status = `排队等待执行中 (第 ${queuedTasks.length} 位)...`;
     }
-    if (/invalid refresh token|refresh_token|agent init failed/i.test(state.error)) {
-      activeGatewaySessionId = null;
-    }
-  } finally {
+
+    broadcastState();
+  } catch (error) {
+    console.error("[hermes-send] submission failed", error);
+    state.error = error instanceof Error ? error.message : "Failed to send message.";
+    state.status = state.error;
     state.busy = false;
     broadcastState();
   }
@@ -3753,6 +3980,29 @@ ipcMain.handle("hermes:archiveThread", async (_event, threadId) => {
   }
 
   const targetId = String(threadId);
+
+  // 如果正在运行或排队，清理任务并释放槽位
+  if (activeTasks.has(targetId)) {
+    const runningTask = activeTasks.get(targetId);
+    if (runningTask?.sessionId) {
+      try {
+        await bridge.cancelPrompt(runningTask.sessionId);
+      } catch {}
+    }
+    activeTasks.delete(targetId);
+    scheduleNextQueuedTask();
+  }
+  const qIndex = queuedTasks.findIndex((t) => t.threadId === targetId);
+  if (qIndex !== -1) {
+    queuedTasks.splice(qIndex, 1);
+  }
+  completedThreads.delete(targetId);
+  const targetSessionId = threadIdToSessionId.get(targetId);
+  if (targetSessionId) {
+    sessionIdToThreadId.delete(targetSessionId);
+  }
+  threadIdToSessionId.delete(targetId);
+
   if (targetId === state.activeThreadId) {
     await startNewConversation();
   }
@@ -4244,6 +4494,10 @@ ipcMain.handle("hermes:respondApproval", async (_event, choice) => {
     }
   }
   state.pendingApproval = null;
+  const currentTask = state.activeThreadId ? activeTasks.get(state.activeThreadId) : null;
+  if (currentTask) {
+    currentTask.pendingApproval = null;
+  }
   state.status = choice === "deny" ? "已拒绝授权申请。" : "已批准安全授权，继续处理中...";
   broadcastState();
   return state;
@@ -4258,6 +4512,10 @@ ipcMain.handle("hermes:respondClarification", async (_event, answer) => {
 
   try {
     state.pendingClarification = null;
+    const currentTask = state.activeThreadId ? activeTasks.get(state.activeThreadId) : null;
+    if (currentTask) {
+      currentTask.pendingClarification = null;
+    }
     state.status = "已提交补充信息，继续处理中...";
     state.error = null;
     broadcastState();
@@ -4269,11 +4527,11 @@ ipcMain.handle("hermes:respondClarification", async (_event, answer) => {
       answer: text,
     });
   } catch (err) {
-    state.pendingClarification = pending;
-    state.error = err instanceof Error ? err.message : String(err);
+    state.error = err instanceof Error ? err.message : "提交澄清回答失败。";
     state.status = state.error;
     broadcastState();
   }
+
   return state;
 });
 
@@ -4335,12 +4593,22 @@ function getGitBranch(dirPath) {
 }
 
 ipcMain.handle("hermes:stopMessage", async () => {
-  const sessionId = activeGatewaySessionId || state.activeThreadId;
+  const targetThreadId = state.activeThreadId;
+  const sessionId = (targetThreadId ? activeTasks.get(targetThreadId)?.sessionId : null) || activeGatewaySessionId || targetThreadId;
   activeTurnCancelRequested = true;
-  // Stop accepting late events immediately. The interrupt RPC can take a
-  // moment to return, but the UI should preserve the already-rendered trail
-  // and never let a final completion replace it during that window.
   activeTurnHasStarted = false;
+
+  // 如果处于排队中，直接从队列移除
+  if (targetThreadId) {
+    const qIndex = queuedTasks.findIndex((t) => t.threadId === targetThreadId);
+    if (qIndex !== -1) {
+      queuedTasks.splice(qIndex, 1);
+      state.busy = false;
+      state.status = "已取消排队。";
+      broadcastState();
+      return state;
+    }
+  }
 
   if (activeSessionReject) {
     try {
@@ -4365,7 +4633,10 @@ ipcMain.handle("hermes:stopMessage", async () => {
   state.pendingApproval = null;
   state.error = null;
   state.status = "已终止处理。";
-  broadcastState();
+
+  if (targetThreadId && activeTasks.has(targetThreadId)) {
+    activeTasks.delete(targetThreadId);
+  }
 
   if (bridge && sessionId) {
     try {
@@ -4375,9 +4646,10 @@ ipcMain.handle("hermes:stopMessage", async () => {
     }
   }
 
-  // The current turn may have created the session after the last sidebar
-  // refresh. Pull the session list again after stopping so the new task title
-  // appears in the sidebar immediately instead of only after an app restart.
+  // 释放了并发槽位，自动调度队列中下一个任务
+  scheduleNextQueuedTask();
+  broadcastState();
+
   const stoppedThreadId = state.activeThreadId;
   try {
     await refreshThreads();
