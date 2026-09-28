@@ -147,6 +147,11 @@ type ReportStyleOption = {
 };
 
 const BUILTIN_SKILL_DISPLAY_NAMES: Record<string, string> = {
+  "info-digest-html": "动态信息汇总 HTML 报表",
+  "weekly-report": "统计信息化动态采集与周报",
+  "price-index-gdp-impact": "价格指数对 GDP 各项影响分析",
+  "source-verification": "官方来源与转载核验",
+  "gov-official-document-drafting": "政务公文起草",
   info_digest_html: "动态信息汇总 HTML 报表",
   weekly_report: "统计信息化动态采集与周报",
   price_index_gdp_impact: "价格指数对 GDP 各项影响分析",
@@ -155,6 +160,11 @@ const BUILTIN_SKILL_DISPLAY_NAMES: Record<string, string> = {
 };
 
 const BUILTIN_SKILL_ICONS: Record<string, string> = {
+  "info-digest-html": "📰",
+  "weekly-report": "📊",
+  "price-index-gdp-impact": "📈",
+  "source-verification": "🔎",
+  "gov-official-document-drafting": "📝",
   info_digest_html: "📰",
   weekly_report: "📊",
   price_index_gdp_impact: "📈",
@@ -208,6 +218,11 @@ const REPORT_STYLE_OPTIONS: ReportStyleOption[] = [
 ];
 
 const REPORT_SKILL_NAMES = new Set([
+  "info-digest-html",
+  "weekly-report",
+  "price-index-gdp-impact",
+  "source-verification",
+  "gov-official-document-drafting",
   "info_digest_html",
   "weekly_report",
   "price_index_gdp_impact",
@@ -216,6 +231,14 @@ const REPORT_SKILL_NAMES = new Set([
 ]);
 
 const BUILTIN_SKILL_START_PROMPTS: Record<string, string> = {
+  "weekly-report":
+    "请采集最近 7 天国家统计局、广东省统计局、深圳市统计局等官方来源的统计信息化动态，筛选信息化、数字化、人工智能、大数据等主题，生成周报；每条内容都必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接。",
+  "price-index-gdp-impact":
+    "请默认以深圳市为分析对象，分析 CPI、PPI、GDP 平减指数等价格指数对 GDP 各项（消费、投资、净出口及名义/实际 GDP）的影响；优先使用深圳市统计局及深圳市政府官方统计数据，国家和广东省数据只作口径或对照，区分相关性与因果性，并为每个事实附发布单位或网站全称、完整标题和具体原文链接。",
+  "source-verification":
+    "请核验我接下来提交的文件或链接：确认是否为官方来源、发布日期、发布机构、具体原文链接是否有效，并识别重复、转载和二次改写关系；输出逐项证据和发布单位或网站全称、完整标题、具体原文链接。",
+  "gov-official-document-drafting":
+    "请按深圳市统计局官方网站公开页面的政务文风起草公文：先根据我的任务判断合适的文种，保留文号、落款、联系人等待补字段，不虚构正式发布信息，并为事实、政策依据和数据附发布单位或网站全称、完整标题和具体原文链接。",
   weekly_report:
     "请采集最近 7 天国家统计局、广东省统计局、深圳市统计局等官方来源的统计信息化动态，筛选信息化、数字化、人工智能、大数据等主题，生成周报；每条内容都必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接。",
   price_index_gdp_impact:
@@ -821,19 +844,20 @@ function App() {
     const style = REPORT_STYLE_OPTIONS.find((option) => option.id === styleId);
     if (!skillName || !style) return;
 
+    const normalizedSkill = skillName.replace(/_/g, "-");
     let prompt = "";
-    if (skillName === "info_digest_html") {
+    if (normalizedSkill === "info-digest-html") {
       prompt = `请生成动态信息汇总 HTML 报表，使用内置“${style.label}”风格模版（template_style: ${style.id}）。采集或整理统计、政务和信息化动态，直接在工作区 output/ 目录下生成完整的独立 HTML 文件；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接，并在对话末尾给出 [打开输出目录] 链接。`;
-    } else if (skillName === "weekly_report") {
+    } else if (normalizedSkill === "weekly-report") {
       prompt = `请采集最近 7 天统计信息化、数字化、人工智能和大数据相关动态，使用内置“${style.label}”风格模版（template_style: ${style.id}），生成统计信息化动态周报独立的 HTML 文件并写入工作区 output/ 目录；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接，并在对话末尾给出 [打开输出目录] 链接。`;
-    } else if (skillName === "price_index_gdp_impact") {
+    } else if (normalizedSkill === "price-index-gdp-impact") {
       prompt = `请默认以深圳市为分析对象，分析 CPI、PPI、GDP 平减指数等价格指数对 GDP 各项（消费、投资、净出口及名义/实际 GDP）的影响；优先使用深圳市统计局及深圳市政府官方统计数据，国家和广东省数据只作口径或对照，区分相关性与因果性，并为每个事实附发布单位或网站全称、完整标题和具体原文链接。\n\n【输出要求】：请直接使用内置“${style.label}”风格模版（template_style: ${style.id}），生成完整的可视化独立 HTML 报告文件并写入工作区 output/ 目录（如 output/价格指数×深圳GDP影响速查卡.html）。页面必须包含顶部 KPI 芯片、吸顶章节导航、高密度映射表格、证据分级标签及可点击原文超链接；严格遵守表格自然流排版，严禁使用导致内容遮挡的样式；并在对话最后提供 [打开输出目录] 链接。`;
-    } else if (skillName === "source_verification") {
+    } else if (normalizedSkill === "source-verification") {
       prompt = `请核验我接下来提交的文件或链接：确认是否为官方来源、发布日期、发布机构、具体原文链接是否有效，并识别重复、转载和二次改写关系；输出逐项证据和发布单位或网站全称、完整标题、具体原文链接。\n\n【输出要求】：请同时使用内置“${style.label}”风格模版（template_style: ${style.id}），直接在工作区 output/ 目录生成独立的 HTML 证据核验报告文件，包含核验结论 KPI、核验结果明细表、重复转载对照表和完整可点击来源链，并在对话末尾给出 [打开输出目录] 链接。`;
-    } else if (skillName === "gov_official_document_drafting") {
+    } else if (normalizedSkill === "gov-official-document-drafting") {
       prompt = `请按深圳市统计局官方网站公开页面的政务文风起草公文：先根据我的任务判断合适的文种，保留文号、落款、联系人等待补字段，不虚构正式发布信息，并为事实、政策依据和数据附发布单位或网站全称、完整标题和具体原文链接。\n\n【输出要求】：除了在对话中提供可直接审阅的 Markdown 公文草案外，请同时使用内置“${style.label}”风格模版（template_style: ${style.id}），在工作区 output/ 目录生成一份排版规范、打印友好且来源标注完整的独立 HTML 参阅公文文件，并在对话末尾给出 [打开输出目录] 链接。`;
     } else {
-      prompt = `${BUILTIN_SKILL_START_PROMPTS[skillName] || "请使用当前技能完成我的任务，并为所有事实性内容附发布单位或网站全称、文章来源/页面完整标题和具体原文链接。"}\n\n【输出要求】：请按“${style.label}”风格（template_style: ${style.id}）生成独立可打开的 HTML 成果文件并保存到工作区 output/ 目录，并在末尾给出可点击链接：${style.description}`;
+      prompt = `${BUILTIN_SKILL_START_PROMPTS[normalizedSkill] || BUILTIN_SKILL_START_PROMPTS[skillName] || "请使用当前技能完成我的任务，并为所有事实性内容附发布单位或网站全称、文章来源/页面完整标题和具体原文链接。"}\n\n【输出要求】：请按“${style.label}”风格（template_style: ${style.id}）生成独立可打开的 HTML 成果文件并保存到工作区 output/ 目录，并在末尾给出可点击链接：${style.description}`;
     }
 
     setStylePickerSkillName(null);
@@ -2251,7 +2275,7 @@ function App() {
                       <button
                         type="button"
                         className="trae-suggestion-card"
-                        onClick={() => handleQuickSuggestionUse("weekly_report")}
+                        onClick={() => handleQuickSuggestionUse("weekly-report")}
                       >
                         <span className="icon">📊</span>
                         <div className="text-content">
@@ -2263,7 +2287,7 @@ function App() {
                       <button
                         type="button"
                         className="trae-suggestion-card"
-                        onClick={() => handleQuickSuggestionUse("price_index_gdp_impact")}
+                        onClick={() => handleQuickSuggestionUse("price-index-gdp-impact")}
                       >
                         <span className="icon">📈</span>
                         <div className="text-content">
@@ -2275,7 +2299,7 @@ function App() {
                       <button
                         type="button"
                         className="trae-suggestion-card"
-                        onClick={() => handleQuickSuggestionUse("source_verification")}
+                        onClick={() => handleQuickSuggestionUse("source-verification")}
                       >
                         <span className="icon">🔎</span>
                         <div className="text-content">
@@ -2287,7 +2311,7 @@ function App() {
                       <button
                         type="button"
                         className="trae-suggestion-card"
-                        onClick={() => handleQuickSuggestionUse("gov_official_document_drafting")}
+                        onClick={() => handleQuickSuggestionUse("gov-official-document-drafting")}
                       >
                         <span className="icon">📝</span>
                         <div className="text-content">
@@ -4195,6 +4219,11 @@ function SkillsPageView({
           <div className="skills-card-grid">
             {filteredSkills.map((skill) => {
               const isOfficialBuiltin = [
+                "info-digest-html",
+                "weekly-report",
+                "price-index-gdp-impact",
+                "source-verification",
+                "gov-official-document-drafting",
                 "info_digest_html",
                 "weekly_report",
                 "price_index_gdp_impact",

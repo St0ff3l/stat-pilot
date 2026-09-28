@@ -132,10 +132,16 @@ export class DshClient extends EventEmitter {
   }
 
   async listSkills(sessionId) {
-    const data = await this.request("skill/list", {
-      request: { sessionId },
-    });
-    return data?.skills || [];
+    if (!sessionId) return [];
+    try {
+      const data = await this.request("skills/list", {
+        request: { sessionId },
+      });
+      return data?.skills || [];
+    } catch (err) {
+      console.warn("[dsh-client] skills/list failed:", err);
+      return [];
+    }
   }
 
   async archiveSession(sessionId) {

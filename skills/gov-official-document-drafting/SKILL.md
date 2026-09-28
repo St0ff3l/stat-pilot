@@ -1,5 +1,5 @@
 ---
-name: gov_official_document_drafting
+name: gov-official-document-drafting
 display_name: 政务公文起草
 description: 参考深圳市统计局官方网站公开页面的栏目组织、来源标注和政务文风，起草通知、请示、报告、工作方案、汇报材料、政策解读与信息简报。
 version: 1.0.0

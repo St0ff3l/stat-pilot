@@ -1,5 +1,5 @@
 ---
-name: info_digest_html
+name: info-digest-html
 display_name: 动态信息汇总 HTML 报表
 description: 统计与政务动态汇总 HTML 报表生成器。能将 JSON / Markdown 形式的统计局或政务动态数据，一键填充并生成 5 种视觉风格的专业 HTML 参阅材料与互动仪表盘。支持勾选项目实时生成，内置筛选、检索、响应式适配与源数据统计。
 version: 1.0.0
@@ -18,7 +18,7 @@ inputs:
     default: "统计信息化与数字化转型动态监测"
 ---
 
-# 统计与政务动态汇总 HTML 报表生成器 (info_digest_html)
+# 统计与政务动态汇总 HTML 报表生成器 (info-digest-html)
 
 ## 技能定位
 本 Skill 专门用于将数据采集层抓取到的统计局/政府部门工作动态（JSON 或 Markdown 条目），一键合成排版精美、交互完备的 **统一 HTML 参阅报表**。

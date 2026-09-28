@@ -4,7 +4,7 @@ import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { fileURLToPath } from "node:url";
 
-import { DshRuntimeManager, getDshHomeDir, resolveDshBinaryPath } from "./dsh-runtime.mjs";
+import { DshRuntimeManager, getDshHomeDir, resolveDshBinaryPath, scanLocalSkills } from "./dsh-runtime.mjs";
 import { DshClient } from "./dsh-client.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -367,21 +367,54 @@ async function refreshThreads() {
   broadcastState();
 }
 
-async function refreshSkills() {
-  if (!dshClient) return;
+const BUILTIN_DISPLAY_NAMES = {
+  "info-digest-html": "动态信息汇总 HTML 报表",
+  "weekly-report": "统计信息化动态采集与周报",
+  "price-index-gdp-impact": "价格指数对 GDP 各项影响分析",
+  "source-verification": "官方来源与转载核验",
+  "gov-official-document-drafting": "政务公文起草",
+  info_digest_html: "动态信息汇总 HTML 报表",
+  weekly_report: "统计信息化动态采集与周报",
+  price_index_gdp_impact: "价格指数对 GDP 各项影响分析",
+  source_verification: "官方来源与转载核验",
+  gov_official_document_drafting: "政务公文起草",
+};
 
-  try {
-    const dshSkills = await dshClient.listSkills(state.activeThreadId);
-    state.skills = (dshSkills || []).map((s) => ({
-      name: s.name,
-      displayName: s.displayName || s.name,
-      description: s.description || "",
-      path: s.path || "",
-    }));
-  } catch (error) {
-    console.warn("[main] Failed to list skills:", error);
+async function refreshSkills() {
+  const dshHome = dshRuntime.dshHome || getDshHomeDir();
+
+  let skills = [];
+  if (dshClient && state.activeThreadId) {
+    try {
+      const dshSkills = await dshClient.listSkills(state.activeThreadId);
+      if (dshSkills && dshSkills.length > 0) {
+        skills = dshSkills.map((s) => ({
+          name: s.name,
+          displayName: BUILTIN_DISPLAY_NAMES[s.name] || s.displayName || s.metadata?.displayName || s.name,
+          description: s.description || "",
+          path: s.path || "",
+        }));
+      }
+    } catch (error) {
+      console.warn("[main] Failed to list skills from client:", error);
+    }
   }
 
+  if (skills.length === 0) {
+    try {
+      const localSkills = await scanLocalSkills(dshHome);
+      skills = localSkills.map((s) => ({
+        name: s.name,
+        displayName: BUILTIN_DISPLAY_NAMES[s.name] || s.displayName || s.name,
+        description: s.description || "",
+        path: s.path || "",
+      }));
+    } catch (error) {
+      console.warn("[main] Failed to scan local skills:", error);
+    }
+  }
+
+  state.skills = skills;
   broadcastState();
 }
 
@@ -597,6 +630,7 @@ async function selectThread(threadId) {
   state.busy = false;
   state.pendingApproval = null;
   state.pendingClarification = null;
+  await refreshSkills();
   broadcastState();
 }
 

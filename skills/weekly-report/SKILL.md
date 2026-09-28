@@ -1,5 +1,5 @@
 ---
-name: weekly_report
+name: weekly-report
 display_name: 统计信息化动态采集与周报
 description: 统计信息化动态采集与周报 HTML 生成器。AI 驱动采集国家及各省市区 23 个统计局官网与公众号"工作动态"文章，按信息化、AI、大数据等关键词筛选，支持代码脚本辅助（baseline_collector.py）与 5 种视觉风格的 HTML 参阅报表与周报生成。
 version: 2.0.0
@@ -27,7 +27,7 @@ inputs:
     default: ""
 ---
 
-# 统计信息化动态采集与周报生成器 (weekly_report)
+# 统计信息化动态采集与周报生成器 (weekly-report)
 
 ## 任务目标
 从 23 个统计局（1 国家级 + 9 省级 + 8 副省级/重点城市 + 5 扩展站点）的官网"工作动态"等栏目及官方微信公众号，采集最近 N 天（默认 7 天）的文章，筛选出与信息化建设、数字化转型、统计平台、AI 应用、大数据等主题相关的文稿，最终支持以 txt 文本、JSON 数据、Markdown 参阅周报及 5 种风格的 HTML 交互仪表盘输出。
