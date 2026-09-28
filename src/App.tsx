@@ -905,25 +905,27 @@ function App() {
     const saved = localStorage.getItem("hermes_sidebar_width");
     if (saved) {
       const parsed = parseInt(saved, 10);
-      if (!isNaN(parsed) && parsed >= 260 && parsed <= 500) {
+      if (!isNaN(parsed) && parsed >= 220 && parsed <= 500) {
         return parsed;
       }
     }
     return 270;
   });
 
+  const [isResizing, setIsResizing] = useState(false);
   const isResizingRef = useRef(false);
 
   const startResizing = (mouseDownEvent: React.MouseEvent) => {
     mouseDownEvent.preventDefault();
     isResizingRef.current = true;
+    setIsResizing(true);
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
     
     const handleMouseMove = (mouseMoveEvent: MouseEvent) => {
       if (!isResizingRef.current) return;
       const newWidth = mouseMoveEvent.clientX;
-      if (newWidth >= 260 && newWidth <= 500) {
+      if (newWidth >= 220 && newWidth <= 500) {
         setSidebarWidth(newWidth);
         localStorage.setItem("hermes_sidebar_width", String(newWidth));
       }
@@ -931,6 +933,7 @@ function App() {
 
     const handleMouseUp = () => {
       isResizingRef.current = false;
+      setIsResizing(false);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
       document.removeEventListener("mousemove", handleMouseMove);
@@ -1790,7 +1793,7 @@ function App() {
         style={{ "--sidebar-w": `${sidebarWidth}px` } as React.CSSProperties}
       >
         <aside className="sidebar startup-sidebar">
-          <div className="sidebar-resizer" onMouseDown={startResizing} />
+          <div className={`sidebar-resizer ${isResizing ? "resizing" : ""}`} onMouseDown={startResizing} />
           <div className="brand">
             <div className="brand-main">
               <img className="brand-logo" src={szLogo} alt="" />
@@ -1844,7 +1847,7 @@ function App() {
       style={{ "--sidebar-w": `${sidebarWidth}px` } as React.CSSProperties}
     >
       <aside className="sidebar">
-        <div className="sidebar-resizer" onMouseDown={startResizing} />
+        <div className={`sidebar-resizer ${isResizing ? "resizing" : ""}`} onMouseDown={startResizing} />
         <div className="brand">
           <div className="brand-main">
             <img className="brand-logo" src={szLogo} alt="" />

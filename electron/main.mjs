@@ -3270,10 +3270,10 @@ function createWindow() {
   const appIconPath = getAppIconPath();
 
   mainWindow = new BrowserWindow({
-    width: 1480,
-    height: 940,
-    minWidth: 1180,
-    minHeight: 760,
+    width: 1200,
+    height: 800,
+    minWidth: 925,
+    minHeight: 625,
     title: "深小统",
     icon: appIconPath,
     backgroundColor: "#f8fafc",
