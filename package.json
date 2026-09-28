@@ -20,17 +20,14 @@
     "dist:win": "npm run verify:runtime && npm run build && electron-builder --win nsis",
     "dist:linux": "npm run verify:runtime && npm run build && electron-builder --linux deb",
     "dist:linux:arm64": "npm run verify:runtime && npm run build && electron-builder --linux deb --arm64",
-    "verify:runtime": "node scripts/verify-bundled-hermes-runtime.mjs",
-    "hermes:patch": "node scripts/patch-hermes-runtime.mjs",
-    "hermes:bootstrap": "bash scripts/bootstrap-hermes.sh",
-    "hermes:bootstrap:quick": "HERMES_NON_INTERACTIVE=1 bash scripts/bootstrap-hermes.sh",
-    "hermes:bootstrap:skip-setup": "HERMES_SKIP_SETUP=1 bash scripts/bootstrap-hermes.sh",
-    "hermes:bootstrap:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-hermes.ps1",
+    "verify:runtime": "node scripts/verify-dsh-runtime.mjs",
+    "dsh:verify": "node scripts/verify-dsh-runtime.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "start": "electron ."
   },
   "dependencies": {
+    "@deepseek-ai/dsh": "^0.1.7-rc.2",
     "cheerio": "^1.1.2",
     "express": "^5.1.0",
     "react": "^19.2.6",
@@ -79,22 +76,10 @@
       "!**/.DS_Store",
       "!**/.DS_Store/**"
     ],
+    "asarUnpack": [
+      "node_modules/@deepseek-ai/**"
+    ],
     "extraResources": [
-      {
-        "from": ".runtime",
-        "to": ".runtime",
-        "filter": [
-          "**/*",
-          "!**/.git",
-          "!**/.git/**",
-          "!hermes-home",
-          "!hermes-home/**",
-          "!**/node_modules/electron/dist/Electron.app/**",
-          "!**/._*",
-          "!**/.DS_Store",
-          "!**/.DS_Store/**"
-        ]
-      },
       {
         "from": "rules",
         "to": "rules",

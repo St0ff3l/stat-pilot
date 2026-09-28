@@ -150,6 +150,7 @@ declare global {
       respondClarification: (answer: string) => Promise<HermesAppState>;
       ackThreadCompleted: (threadId: string) => Promise<HermesAppState>;
     };
+    dshDesktop?: Window["hermesDesktop"];
   }
 }
 
