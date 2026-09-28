@@ -832,11 +832,14 @@ ipcMain.handle("hermes:archiveThread", async (_event, threadId) => {
   }
 
   if (state.activeThreadId === threadId) {
+    // Refresh first so the deleted thread is removed from state.threads
+    await refreshThreads();
     const remaining = state.threads.filter((t) => t.id !== threadId);
     if (remaining.length > 0) {
       await selectThread(remaining[0].id);
     } else {
-      await createNewThread();
+      enterBlankNewThread();
+      broadcastState();
     }
   } else {
     await refreshThreads();

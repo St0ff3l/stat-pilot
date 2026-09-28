@@ -146,7 +146,7 @@ export class DshClient extends EventEmitter {
 
   async archiveSession(sessionId) {
     return this.request("workspace/archiveSession", {
-      request: { sessionId },
+      request: { sessionId, stopActivity: true },
     });
   }
 
