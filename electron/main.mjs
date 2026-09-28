@@ -270,20 +270,28 @@ function preserveInterruptedDraft() {
  * Maps DSH session items into HermesThreadSummary array expected by App.tsx.
  */
 function mapDshSessionsToThreads(items = []) {
-  return items.map((item) => {
-    const title = item.projections?.title || item.title || (item.blank ? "新对话" : "未命名对话");
-    return {
-      id: item.sessionId,
-      name: title,
-      preview: title,
-      modelProvider: "deepseek",
-      status: item.running ? "running" : "idle",
-      updatedAt: item.updatedAt || Date.now(),
-      createdAt: item.updatedAt || Date.now(),
-      cwd: item.cwd || "",
-      taskStatus: item.running ? "running" : "idle",
-    };
-  });
+  return items
+    .filter((item) => {
+      // Hide sessions that have never received a user message and have no title
+      // (blank sessions created eagerly but abandoned). This cleans up the
+      // "未命名对话" clutter from the old eager-creation pattern.
+      const hasTitle = item.projections?.values?.title || item.title;
+      return !item.blank || hasTitle;
+    })
+    .map((item) => {
+      const title = item.projections?.values?.title || item.title || "未命名对话";
+      return {
+        id: item.sessionId,
+        name: title,
+        preview: title,
+        modelProvider: "deepseek",
+        status: item.running ? "running" : "idle",
+        updatedAt: item.updatedAt || Date.now(),
+        createdAt: item.updatedAt || Date.now(),
+        cwd: item.cwd || "",
+        taskStatus: item.running ? "running" : "idle",
+      };
+    });
 }
 
 /**
@@ -590,7 +598,9 @@ async function initializeBridge() {
       const first = state.threads[0];
       await selectThread(first.id);
     } else {
-      await createNewThread();
+      // No sessions yet — show blank new-conversation state; a real session
+      // will be created lazily when the user sends their first message.
+      enterBlankNewThread();
     }
 
     await refreshSkills();
@@ -634,6 +644,21 @@ async function selectThread(threadId) {
   broadcastState();
 }
 
+/**
+ * Reset the app to a blank "new conversation" UI state without creating a
+ * real DSH session. The session will be created lazily on the first sent
+ * message by the sendMessage handler.
+ */
+function enterBlankNewThread() {
+  state.activeThreadId = null;
+  state.activeThread = null;
+  state.messages = [];
+  state.activeDraft = null;
+  state.busy = false;
+  state.pendingApproval = null;
+  state.pendingClarification = null;
+}
+
 async function createNewThread() {
   if (!dshClient) return;
 
@@ -650,6 +675,7 @@ async function createNewThread() {
     broadcastState();
   }
 }
+
 
 function createWindow() {
   const appIconPath = getAppIconPath();
@@ -688,7 +714,10 @@ function createWindow() {
 ipcMain.handle("hermes:getState", () => state);
 
 ipcMain.handle("hermes:newThread", async () => {
-  await createNewThread();
+  // Use lazy creation — just reset to blank state.
+  // The actual DSH session is created on the first sendMessage call.
+  enterBlankNewThread();
+  broadcastState();
   return state;
 });
 
