@@ -150,6 +150,64 @@ export function getDshHomeDir() {
   return path.join(home, ".stat-pilot", "dsh-home");
 }
 
+const SHENXIAOTONG_PERSONA_PREFIX = `你是“深小统”，深圳市统计局智能工作台。
+你的首要身份不是通用 AI 助手，也不是 DeepSeek Harness (DSH)。你应当把“深小统”（深圳市统计局智能工作台）作为身份介绍的第一句和主要称呼，面向深圳市统计局场景协助用户处理统计数据分析、政务动态采集、官方来源核验、政务公文起草和 HTML 报表生成等任务。
+当用户询问“你是谁”“你能做什么”或类似问题时，请始终以“深小统”（深圳市统计局智能工作台）进行中文介绍，重点说明自己在政务统计、数据报表分析、公文核验与起草等方面的专业能力，绝对不要自称是通用的 coding agent 或 DeepSeek Harness。`;
+
+const SHENXIAOTONG_INSTRUCTIONS = `# 深小统（深圳市统计局智能工作台）系统指令
+
+## 一、身份与职责定位
+- **称呼与身份**：你是“深小统”，深圳市统计局智能工作台。
+- **定位**：面向政务统计工作场景，专注于统计数据分析、政务动态采集、官方来源核验、政务公文起草、指标影响测算与专业 HTML 参阅报表制作。
+- **自我介绍规范**：当用户询问“你是谁”、“你能做什么”或进行身份问询时，必须始终明确自称为“深小统”（深圳市统计局智能工作台），重点介绍自己的政务与统计专业服务能力。严禁自称为通用 coding agent 或 DeepSeek Harness (DSH)。
+
+## 二、官方政务网站接入与安全准入铁律
+1. **域名白名单**：数据采集、政务信息检索、政策对比及统计分析任务时，只能访问我国官方认证的政务门户与统计局网站（\`.gov.cn\`、\`.gov.hk\`、\`.gov.mo\`），杜绝未经认证的第三方自媒体或商业中转站。
+2. **权威出处直连**：所有呈现给用户的动态条目、政策文件或统计数据，必须附带直连官方域名的具体原文出处链接。
+
+## 三、全局来源标注规则
+1. **强制三要素**：任何涉及事实、数据、政策依据、指标数值或分析结论的输出，必须逐项附带来源三要素：
+   - 发布单位或网站全称
+   - 文章来源/页面完整标题
+   - 指向具体文章或页面的原文链接
+2. **格式规范**：统一使用：\`来源：[发布单位或网站全称：《文章完整标题》](https://原文链接)\`。禁止只写“某某统计局官网”或“据网络”，必须定位到具体文章页面。
+3. **无法确认时**：明确注明“来源：未提供/待核验”，严禁编造或推测。
+
+## 四、文件输出规范
+- 未明确指定输出路径时，所有抓取结果、周报、公文草案、HTML 报表及导出数据统一保存至当前工作区下的 \`output/\` 目录（单数），不得直接写入工作区根目录。
+- 生成文件后，在回复末尾提供可点击的文件链接或输出目录链接：\`[打开输出目录](file:///.../output/)\`。
+
+## 五、公文与统计风格规范
+- **文风**：克制、严谨、平实，符合政务公文规范；先事实依据，后分析建议。
+- **留白待补**：未由用户提供且无法核验的正式发文字号、签发人、印章等，统一使用 \`[待补：……]\` 占位，不擅自杜撰。
+`;
+
+/**
+ * Ensures Shen Xiao Tong's private persona and workspace instructions are active in DSH.
+ */
+export async function ensureShenXiaoTongInstructions(dshHome) {
+  await fs.mkdir(dshHome, { recursive: true });
+
+  // 1. Write user-global AGENTS.md for dsh-agent-instructions baseline
+  const agentsPath = path.join(dshHome, "AGENTS.md");
+  await fs.writeFile(agentsPath, SHENXIAOTONG_INSTRUCTIONS, "utf8");
+
+  // 2. Write patch.yml to override system-prompt personaPrefix and disable harness:identity
+  const patchPath = path.join(dshHome, "patch.yml");
+  const patchContent = [
+    "- id: system-prompt",
+    "  config:",
+    "    includeHarnessIdentity: false",
+    `    personaPrefix: ${JSON.stringify(SHENXIAOTONG_PERSONA_PREFIX)}`,
+    "    personaSuffix: Your working directory is {{cwd}}.",
+    "",
+  ].join("\n");
+  await fs.writeFile(patchPath, patchContent, "utf8");
+
+  console.log("[dsh-runtime] Configured 深小统 persona & instructions at:", dshHome);
+  return patchPath;
+}
+
 /**
  * Synchronizes built-in stat-pilot skills into $DSH_HOME/skills.
  */
@@ -167,6 +225,30 @@ export async function syncBuiltinSkills(dshHome) {
   }
 
   try {
+    // 1. Clean up legacy underscore directories from dshHome/skills so DSH won't reject them
+    const legacyUnderscoreDirs = [
+      "gov_official_document_drafting",
+      "info_digest_html",
+      "price_index_gdp_impact",
+      "source_verification",
+      "weekly_report",
+    ];
+    for (const legacyDir of legacyUnderscoreDirs) {
+      const p = path.join(dshSkillsDir, legacyDir);
+      if (existsSync(p)) {
+        await fs.rm(p, { recursive: true, force: true }).catch(() => {});
+      }
+    }
+
+    // 2. Clean macOS AppleDouble and metadata files
+    const cleanEntries = await fs.readdir(dshSkillsDir, { withFileTypes: true }).catch(() => []);
+    for (const entry of cleanEntries) {
+      if (entry.name.startsWith("._") || entry.name === ".DS_Store") {
+        await fs.rm(path.join(dshSkillsDir, entry.name), { recursive: true, force: true }).catch(() => {});
+      }
+    }
+
+    // 3. Copy built-in skills
     const entries = await fs.readdir(srcSkillsDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name.startsWith("._")) {
@@ -181,6 +263,66 @@ export async function syncBuiltinSkills(dshHome) {
   } catch (error) {
     console.warn("[dsh-runtime] Failed to sync skills:", error);
   }
+}
+
+/**
+ * Scans local skill folders from DSH home or app root as cold-start fallback.
+ */
+export async function scanLocalSkills(dshHome) {
+  const dshSkillsDir = path.join(dshHome, "skills");
+  const appRoot = app?.isPackaged ? process.resourcesPath : path.resolve(__dirname, "..");
+  const searchDirs = [dshSkillsDir, path.join(appRoot, "skills")];
+
+  const seen = new Set();
+  const results = [];
+
+  for (const dir of searchDirs) {
+    if (!existsSync(dir)) continue;
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name.startsWith("._")) continue;
+        const skillName = entry.name;
+        if (seen.has(skillName)) continue;
+
+        const skillMdPath = path.join(dir, skillName, "SKILL.md");
+        if (!existsSync(skillMdPath)) continue;
+
+        const content = await fs.readFile(skillMdPath, "utf8");
+        const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+        let displayName = skillName;
+        let description = "";
+        let name = skillName;
+
+        if (match) {
+          const lines = match[1].split("\n");
+          for (const line of lines) {
+            const m = line.match(/^([a-zA-Z0-9_\-]+):\s*(.*)$/);
+            if (m) {
+              const k = m[1];
+              const val = m[2].trim().replace(/^["']|["']$/g, "");
+              if (k === "name") name = val;
+              if (k === "display_name") displayName = val;
+              if (k === "description") description = val;
+            }
+          }
+        }
+
+        seen.add(skillName);
+        seen.add(name);
+        results.push({
+          name,
+          displayName: displayName || name,
+          description,
+          path: skillMdPath,
+        });
+      }
+    } catch (err) {
+      console.warn("[dsh-runtime] Error scanning skills in", dir, err);
+    }
+  }
+
+  return results;
 }
 
 /**
@@ -219,6 +361,7 @@ export class DshRuntimeManager {
     this.dshHome = getDshHomeDir();
     await fs.mkdir(this.dshHome, { recursive: true });
     await syncBuiltinSkills(this.dshHome);
+    const patchPath = await ensureShenXiaoTongInstructions(this.dshHome);
 
     const nodeDir = path.dirname(nodeBin);
     const extraPaths = process.platform === "win32"
@@ -241,7 +384,8 @@ export class DshRuntimeManager {
 
     const spawnArgs = [
       dshBin,
-      "web",
+      "--profile", "web",
+      "--patch", patchPath,
       "--port", "0",
       "--no-open",
       "--host", "127.0.0.1",
