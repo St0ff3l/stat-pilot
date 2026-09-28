@@ -17,12 +17,19 @@ concurrency:
 
 jobs:
   checks:
-    name: Typecheck, build, and syntax checks
+    name: Typecheck, build, and runtime verification
     runs-on: ubuntu-22.04
 
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+
+      - name: Check for disallowed platform metadata files
+        run: |
+          if git ls-files | grep -E '(^|/)(\._|\.DS_Store)'; then
+            echo "Found disallowed macOS AppleDouble metadata files!" >&2
+            exit 1
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -36,13 +43,16 @@ jobs:
       - name: TypeScript typecheck
         run: npx tsc --noEmit --pretty false
 
-      - name: Build renderer and server bundles
-        run: npm run build
-
-      - name: Check Electron entrypoints
+      - name: Check Electron and runtime entrypoints
         run: |
           node --check electron/main.mjs
           node --check electron/preload.cjs
           node --check electron/dsh-runtime.mjs
           node --check electron/dsh-client.mjs
           node --check scripts/verify-dsh-runtime.mjs
+
+      - name: Verify DSH runtime boot and lifecycle
+        run: npm run verify:runtime
+
+      - name: Build renderer and server bundles
+        run: npm run build
