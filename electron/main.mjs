@@ -627,14 +627,16 @@ function createWindow() {
     minHeight: 625,
     title: "深小统",
     icon: appIconPath,
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 16, y: 16 },
+    backgroundColor: "#f8fafc",
     webPreferences: {
       preload: path.resolve(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: false,
     },
   });
+
+  mainWindow.setMenuBarVisibility(false);
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(DEV_SERVER_URL);

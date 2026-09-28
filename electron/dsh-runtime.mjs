@@ -1,11 +1,99 @@
-import { spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import readline from "node:readline";
 import path from "node:path";
-import { existsSync, promises as fs } from "node:fs";
-import { app } from "electron";
+import os from "node:os";
+import { existsSync, promises as fs, readdirSync } from "node:fs";
+import electron from "electron";
 import { fileURLToPath } from "node:url";
 
+const app = typeof electron === "object" && electron?.app ? electron.app : null;
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Resolves a standalone Node.js binary path.
+ * Note: DSH (via node-addon-require-builtin) cannot run under Electron runtime
+ * because Electron modifies V8 internal isolate/context layout.
+ */
+export function resolveNodeBinaryPath() {
+  if (process.env.DSH_NODE_BIN && existsSync(process.env.DSH_NODE_BIN)) {
+    return process.env.DSH_NODE_BIN;
+  }
+
+  // 1. Packaged resource candidate
+  const resPath = process.resourcesPath || "";
+  if (resPath) {
+    const packagedNode = process.platform === "win32"
+      ? path.join(resPath, "node.exe")
+      : path.join(resPath, "node");
+    if (existsSync(packagedNode)) {
+      return packagedNode;
+    }
+  }
+
+  // 2. Try which/where
+  try {
+    const cmd = process.platform === "win32" ? "where node" : "which node";
+    const out = execSync(cmd, { encoding: "utf8", timeout: 2000 }).trim().split(/\r?\n/)[0].trim();
+    if (out && existsSync(out)) {
+      return out;
+    }
+  } catch {}
+
+  // 3. Common system paths
+  const commonPaths = process.platform === "win32" ? [
+    "C:\\Program Files\\nodejs\\node.exe",
+    "C:\\Program Files (x86)\\nodejs\\node.exe",
+    path.join(process.env.LOCALAPPDATA || "", "Programs/node/node.exe"),
+  ] : [
+    "/opt/homebrew/bin/node",
+    "/usr/local/bin/node",
+    "/usr/bin/node",
+    "/bin/node",
+  ];
+
+  for (const candidate of commonPaths) {
+    if (candidate && existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  // 4. Version managers (nvm, volta, fnm, asdf)
+  const home = os.homedir();
+  if (home) {
+    const nvmDir = path.join(home, ".nvm/versions/node");
+    if (existsSync(nvmDir)) {
+      try {
+        const versions = readdirSync(nvmDir);
+        if (versions.length > 0) {
+          const sorted = versions.sort();
+          const candidate = path.join(nvmDir, sorted[sorted.length - 1], "bin/node");
+          if (existsSync(candidate)) return candidate;
+        }
+      } catch {}
+    }
+
+    const voltaNode = process.platform === "win32"
+      ? path.join(home, ".volta/bin/node.exe")
+      : path.join(home, ".volta/bin/node");
+    if (existsSync(voltaNode)) return voltaNode;
+
+    const fnmNode = process.platform === "win32"
+      ? path.join(home, ".fnm/current/node.exe")
+      : path.join(home, ".fnm/current/bin/node");
+    if (existsSync(fnmNode)) return fnmNode;
+
+    const asdfNode = path.join(home, ".asdf/shims/node");
+    if (existsSync(asdfNode)) return asdfNode;
+  }
+
+  // 5. If current process is not Electron, use process.execPath
+  if (!process.versions.electron && process.execPath && existsSync(process.execPath)) {
+    return process.execPath;
+  }
+
+  return "node";
+}
 
 /**
  * Resolves the path to the DSH CLI entry point.
@@ -49,12 +137,17 @@ export function getDshHomeDir() {
     return process.env.DSH_HOME;
   }
 
-  const userHomeDsh = path.join(app.getPath("home"), ".dsh");
+  const home = typeof app?.getPath === "function" ? app.getPath("home") : os.homedir();
+  const userHomeDsh = path.join(home, ".dsh");
   if (existsSync(userHomeDsh)) {
     return userHomeDsh;
   }
 
-  return path.join(app.getPath("userData"), "dsh-home");
+  if (typeof app?.getPath === "function") {
+    return path.join(app.getPath("userData"), "dsh-home");
+  }
+
+  return path.join(home, ".stat-pilot", "dsh-home");
 }
 
 /**
@@ -64,7 +157,7 @@ export async function syncBuiltinSkills(dshHome) {
   const dshSkillsDir = path.join(dshHome, "skills");
   await fs.mkdir(dshSkillsDir, { recursive: true });
 
-  const appRoot = app.isPackaged
+  const appRoot = app?.isPackaged
     ? process.resourcesPath
     : path.resolve(__dirname, "..");
   const srcSkillsDir = path.join(appRoot, "skills");
@@ -120,15 +213,26 @@ export class DshRuntimeManager {
       throw new Error(`找不到 DSH 运行时入口: ${dshBin}`);
     }
 
+    const nodeBin = resolveNodeBinaryPath();
+    console.log("[dsh-runtime] Using Node binary:", nodeBin);
+
     this.dshHome = getDshHomeDir();
     await fs.mkdir(this.dshHome, { recursive: true });
     await syncBuiltinSkills(this.dshHome);
 
+    const nodeDir = path.dirname(nodeBin);
+    const extraPaths = process.platform === "win32"
+      ? [nodeDir]
+      : [nodeDir, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+    const currentPath = process.env.PATH || "";
+    const mergedPath = Array.from(new Set([...extraPaths, ...currentPath.split(path.delimiter)])).filter(Boolean).join(path.delimiter);
+
     const env = {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: "1",
+      PATH: mergedPath,
       DSH_HOME: this.dshHome,
     };
+    delete env.ELECTRON_RUN_AS_NODE;
 
     const apiKey = (settings.apiKey || process.env.DEEPSEEK_API_KEY || "").trim();
     if (apiKey) {
@@ -143,7 +247,7 @@ export class DshRuntimeManager {
       "--host", "127.0.0.1",
     ];
 
-    console.log("[dsh-runtime] Spawning DSH with:", process.execPath, spawnArgs.join(" "));
+    console.log("[dsh-runtime] Spawning DSH with:", nodeBin, spawnArgs.join(" "));
 
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -156,7 +260,7 @@ export class DshRuntimeManager {
       }, 20000);
 
       try {
-        this.process = spawn(process.execPath, spawnArgs, {
+        this.process = spawn(nodeBin, spawnArgs, {
           env,
           cwd: settings.cwd || process.cwd(),
           stdio: ["pipe", "pipe", "pipe"],
