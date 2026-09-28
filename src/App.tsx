@@ -1808,7 +1808,7 @@ function App() {
             <span className="startup-sidebar-status-dot" aria-hidden="true" />
             <div>
               <strong>正在启动</strong>
-              <span>连接 Hermes Runtime</span>
+              <span>连接 DSH 运行时</span>
             </div>
           </div>
         </aside>
@@ -3138,14 +3138,14 @@ function App() {
 
                     <div className="skills-section">
                       <div className="skills-section-header">
-                        <h4>Hermes Runtime</h4>
-                        <span>{runtimeInstalled ? "已安装" : "未安装"}</span>
+                        <h4>DSH 运行时</h4>
+                        <span>{runtimeInstalled ? "已就绪" : "未就绪"}</span>
                       </div>
                       <div className="skills-list-container">
                         <div className="skill-card">
                           <div className="skill-info">
-                            <strong className="skill-card-header">应用私有运行时</strong>
-                            <p className="skill-card-desc">Hermes 现在固定安装在当前 Electron 应用的私有数据目录里，不再依赖外部路径。</p>
+                            <strong className="skill-card-header">DeepSeek DSH 运行时</strong>
+                            <p className="skill-card-desc">DSH 作为内置轻量运行时直接由应用内置提供，跨平台且无需外部 Python 虚拟环境。</p>
                             <span className="skill-card-path">{state?.runtime.installDir}</span>
                             <span className="skill-card-path">{state?.runtime.homeDir}</span>
                           </div>
@@ -3201,8 +3201,8 @@ function App() {
                         </div>
                         <p>
                           {draftSettings.runtimeMode === "official"
-                            ? "应用到新建或恢复的 Hermes 会话。"
-                            : "启动私有 Hermes Runtime 前设置 HERMES_YOLO_MODE=1，减少普通命令的逐次确认。"}
+                            ? "应用到新建或恢复的 DSH 会话。"
+                            : "开启自动执行模式，减少普通命令与操作的逐次确认。"}
                           <br />
                           即使开启，硬性安全规则仍可能要求授权，授权面板不会被静默跳过。
                         </p>
@@ -3872,7 +3872,7 @@ function App() {
               {/* Shared Footer Actions */}
               <div className="settings-content-footer">
                 <p className="modal-copy">
-                  配置完成后将自动重新启动后台 Hermes Runtime 服务。私有模式使用你自己填写的 provider/API key；官方模式复用本机 `~/.hermes` 的登录态和默认模型。卸载运行时只会删除这个应用私有目录里的 Hermes 程序与会话数据。
+                  配置完成后将自动重新启动后台 DSH 运行时服务。私有模式使用你自己填写的 provider/API key；官方模式复用本机 `~/.dsh` 的登录态和配置。
                 </p>
                 <div className="modal-actions">
                   <button className="secondary-button" onClick={() => void closeSettingsModal()}>

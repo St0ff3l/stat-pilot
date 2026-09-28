@@ -43,3 +43,6 @@ jobs:
         run: |
           node --check electron/main.mjs
           node --check electron/preload.cjs
+          node --check electron/dsh-runtime.mjs
+          node --check electron/dsh-client.mjs
+          node --check scripts/verify-dsh-runtime.mjs

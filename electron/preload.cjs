@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
-contextBridge.exposeInMainWorld("hermesDesktop", {
+const api = {
   getState: () => ipcRenderer.invoke("hermes:getState"),
   newThread: () => ipcRenderer.invoke("hermes:newThread"),
   selectThread: (threadId) => ipcRenderer.invoke("hermes:selectThread", threadId),
@@ -25,4 +25,7 @@ contextBridge.exposeInMainWorld("hermesDesktop", {
     ipcRenderer.on("hermes:state", listener);
     return () => ipcRenderer.removeListener("hermes:state", listener);
   },
-});
+};
+
+contextBridge.exposeInMainWorld("hermesDesktop", api);
+contextBridge.exposeInMainWorld("dshDesktop", api);
