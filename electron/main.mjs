@@ -64,16 +64,146 @@ function resolveOutputDir(cwd, defaultOutputDir = "output") {
     : path.resolve(cwd || process.cwd(), targetDir);
 }
 
+const OUTPUT_FILE_EXTENSION = /\.(?:html?|json|csv|tsv|xlsx?|pdf|docx?|pptx?|md|rtf|txt|png|jpe?g|gif|svg|zip|py|sh|js|css)$/i;
+const OUTPUT_SCAN_MAX_DEPTH = 4;
+const OUTPUT_SCAN_MAX_FILES = 4000;
+
+function mentionedOutputFileNames(messages = []) {
+  const names = new Set();
+  // Chinese replies often put a full-width parenthesis directly after a file
+  // name, e.g. `report.html（45 KB）`; treat that as a filename boundary too.
+  const fileNamePattern = /([^\s"'`<>|/\\]+?\.(?:html?|json|csv|tsv|xlsx?|pdf|docx?|pptx?|md|rtf|txt|png|jpe?g|gif|svg|zip|py|sh|js|css))(?=$|[\s"'`*(),\]}，。；：！？（）:;])/giu;
+
+  for (const message of messages) {
+    if (message?.role !== "assistant" || typeof message.text !== "string") continue;
+    for (const match of message.text.matchAll(fileNamePattern)) {
+      // A Markdown link label starts with `[`, which isn't part of the
+      // basename on disk. Strip it before matching the output-directory scan.
+      const fileName = path.basename(match[1].replace(/^\[+/, ""));
+      if (OUTPUT_FILE_EXTENSION.test(fileName)) names.add(fileName.toLowerCase());
+    }
+  }
+
+  return names;
+}
+
+async function scanOutputFiles(outputDir) {
+  const files = new Map();
+  let scannedFiles = 0;
+
+  async function walk(directory, depth) {
+    if (depth > OUTPUT_SCAN_MAX_DEPTH || scannedFiles >= OUTPUT_SCAN_MAX_FILES) return;
+
+    let entries;
+    try {
+      entries = await fs.readdir(directory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      if (scannedFiles >= OUTPUT_SCAN_MAX_FILES) break;
+      if (entry.name === ".DS_Store" || entry.name.startsWith("._")) continue;
+
+      const filePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await walk(filePath, depth + 1);
+        continue;
+      }
+      if (!entry.isFile() || !OUTPUT_FILE_EXTENSION.test(entry.name)) continue;
+
+      scannedFiles += 1;
+      try {
+        const stat = await fs.stat(filePath);
+        if (stat.isFile()) {
+          files.set(path.resolve(filePath), {
+            size: stat.size,
+            mtimeMs: stat.mtimeMs,
+            ctimeMs: stat.ctimeMs,
+          });
+        }
+      } catch {
+        // Files can disappear while the output folder is being scanned.
+      }
+    }
+  }
+
+  await walk(outputDir, 0);
+  return files;
+}
+
+function filesChangedSince(before = new Map(), after = new Map()) {
+  return [...after.entries()]
+    .filter(([filePath, current]) => {
+      const previous = before.get(filePath);
+      return !previous || previous.size !== current.size || previous.mtimeMs !== current.mtimeMs || previous.ctimeMs !== current.ctimeMs;
+    })
+    .sort((left, right) => right[1].mtimeMs - left[1].mtimeMs)
+    .map(([filePath]) => filePath);
+}
+
+function matchMentionedOutputFiles(fileSnapshot, messages = []) {
+  const names = mentionedOutputFileNames(messages);
+  if (names.size === 0) return [];
+
+  return [...fileSnapshot.entries()]
+    .filter(([filePath]) => names.has(path.basename(filePath).toLowerCase()))
+    .sort((left, right) => right[1].mtimeMs - left[1].mtimeMs)
+    .map(([filePath]) => filePath);
+}
+
+async function discoverMentionedOutputFiles(messages, cwd, defaultOutputDir) {
+  if (mentionedOutputFileNames(messages).size === 0) return [];
+  const outputDir = resolveOutputDir(cwd, defaultOutputDir);
+  return matchMentionedOutputFiles(await scanOutputFiles(outputDir), messages);
+}
+
 const defaultSettings = {
   dshBin: resolveDshBinaryPath(),
-  yoloMode: true,
+  permissionDefaultPreset: "workspace-write",
   model: "deepseek-flash",
+  reasoningEffort: "",
+  apiModel: "deepseek-flash",
+  accountModel: "deepseek-flash",
   cwd: "",
   defaultOutputDir: "output",
   customModels: ["deepseek-flash", "deepseek-v4-pro"],
+  customModelsByProvider: {
+    deepseek: ["deepseek-flash", "deepseek-v4-pro"],
+  },
+  apiModelsByProvider: {
+    deepseek: "deepseek-flash",
+  },
   apiProvider: "deepseek",
+  authMode: "auto",
   apiKey: "",
   apiBaseUrl: "",
+};
+
+const SUPPORTED_PERMISSION_PRESETS = new Set(["read-only", "workspace-write", "danger-full-access"]);
+const DEFAULT_AGENT_PRESET = "standard";
+
+function getSupportedPermissionPresets(options = []) {
+  return options.filter((option) => SUPPORTED_PERMISSION_PRESETS.has(option?.value));
+}
+
+const DEEPSEEK_MODEL_CATALOG = {
+  "deepseek-flash": {
+    id: "deepseek-flash",
+    name: "DeepSeek-V41-Flash",
+    contextWindow: 1_000_000,
+    inputModalities: ["text", "image"],
+    systemPromptUpdate: "in-history",
+    toolUpdate: "addition-only",
+  },
+  "deepseek-v4-pro": {
+    id: "deepseek-v4-pro",
+    name: "DeepSeek-V4-Pro",
+    description: "Stronger agentic coding, knowledge, and difficult reasoning; suited to complex or quality-critical tasks at higher cost.",
+    contextWindow: 1_000_000,
+    inputModalities: ["text"],
+  },
 };
 
 const DEEPSEEK_MODEL_ALIASES = new Map([
@@ -87,6 +217,10 @@ function normalizeSettings(settings) {
   const input = { ...(settings ?? {}) };
   delete input.hermesBin;
   delete input.runtimeMode;
+  // Older releases persisted a YOLO toggle. Permission now has one explicit
+  // default, selected from the composer; never carry the old Full access
+  // default forward silently.
+  delete input.yoloMode;
   for (const key of [
     "visionModel",
     "visionProvider",
@@ -104,9 +238,33 @@ function normalizeSettings(settings) {
   }
   const defaultCwd = typeof input.cwd === "string" ? input.cwd.trim() : "";
   const apiProvider = input.apiProvider ?? defaultSettings.apiProvider;
+  const authMode = input.authMode === "api" || input.authMode === "account" ? input.authMode : "auto";
+  const permissionDefaultPreset = ["read-only", "workspace-write", "danger-full-access"].includes(input.permissionDefaultPreset)
+    ? input.permissionDefaultPreset
+    : defaultSettings.permissionDefaultPreset;
+  const reasoningEffort = typeof input.reasoningEffort === "string" ? input.reasoningEffort.trim() : "";
   const normalizeModel = (model) => apiProvider === "deepseek" ? (DEEPSEEK_MODEL_ALIASES.get(model) || model) : model;
   const customModels = Array.isArray(input.customModels) ? input.customModels : defaultSettings.customModels;
   const normalizedCustomModels = Array.from(new Set(customModels.map(normalizeModel)));
+  const modelListsInput = input.customModelsByProvider && typeof input.customModelsByProvider === "object"
+    ? input.customModelsByProvider
+    : {};
+  const customModelsByProvider = { ...modelListsInput };
+  const activeProviderModels = Array.isArray(modelListsInput[apiProvider])
+    ? modelListsInput[apiProvider]
+    : normalizedCustomModels;
+  customModelsByProvider[apiProvider] = Array.from(new Set(activeProviderModels
+    .map((model) => apiProvider === "deepseek" ? (DEEPSEEK_MODEL_ALIASES.get(model) || model) : model)
+    .filter((model) => typeof model === "string" && model.trim())
+    .map((model) => model.trim())));
+  const accountModel = DEEPSEEK_MODEL_ALIASES.get(input.accountModel) || input.accountModel || defaultSettings.accountModel;
+  const apiModelsByProvider = {
+    ...defaultSettings.apiModelsByProvider,
+    ...(input.apiModelsByProvider && typeof input.apiModelsByProvider === "object" ? input.apiModelsByProvider : {}),
+  };
+  const legacyApiModel = authMode === "account" ? undefined : input.model;
+  const apiModel = normalizeModel(input.apiModel ?? legacyApiModel ?? apiModelsByProvider[apiProvider] ?? defaultSettings.apiModel);
+  apiModelsByProvider[apiProvider] = apiModel;
 
   return {
     ...defaultSettings,
@@ -115,10 +273,17 @@ function normalizeSettings(settings) {
     // an absolute Hermes/DSH path here, which may point at a removed or stale
     // checkout after upgrade.
     dshBin: defaultSettings.dshBin,
-    model: normalizeModel(input.model ?? defaultSettings.model),
-    customModels: normalizedCustomModels,
+    model: authMode === "account" ? accountModel : normalizeModel(input.model ?? apiModel ?? defaultSettings.model),
+    apiModel,
+    accountModel,
+    apiModelsByProvider,
+    customModels: customModelsByProvider[apiProvider],
+    customModelsByProvider,
     cwd: defaultCwd,
     defaultOutputDir: normalizeOutputDir(input.defaultOutputDir),
+    authMode,
+    permissionDefaultPreset,
+    reasoningEffort,
   };
 }
 
@@ -143,10 +308,17 @@ let state = {
   status: "Starting DeepSeek Harness runtime...",
   error: null,
   currentRuntimeModel: "deepseek-flash",
+  currentModelSelection: null,
+  modelCatalog: null,
   lastUsageModel: null,
   reasoningTrace: null,
   pendingApproval: null,
   pendingClarification: null,
+  permissionPresets: [],
+  permissionDefaultPreset: defaultSettings.permissionDefaultPreset,
+  currentPermissionPreset: null,
+  defaultAgentPreset: DEFAULT_AGENT_PRESET,
+  currentAgentPreset: null,
   settings: { ...defaultSettings },
   runtime: {
     installed: false,
@@ -168,6 +340,8 @@ let state = {
   archivedThreads: [],
   activeThreadId: null,
   activeThread: null,
+  generatedFiles: [],
+  lastGeneratedFiles: null,
   messages: [],
   activeDraft: null,
   busy: false,
@@ -180,6 +354,7 @@ let archivedSessionIds = new Set();
 const pendingArchiveDeletionSessionIds = new Set();
 const pendingApprovals = new Map();
 const pendingUserQuestions = new Map();
+let activeOutputCapture = null;
 let archivePluginWarningLogged = false;
 let accountPollTimer = null;
 let accountLoginAttemptId = null;
@@ -199,14 +374,27 @@ function getAccountClientMetadata() {
 }
 
 function getSelectedModelProvider(settings = state.settings) {
+  if (settings.authMode === "account") return "deepseek-account";
   if (settings.apiProvider === "openai") return "openai";
   if (settings.apiProvider === "openrouter") return "openrouter";
   if (settings.apiProvider === "custom") return "stat-pilot-custom";
+  if (settings.authMode === "api") return "deepseek-official";
 
   const hasApiKey = Boolean(state.providerCredentialStatus.deepseek.configured || (process.env.DEEPSEEK_API_KEY || "").trim());
   return !hasApiKey && state.account?.status === "credential-stored"
     ? "deepseek-account"
     : "deepseek-official";
+}
+
+function getSettingsModelSelection(settings = state.settings) {
+  const selection = {
+    provider: getSelectedModelProvider(settings),
+    model: String(settings.model || defaultSettings.model),
+  };
+  if (typeof settings.reasoningEffort === "string" && settings.reasoningEffort.trim()) {
+    selection.reasoningEffort = settings.reasoningEffort.trim();
+  }
+  return selection;
 }
 
 function getProviderCredentialRef(provider) {
@@ -218,21 +406,30 @@ function getProviderCredentialRef(provider) {
 
 async function configureDshProvider(settings) {
   if (!dshClient) return;
+  if (settings.authMode === "account") return;
 
   const provider = settings.apiProvider || "deepseek";
   const credentialRef = getProviderCredentialRef(provider);
-  const model = String(settings.model || "").trim();
+  const model = String(settings.apiModelsByProvider?.[provider] || settings.apiModel || settings.model || "").trim();
   const apiKey = String(settings.apiKey || "").trim();
+  const configuredModels = settings.customModelsByProvider?.[provider] || settings.customModels || [];
+  const models = Array.from(new Set([model, ...configuredModels]
+    .map((item) => String(item).trim())
+    .filter(Boolean)));
 
   if (provider === "deepseek") {
     await dshClient.mutateSettings({
       namespace: "llm-deepseek",
-      operations: [{ op: "set", path: ["apiKeyEnv"], value: credentialRef }],
+      operations: [
+        { op: "set", path: ["apiKeyEnv"], value: credentialRef },
+        { op: "set", path: ["models"], value: models.map((id) => DEEPSEEK_MODEL_CATALOG[id] || { id }) },
+      ],
     });
   } else {
     const route = provider === "custom" ? "stat-pilot-custom" : provider;
     const operations = [
       { op: "set", path: ["providers", route, "apiKeyEnv"], value: credentialRef },
+      { op: "set", path: ["providers", route, "models"], value: models.map((id) => ({ id })) },
     ];
     if (provider === "custom") {
       const baseURL = String(settings.apiBaseUrl || "").trim();
@@ -246,13 +443,11 @@ async function configureDshProvider(settings) {
       if (!["http:", "https:"].includes(parsedBaseURL.protocol)) {
         throw new Error("API Base URL 仅支持 HTTP 或 HTTPS");
       }
-      const models = Array.from(new Set([model, ...(settings.customModels || [])].map((item) => String(item).trim()).filter(Boolean)));
       if (models.length === 0) throw new Error("自定义 provider 至少需要一个模型 ID");
       operations.push(
         { op: "set", path: ["providers", route, "displayName"], value: "自定义 OpenAI 兼容接口" },
         { op: "set", path: ["providers", route, "api"], value: "openai-completions" },
         { op: "set", path: ["providers", route, "baseURL"], value: baseURL },
-        { op: "set", path: ["providers", route, "models"], value: models.map((id) => ({ id })) },
       );
     }
     await dshClient.mutateSettings({ namespace: "llm-pi-ai", operations });
@@ -264,9 +459,9 @@ async function configureDshProvider(settings) {
 }
 
 async function configureDshPermissionDefault(settings) {
-  if (!dshClient) return;
+  if (!dshClient) return null;
 
-  const preset = settings.yoloMode ? "danger-full-access" : "workspace-write";
+  const preset = settings.permissionDefaultPreset || defaultSettings.permissionDefaultPreset;
   const catalog = await dshClient.getPermissionPresetCatalog();
   if (!catalog?.defaultOptions?.some((option) => option.value === preset)) {
     throw new Error(`DSH 当前权限预设未提供 ${preset}`);
@@ -275,6 +470,7 @@ async function configureDshPermissionDefault(settings) {
     namespace: "permission",
     operations: [{ op: "set", path: ["defaultPreset"], value: preset }],
   });
+  return catalog;
 }
 
 async function refreshProviderCredentialStatus() {
@@ -289,11 +485,19 @@ async function refreshProviderCredentialStatus() {
   const descriptions = await dshClient.describeCredentials(Object.values(refs));
   state.providerCredentialStatus = Object.fromEntries(
     Object.entries(refs).map(([provider, ref]) => [provider, {
-      configured: Boolean(descriptions?.[ref]?.configured),
+      configured: Boolean(descriptions?.[ref]?.configured || (process.env[ref] || "").trim()),
       writable: Boolean(descriptions?.[ref]?.writable),
     }])
   );
   return state.providerCredentialStatus;
+}
+
+async function refreshDshModelCatalog() {
+  if (!dshClient) throw new Error("DSH 后端尚未就绪，无法加载模型列表");
+  const catalog = await dshClient.getModelCatalog();
+  state.modelCatalog = catalog;
+  broadcastState();
+  return state;
 }
 
 function hasDeepSeekApiKey() {
@@ -342,24 +546,33 @@ async function refreshDshAccountState() {
       if (attempt.phase === "succeeded") {
         accountLoginAttemptId = null;
         stopAccountPolling();
-        if (!hasDeepSeekApiKey()) {
+        if (getSelectedModelProvider() === "deepseek-account") {
           await dshClient.initializeAccountDefaultModel();
           const catalog = await dshClient.getModelCatalog();
-          const accountDefault = catalog?.default?.provider === "deepseek-account"
+          const catalogAccountDefault = catalog?.default?.provider === "deepseek-account"
             ? (DEEPSEEK_MODEL_ALIASES.get(catalog.default.model) || catalog.default.model)
             : state.settings.model;
+          const accountDefault = state.settings.authMode === "account"
+            ? (state.settings.accountModel || catalogAccountDefault)
+            : catalogAccountDefault;
           if (accountDefault) {
             state.settings.model = accountDefault;
+            if (state.settings.authMode === "account") state.settings.accountModel = accountDefault;
+            state.settings.reasoningEffort = "";
+            if (!state.activeThreadId) state.currentModelSelection = getSettingsModelSelection();
+            state.currentRuntimeModel = accountDefault;
             await saveSettings(state.settings);
           }
           if (state.activeThreadId && accountDefault) {
-            await dshClient.selectModel({
+            const selectedModel = await dshClient.selectModel({
               sessionId: state.activeThreadId,
               provider: "deepseek-account",
               model: accountDefault,
             });
-            state.currentRuntimeModel = accountDefault;
+            state.currentModelSelection = selectedModel?.selected || { provider: "deepseek-account", model: accountDefault };
+            state.currentRuntimeModel = state.currentModelSelection.model;
           }
+          void refreshDshModelCatalog().catch((error) => console.warn("[main] Failed to refresh DSH model catalog:", error));
         }
       } else if (["cancelled", "expired", "failed"].includes(attempt.phase)) {
         accountLoginAttemptId = null;
@@ -371,6 +584,8 @@ async function refreshDshAccountState() {
   } catch (error) {
     console.warn("[main] Failed to refresh DSH account state:", error);
   }
+
+  if (!state.activeThreadId) state.currentModelSelection = getSettingsModelSelection();
 
   broadcastState();
   return state;
@@ -438,13 +653,15 @@ function upsertActiveDraftActivity(activity, targetDraft = state.activeDraft) {
   );
 }
 
-function closeRunningThinkingActivities(targetDraft = state.activeDraft) {
+function closeRunningThinkingActivities(targetDraft = state.activeDraft, streamIndex) {
   if (!targetDraft || !Array.isArray(targetDraft.activities)) {
     return;
   }
 
   targetDraft.activities = targetDraft.activities.map((activity) =>
-    activity.kind === "thinking" && activity.status === "running"
+    activity.kind === "thinking" &&
+    activity.status === "running" &&
+    (streamIndex === undefined || activity.streamIndex === streamIndex)
       ? { ...activity, status: "complete" }
       : activity
   );
@@ -515,7 +732,32 @@ function mapDshSessionsToThreads(items = []) {
  */
 function mapDshRecordsToMessages(records = []) {
   const messages = [];
-  let currentActivities = [];
+  let pendingActivities = [];
+  const toolActivities = new Map();
+  const placedToolCallIds = new Set();
+
+  const rawArguments = (value) => {
+    if (typeof value === "string") return value;
+    try {
+      return JSON.stringify(value ?? {}, null, 2);
+    } catch {
+      return String(value ?? "");
+    }
+  };
+
+  const resultText = (message, error) => {
+    const content = (message?.content || [])
+      .map((block) => block.type === "text"
+        ? block.text || ""
+        : JSON.stringify(block, null, 2))
+      .filter(Boolean)
+      .join("\n");
+    if (content) return content;
+    if (error?.name || error?.code) {
+      return [error.name, error.code, error.reason].filter(Boolean).join(": ");
+    }
+    return "";
+  };
 
   for (const record of records) {
     const event = record.event;
@@ -533,28 +775,75 @@ function mapDshRecordsToMessages(records = []) {
           text: textParts.join(""),
           turnId: null,
         });
-        currentActivities = [];
+        pendingActivities = [];
       }
     } else if (event.type === "tool/call") {
       const call = event.data;
-      currentActivities.push({
-        id: call.callId || `tool-${event.seq}`,
+      const callId = call.callId || `tool-${event.seq}`;
+      const activity = toolActivities.get(callId) || {
+        id: callId,
         kind: "tool",
         label: call.name || "Tool",
         toolName: call.name,
-        detail: typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments),
-        status: "complete",
-      });
+        detail: rawArguments(call.arguments),
+        status: "running",
+      };
+      activity.label = call.name || activity.label;
+      activity.toolName = call.name || activity.toolName;
+      activity.detail = rawArguments(call.arguments);
+      toolActivities.set(callId, activity);
+      if (!placedToolCallIds.has(callId) && !pendingActivities.includes(activity)) {
+        pendingActivities.push(activity);
+      }
+    } else if (event.type === "tool/result") {
+      const result = event.data;
+      const callId = result.message?.toolCallId;
+      const activity = toolActivities.get(callId);
+      if (activity) {
+        activity.status = result.message?.isError ? "error" : "complete";
+        activity.output = resultText(result.message, result.error);
+      } else if (callId) {
+        const pending = pendingActivities.find((candidate) => candidate.id === callId);
+        if (pending) {
+          pending.status = result.message?.isError ? "error" : "complete";
+          pending.output = resultText(result.message);
+        }
+      }
     } else if (event.type === "assistant/message") {
       const msg = event.data.message;
       let text = "";
       let reasoning = "";
+      const activities = [...pendingActivities];
+      const seenCallIds = new Set(activities.filter((activity) => activity.kind === "tool").map((activity) => activity.id));
+      pendingActivities = [];
       if (Array.isArray(msg?.content)) {
-        for (const block of msg.content) {
+        for (const [blockIndex, block] of msg.content.entries()) {
           if (block.type === "text") {
             text += block.text || "";
           } else if (block.type === "reasoning") {
-            reasoning += block.text || "";
+            const detail = block.text || "";
+            reasoning += detail;
+            if (detail.trim()) {
+              activities.push({
+                id: `thinking:${msg?.id || event.seq}:${blockIndex}`,
+                kind: "thinking",
+                label: "思考过程",
+                detail,
+                status: "complete",
+              });
+            }
+          } else if (block.type === "tool-call" && block.id && !seenCallIds.has(block.id)) {
+            const activity = {
+              id: block.id,
+              kind: "tool",
+              label: block.name || "Tool",
+              toolName: block.name,
+              detail: rawArguments(block.arguments),
+              status: "running",
+            };
+            toolActivities.set(block.id, activity);
+            activities.push(activity);
+            seenCallIds.add(block.id);
           }
         }
       }
@@ -565,9 +854,11 @@ function mapDshRecordsToMessages(records = []) {
         text,
         reasoning: reasoning.trim() || null,
         turnId: null,
-        activities: [...currentActivities],
+        activities,
       });
-      currentActivities = [];
+      for (const activity of activities) {
+        if (activity.kind === "tool") placedToolCallIds.add(activity.id);
+      }
     }
   }
 
@@ -766,7 +1057,43 @@ function setupDshEvents(client) {
     broadcastState();
   });
 
-  client.on("reasoningDelta", ({ text }) => {
+  client.on("blockStart", (chunk) => {
+    if (chunk?.blockType !== "reasoning") {
+      closeRunningThinkingActivities();
+      return;
+    }
+
+    if (!state.activeDraft) {
+      state.activeDraft = {
+        id: randomUUID(),
+        threadId: state.activeThreadId,
+        text: "",
+        pendingText: "",
+        reasoning: "",
+        activities: [],
+      };
+      state.busy = true;
+    }
+
+    closeRunningThinkingActivities();
+    upsertActiveDraftActivity({
+      id: `thinking:${state.activeDraft.id}:${chunk.index}:${randomUUID()}`,
+      kind: "thinking",
+      label: "思考过程",
+      detail: "",
+      streamIndex: chunk.index,
+      status: "running",
+    });
+  });
+
+  client.on("blockEnd", (chunk) => {
+    if (chunk?.block?.type === "reasoning") {
+      closeRunningThinkingActivities(state.activeDraft, chunk.index);
+      broadcastState();
+    }
+  });
+
+  client.on("reasoningDelta", ({ text, index }) => {
     if (!state.activeDraft) {
       state.activeDraft = {
         id: randomUUID(),
@@ -780,11 +1107,18 @@ function setupDshEvents(client) {
     }
 
     state.activeDraft.reasoning = (state.activeDraft.reasoning || "") + text;
+    const activities = state.activeDraft.activities || [];
+    const currentThinking = [...activities].reverse().find((activity) =>
+      activity.kind === "thinking" &&
+      activity.status === "running" &&
+      (index === undefined || activity.streamIndex === index)
+    );
     upsertActiveDraftActivity({
-      id: `thinking:${state.activeDraft.id}`,
+      id: currentThinking?.id || `thinking:${state.activeDraft.id}:${randomUUID()}`,
       kind: "thinking",
-      label: "思考中...",
-      detail: state.activeDraft.reasoning,
+      label: "思考过程",
+      detail: `${currentThinking?.detail || ""}${text}`,
+      ...(index === undefined ? {} : { streamIndex: index }),
       status: "running",
     });
     broadcastState();
@@ -797,7 +1131,7 @@ function setupDshEvents(client) {
       kind: "tool",
       label: call.name || "Tool",
       toolName: call.name,
-      detail: typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments),
+      detail: typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments, null, 2),
       status: "running",
     });
     broadcastState();
@@ -805,17 +1139,24 @@ function setupDshEvents(client) {
 
   client.on("toolResult", (result) => {
     if (state.activeDraft?.activities) {
+      const callId = result.message?.toolCallId || result.callId;
       const target = state.activeDraft.activities.find(
-        (a) => a.id === result.callId || (a.status === "running" && a.kind === "tool")
+        (activity) => activity.id === callId || (!callId && activity.status === "running" && activity.kind === "tool")
       );
       if (target) {
-        target.status = "complete";
+        const message = result.message;
+        target.status = message?.isError ? "error" : "complete";
+        target.output = (message?.content || [])
+          .map((block) => block.type === "text" ? block.text || "" : JSON.stringify(block, null, 2))
+          .filter(Boolean)
+          .join("\n") || [result.error?.name, result.error?.code, result.error?.reason].filter(Boolean).join(": ");
       }
     }
     broadcastState();
   });
 
   client.on("turnEnd", async () => {
+    const completedThreadId = state.activeDraft?.threadId || activeOutputCapture?.threadId || state.activeThreadId;
     finishActiveDraftActivities();
     if (state.activeDraft) {
       state.messages = [
@@ -830,6 +1171,20 @@ function setupDshEvents(client) {
         },
       ];
       state.activeDraft = null;
+    }
+
+    const outputCapture = activeOutputCapture;
+    activeOutputCapture = null;
+    if (outputCapture && outputCapture.threadId === completedThreadId) {
+      const outputSnapshot = await scanOutputFiles(outputCapture.outputDir);
+      const newFiles = filesChangedSince(outputCapture.before, outputSnapshot);
+      const threadMessages = state.activeThreadId === completedThreadId ? state.messages : [];
+      const mentionedFiles = matchMentionedOutputFiles(outputSnapshot, threadMessages);
+      if (state.activeThreadId === completedThreadId) {
+        const existingFiles = (state.generatedFiles || []).filter((filePath) => outputSnapshot.has(path.resolve(filePath)));
+        state.generatedFiles = [...new Set([...existingFiles, ...mentionedFiles, ...newFiles])];
+        state.lastGeneratedFiles = newFiles;
+      }
     }
 
     state.busy = false;
@@ -886,11 +1241,21 @@ async function initializeBridge() {
 
     state.status = "正在同步模型和权限设置...";
     broadcastState();
-    await Promise.all([
+    const [, permissionCatalog, agentPresetRoster] = await Promise.all([
       configureDshProvider(settings),
       configureDshPermissionDefault(settings),
+      dshClient.getAgentPresetRoster(),
     ]);
+    const standardPreset = agentPresetRoster?.presets?.find((preset) => preset.id === DEFAULT_AGENT_PRESET);
+    if (!standardPreset || standardPreset.broken) {
+      throw new Error(standardPreset?.broken || "DSH Web profile 未提供可用的 standard Agent 模式");
+    }
+    state.permissionPresets = getSupportedPermissionPresets(permissionCatalog?.options);
+    state.permissionDefaultPreset = settings.permissionDefaultPreset;
+    state.defaultAgentPreset = DEFAULT_AGENT_PRESET;
     await refreshProviderCredentialStatus();
+    state.currentRuntimeModel = settings.model;
+    state.currentModelSelection = getSettingsModelSelection(settings);
     await saveSettings(state.settings);
     // Account metadata is useful but should not hold the workspace behind a
     // slow RPC. The status update will arrive over the normal state broadcast.
@@ -907,26 +1272,22 @@ async function initializeBridge() {
       bundledWithApp: true,
     };
 
-    state.status = "正在恢复最近的对话和技能...";
+    state.status = "正在加载任务列表和技能...";
     broadcastState();
-    // Wait for DSH's archive projection before choosing the startup session.
+    // Wait for DSH's archive projection before showing the workspace home page.
     // If the stream is unavailable, the later baseline event refreshes both lists.
     await dshClient.waitForWorkspaceBaseline();
     await refreshThreads();
-
-    // If there is an existing session, select the most recent one; otherwise create a fresh session
-    if (state.threads.length > 0) {
-      const first = state.threads[0];
-      await selectThread(first.id, { loadSkills: false });
-    } else {
-      // No sessions yet — show blank new-conversation state; a real session
-      // will be created lazily when the user sends their first message.
-      enterBlankNewThread();
-    }
+    // Always start on the blank home page. Existing conversations remain in
+    // the task list and are loaded only when the user explicitly selects one.
+    enterBlankNewThread();
 
     state.status = "Ready.";
     state.error = null;
     broadcastState();
+    void refreshDshModelCatalog().catch((error) => {
+      console.warn("[main] Failed to load DSH model catalog:", error);
+    });
     // Skill discovery is non-critical for opening the workspace. Load it after
     // the chat surface is usable so a slow skills RPC cannot look like a hang.
     void refreshSkills();
@@ -953,14 +1314,33 @@ async function selectThread(threadId, { loadSkills = true } = {}) {
 
   try {
     const proj = await dshClient.getProjections(threadId);
+    if (state.activeThreadId === threadId) {
+      state.currentPermissionPreset = proj?.values?.permissions?.currentValue || null;
+      state.currentAgentPreset = proj?.values?.agentPreset || null;
+      state.currentModelSelection = proj?.values?.modelSelection?.next
+        || proj?.values?.modelSelection?.lastUsed
+        || getSettingsModelSelection();
+      state.currentRuntimeModel = state.currentModelSelection.model;
+    }
     const asOfSeq = proj?.asOfSeq ?? 0;
     const page = await dshClient.getPage({ sessionId: threadId, throughSeq: asOfSeq });
     if (state.activeThreadId !== threadId) return;
     state.messages = mapDshRecordsToMessages(page?.records || []);
+    const generatedFiles = await discoverMentionedOutputFiles(
+      state.messages,
+      state.activeThread?.cwd || state.settings.cwd || process.cwd(),
+      state.settings.defaultOutputDir,
+    );
+    if (state.activeThreadId !== threadId) return;
+    state.generatedFiles = generatedFiles;
   } catch (err) {
     console.warn(`[main] Failed to fetch session history for ${threadId}:`, err);
     if (state.activeThreadId === threadId) {
       state.messages = [];
+      state.generatedFiles = [];
+      state.currentPermissionPreset = null;
+      state.currentAgentPreset = null;
+      state.currentModelSelection = getSettingsModelSelection();
     }
   }
 
@@ -968,6 +1348,7 @@ async function selectThread(threadId, { loadSkills = true } = {}) {
 
   state.activeDraft = null;
   state.busy = false;
+  state.lastGeneratedFiles = null;
   state.pendingApproval = null;
   state.pendingClarification = null;
   if (loadSkills) await refreshSkills();
@@ -983,11 +1364,17 @@ function enterBlankNewThread() {
   dshClient?.unfollowSession();
   state.activeThreadId = null;
   state.activeThread = null;
+  state.generatedFiles = [];
+  state.lastGeneratedFiles = null;
   state.messages = [];
   state.activeDraft = null;
   state.busy = false;
   state.pendingApproval = null;
   state.pendingClarification = null;
+  state.currentPermissionPreset = null;
+  state.currentAgentPreset = null;
+  state.currentModelSelection = getSettingsModelSelection();
+  state.currentRuntimeModel = state.currentModelSelection.model;
 }
 
 async function createNewThread() {
@@ -998,13 +1385,19 @@ async function createNewThread() {
     const result = await dshClient.createSession({ cwd });
     const sessionId = result.sessionId;
 
-    if (state.settings.model) {
-      await dshClient.selectModel({
+    const selectedPreset = await dshClient.selectAgentPreset(sessionId, DEFAULT_AGENT_PRESET);
+    if (selectedPreset !== DEFAULT_AGENT_PRESET) {
+      throw new Error(`DSH 没有将新会话切换到 ${DEFAULT_AGENT_PRESET} 模式`);
+    }
+
+    const modelSelection = state.currentModelSelection || getSettingsModelSelection();
+    if (modelSelection.model) {
+      const selectedModel = await dshClient.selectModel({
         sessionId,
-        provider: getSelectedModelProvider(),
-        model: state.settings.model,
+        ...modelSelection,
       });
-      state.currentRuntimeModel = state.settings.model;
+      state.currentModelSelection = selectedModel?.selected || modelSelection;
+      state.currentRuntimeModel = state.currentModelSelection.model;
     }
 
     await refreshThreads();
@@ -1138,6 +1531,14 @@ ipcMain.handle("dsh:sendMessage", async (_event, payload) => {
   }
 
   const sid = state.activeThreadId;
+  const turnCwd = state.activeThread?.cwd || state.settings.cwd || process.cwd();
+  const turnOutputDir = resolveOutputDir(turnCwd, state.settings.defaultOutputDir);
+  activeOutputCapture = {
+    threadId: sid,
+    outputDir: turnOutputDir,
+    before: await scanOutputFiles(turnOutputDir),
+  };
+  state.lastGeneratedFiles = null;
 
   // Add user message
   state.messages.push({
@@ -1168,6 +1569,7 @@ ipcMain.handle("dsh:sendMessage", async (_event, payload) => {
     });
   } catch (error) {
     console.error("[main] Failed to send prompt:", error);
+    if (activeOutputCapture?.threadId === sid) activeOutputCapture = null;
     state.error = error.message;
     state.busy = false;
     state.activeDraft = null;
@@ -1192,22 +1594,99 @@ ipcMain.handle("dsh:stopMessage", async () => {
   return state;
 });
 
-ipcMain.handle("dsh:switchSessionModel", async (_event, model) => {
-  state.settings.model = model;
-  state.currentRuntimeModel = model;
+ipcMain.handle("dsh:refreshModelCatalog", async () => refreshDshModelCatalog());
 
-  if (dshClient && state.activeThreadId) {
-    try {
-      await dshClient.selectModel({
-        sessionId: state.activeThreadId,
-        provider: getSelectedModelProvider(),
-        model,
-      });
-    } catch (err) {
-      console.warn("[main] Failed to switch session model:", err);
-    }
+ipcMain.handle("dsh:selectSessionModel", async (_event, selection) => {
+  if (!dshClient) throw new Error("DSH 后端尚未就绪，无法切换模型");
+  if (state.busy) throw new Error("当前任务运行中，暂时不能切换模型");
+
+  const provider = typeof selection?.provider === "string" ? selection.provider.trim() : "";
+  const model = typeof selection?.model === "string" ? selection.model.trim() : "";
+  const reasoningEffort = typeof selection?.reasoningEffort === "string" ? selection.reasoningEffort.trim() : "";
+  if (!provider || !model) throw new Error("请选择有效的模型和 Provider");
+
+  const requestedSelection = {
+    provider,
+    model,
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+  };
+  const sessionId = state.activeThreadId;
+  let acceptedSelection = requestedSelection;
+
+  if (sessionId) {
+    const result = await dshClient.selectModel({ sessionId, ...requestedSelection });
+    acceptedSelection = result?.selected;
+    if (!acceptedSelection) throw new Error("DSH 未确认模型切换");
+  } else if (provider !== getSelectedModelProvider()) {
+    throw new Error("新对话的模型必须来自当前已配置的 Provider");
   }
 
+  if (state.activeThreadId === sessionId) {
+    state.currentModelSelection = acceptedSelection;
+    state.currentRuntimeModel = acceptedSelection.model;
+  }
+
+  // Keep the next blank conversation aligned with the composer selection
+  // without reconfiguring DSH's providers or refreshing credentials.
+  if (provider === getSelectedModelProvider()) {
+    const isAccountRoute = provider === "deepseek-account";
+    const settings = {
+      ...state.settings,
+      model: acceptedSelection.model,
+      reasoningEffort: acceptedSelection.reasoningEffort || "",
+      ...(isAccountRoute
+        ? { accountModel: acceptedSelection.model }
+        : {
+          apiModel: acceptedSelection.model,
+          apiModelsByProvider: {
+            ...state.settings.apiModelsByProvider,
+            [state.settings.apiProvider]: acceptedSelection.model,
+          },
+        }),
+    };
+    state.settings = normalizeSettings(settings);
+    await saveSettings(state.settings);
+  }
+
+  broadcastState();
+  return state;
+});
+
+ipcMain.handle("dsh:setPermissionPreset", async (_event, preset) => {
+  if (!dshClient) throw new Error("DSH 后端尚未就绪，无法切换权限");
+  if (!SUPPORTED_PERMISSION_PRESETS.has(preset)) throw new Error("不支持的 DSH 权限预设");
+  if (state.busy) throw new Error("当前任务运行中，暂时不能切换权限");
+
+  const catalog = await dshClient.getPermissionPresetCatalog();
+  const sessionId = state.activeThreadId;
+  const options = sessionId ? catalog?.options : catalog?.defaultOptions;
+  if (!options?.some((option) => option.value === preset)) {
+    throw new Error(`当前 DSH 不提供 ${preset} 权限预设`);
+  }
+
+  if (sessionId) {
+    const result = await dshClient.executeSessionCommand(sessionId, `/permission ${preset}`);
+    if (!result) throw new Error("当前 DSH 会话没有注册 /permission 命令");
+    if (result.result?.kind === "error") {
+      throw new Error(result.result.text || "DSH 拒绝切换当前会话权限");
+    }
+    const projections = await dshClient.getProjections(sessionId);
+    const confirmedPreset = projections?.values?.permissions?.currentValue;
+    if (confirmedPreset !== preset) {
+      throw new Error(`DSH 未确认当前会话权限已切换为 ${preset}`);
+    }
+    if (state.activeThreadId === sessionId) state.currentPermissionPreset = confirmedPreset;
+  } else {
+    await dshClient.mutateSettings({
+      namespace: "permission",
+      operations: [{ op: "set", path: ["defaultPreset"], value: preset }],
+    });
+    state.settings = { ...state.settings, permissionDefaultPreset: preset };
+    state.permissionDefaultPreset = preset;
+    await saveSettings(state.settings);
+  }
+
+  state.permissionPresets = getSupportedPermissionPresets(catalog.options);
   broadcastState();
   return state;
 });
@@ -1303,10 +1782,12 @@ ipcMain.handle("dsh:signOutAccount", async () => {
   state.account = await dshClient.signOutAccount(getAccountClientMetadata());
   accountLoginAttemptId = null;
   stopAccountPolling();
-  if (state.activeThreadId) {
+  const provider = getSelectedModelProvider();
+  const canSelectModel = provider !== "deepseek-account" && (provider !== "deepseek-official" || hasDeepSeekApiKey());
+  if (state.activeThreadId && canSelectModel) {
     await dshClient.selectModel({
       sessionId: state.activeThreadId,
-      provider: getSelectedModelProvider(),
+      provider,
       model: state.settings.model,
     });
   }
@@ -1317,24 +1798,36 @@ ipcMain.handle("dsh:signOutAccount", async () => {
 ipcMain.handle("dsh:updateSettings", async (_event, nextSettings) => {
   const previousSettings = { ...state.settings };
   const updatedSettings = normalizeSettings({ ...state.settings, ...nextSettings });
+  if (dshClient && updatedSettings.authMode === "account" && previousSettings.authMode !== "account" && state.account?.status === "credential-stored") {
+    await dshClient.initializeAccountDefaultModel();
+  }
   await configureDshProvider(updatedSettings);
   await configureDshPermissionDefault(updatedSettings);
   state.settings = { ...updatedSettings, apiKey: "" };
   await saveSettings(state.settings);
   await refreshProviderCredentialStatus();
+  state.currentModelSelection = getSettingsModelSelection();
+  state.currentRuntimeModel = state.currentModelSelection.model;
+  void refreshDshModelCatalog().catch((error) => {
+    console.warn("[main] Failed to refresh DSH model catalog after settings update:", error);
+  });
 
-  if (dshClient && state.activeThreadId && state.settings.model && (
+  const canSelectActiveModel = state.settings.authMode !== "account" || state.account?.status === "credential-stored";
+  if (dshClient && state.activeThreadId && state.settings.model && canSelectActiveModel && (
     previousSettings.model !== state.settings.model ||
+    previousSettings.authMode !== state.settings.authMode ||
     previousSettings.apiProvider !== state.settings.apiProvider ||
     previousSettings.apiBaseUrl !== state.settings.apiBaseUrl ||
     previousSettings.apiKey !== updatedSettings.apiKey
   )) {
-    await dshClient.selectModel({
+    const selectedModel = await dshClient.selectModel({
       sessionId: state.activeThreadId,
       provider: getSelectedModelProvider(),
       model: state.settings.model,
+      ...(state.settings.reasoningEffort ? { reasoningEffort: state.settings.reasoningEffort } : {}),
     });
-    state.currentRuntimeModel = state.settings.model;
+    state.currentModelSelection = selectedModel?.selected || getSettingsModelSelection();
+    state.currentRuntimeModel = state.currentModelSelection.model;
   }
 
   broadcastState();
@@ -1491,6 +1984,15 @@ ipcMain.handle("dsh:openExternal", async (_event, targetUrl) => {
   if (targetUrl) {
     await shell.openExternal(targetUrl);
   }
+});
+
+ipcMain.handle("dsh:openOutputDirectory", async () => {
+  const cwd = state.activeThread?.cwd || state.settings.cwd || process.cwd();
+  const outputDir = resolveOutputDir(cwd, state.settings.defaultOutputDir);
+  await fs.mkdir(outputDir, { recursive: true });
+  const error = await shell.openPath(outputDir);
+  if (error) throw new Error(`无法打开输出目录：${error}`);
+  return outputDir;
 });
 
 ipcMain.handle("dsh:registerSkillFile", async () => {

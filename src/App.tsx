@@ -104,12 +104,38 @@ function withDisplayModel(appState: DshAppState): DshAppState["settings"] {
   };
 }
 
+function resolveAuthMode(settings: DshAppState["settings"], appState: DshAppState | null): "api" | "account" {
+  if (settings.authMode === "api" || settings.authMode === "account") return settings.authMode;
+  const provider = settings.apiProvider || "deepseek";
+  if (provider !== "deepseek") return "api";
+  if (appState?.providerCredentialStatus?.deepseek?.configured) return "api";
+  return appState?.account?.status === "credential-stored" ? "account" : "api";
+}
+
 const EMPTY_MESSAGES: DshChatMessage[] = [];
+
+const PERMISSION_PRESET_LABELS: Record<string, string> = {
+  "read-only": "仅可查看",
+  "workspace-write": "工作区内修改",
+  "danger-full-access": "完全权限",
+};
+
+const PERMISSION_PRESET_DESCRIPTIONS: Record<string, string> = {
+  "read-only": "可以读取和分析，不会创建、编辑或删除文件。",
+  "workspace-write": "可以在当前工作区内读写；访问工作区外的位置仍受 DSH 授权策略控制。",
+  "danger-full-access": "不受工作区沙箱限制，并且不会弹出一般操作审批。仅在确有需要时启用。",
+};
+
+const PERMISSION_PRESET_ORDER = ["read-only", "workspace-write", "danger-full-access"];
+
+function permissionPresetLabel(value: string | null | undefined): string {
+  return value ? (PERMISSION_PRESET_LABELS[value] || "自定义权限") : "加载权限…";
+}
 
 const PROVIDER_PRESET_MODELS: Record<string, Array<{ id: string; label: string; desc: string }>> = {
   deepseek: [
-    { id: "deepseek-flash", label: "deepseek-flash", desc: "DeepSeek-V4.1 Flash 最新版，原生视觉理解" },
-    { id: "deepseek-v4-pro", label: "deepseek-v4-pro", desc: "官方兼容 ID，当前路由到 V4.1 Flash" },
+    { id: "deepseek-flash", label: "deepseek-flash", desc: "DSH 默认模型，支持文本与图片" },
+    { id: "deepseek-v4-pro", label: "deepseek-v4-pro", desc: "DeepSeek V4 Pro 文本模型 ID" },
   ],
   openai: [
     { id: "gpt-5.5", label: "gpt-5.5", desc: "GPT-5.5 最新旗舰" },
@@ -132,6 +158,101 @@ const PROVIDER_PRESET_MODELS: Record<string, Array<{ id: string; label: string; 
   ],
 };
 
+function getProviderPresetModels(provider: DshAppState["settings"]["apiProvider"]): string[] {
+  return (PROVIDER_PRESET_MODELS[provider] || PROVIDER_PRESET_MODELS.deepseek).map((model) => model.id);
+}
+
+function getConfiguredProviderModels(
+  settings: DshAppState["settings"],
+  provider: DshAppState["settings"]["apiProvider"] = settings.apiProvider,
+): string[] {
+  const saved = settings.customModelsByProvider?.[provider];
+  if (Array.isArray(saved) && saved.length > 0) return saved;
+  if (provider === settings.apiProvider && Array.isArray(settings.customModels) && settings.customModels.length > 0) {
+    return settings.customModels;
+  }
+  return getProviderPresetModels(provider);
+}
+
+function makeSettingsDraft(appState: DshAppState): DshAppState["settings"] {
+  const settings = withDisplayModel(appState);
+  const authMode = resolveAuthMode(settings, appState);
+  const accountPresets = getProviderPresetModels("deepseek");
+  const accountModel = authMode === "account" && settings.authMode === "auto" && accountPresets.includes(settings.model)
+    ? settings.model
+    : settings.accountModel || (accountPresets.includes(settings.model) ? settings.model : accountPresets[0]);
+  const apiModel = settings.apiModel || settings.apiModelsByProvider?.[settings.apiProvider] || settings.model;
+  const customModelsByProvider = {
+    ...settings.customModelsByProvider,
+    [settings.apiProvider]: getConfiguredProviderModels(settings),
+  };
+
+  return {
+    ...settings,
+    authMode,
+    accountModel,
+    apiModel,
+    model: authMode === "account" ? accountModel : apiModel,
+    customModels: customModelsByProvider[settings.apiProvider] || [],
+    customModelsByProvider,
+  };
+}
+
+function reactNodeText(node: React.ReactNode): string {
+  return React.Children.toArray(node).map((child) => {
+    if (typeof child === "string" || typeof child === "number") return String(child);
+    if (React.isValidElement<{ children?: React.ReactNode }>(child)) return reactNodeText(child.props.children);
+    return "";
+  }).join("");
+}
+
+function requestOpenOutputDirectory() {
+  if (!window.dshDesktop?.openOutputDirectory) {
+    window.alert("请在桌面版深小统中打开输出目录。");
+    return;
+  }
+  void window.dshDesktop.openOutputDirectory().catch((error: unknown) => {
+    console.error("Failed to open the output directory:", error);
+    window.alert(error instanceof Error ? error.message : "无法打开输出目录。");
+  });
+}
+
+function isOutputDirectoryActionLabel(node: React.ReactNode): boolean {
+  return /^打开输出目录[：:]?$/.test(reactNodeText(node).trim());
+}
+
+function isLocalOutputArtifactLink(href?: string): boolean {
+  if (!href) return false;
+  try {
+    const url = new URL(href, window.location.origin);
+    const pathName = decodeURIComponent(url.pathname);
+    const isLoopbackHost = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname.toLowerCase());
+    return (url.origin === window.location.origin || isLoopbackHost) && /^\/output(?:\/|$)/i.test(pathName);
+  } catch {
+    return false;
+  }
+}
+
+function OutputDirectoryButton({ className = "message-output-dir-action" }: { className?: string }) {
+  return (
+    <button type="button" className={className} onClick={requestOpenOutputDirectory} title="打开当前对话的输出目录">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+        <path d="M3 10h18" />
+      </svg>
+      打开输出目录
+    </button>
+  );
+}
+
+function OutputDirectoryAction() {
+  return (
+    <div className="message-output-dir-action-wrap">
+      <OutputDirectoryButton />
+    </div>
+  );
+}
+
 function MessageBody({ role, text }: { role: DshChatMessage["role"]; text: string }) {
   const safeText = text ?? "";
   if (role === "user") {
@@ -143,7 +264,10 @@ function MessageBody({ role, text }: { role: DshChatMessage["role"]; text: strin
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          p: ({ children }) => <p>{children}</p>,
+          p: ({ children }) => {
+            if (isOutputDirectoryActionLabel(children)) return <OutputDirectoryAction />;
+            return <p>{children}</p>;
+          },
           ul: ({ children }) => <ul>{children}</ul>,
           ol: ({ children }) => <ol>{children}</ol>,
           li: ({ children }) => <li>{children}</li>,
@@ -165,25 +289,55 @@ function MessageBody({ role, text }: { role: DshChatMessage["role"]; text: strin
           },
           pre: ({ children }) => <pre className="code-block">{children}</pre>,
           blockquote: ({ children }) => <blockquote>{children}</blockquote>,
-          h1: ({ children }) => <h1>{children}</h1>,
-          h2: ({ children }) => <h2>{children}</h2>,
-          h3: ({ children }) => <h3>{children}</h3>,
+          h1: ({ children }) => isOutputDirectoryActionLabel(children) ? <OutputDirectoryAction /> : <h1>{children}</h1>,
+          h2: ({ children }) => isOutputDirectoryActionLabel(children) ? <OutputDirectoryAction /> : <h2>{children}</h2>,
+          h3: ({ children }) => isOutputDirectoryActionLabel(children) ? <OutputDirectoryAction /> : <h3>{children}</h3>,
           hr: () => <hr />,
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-              onClick={(e) => {
-                if (href && window.dshDesktop?.openExternal) {
-                  e.preventDefault();
-                  void window.dshDesktop.openExternal(href);
-                }
-              }}
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) => {
+            if (isLocalOutputArtifactLink(href)) {
+              return (
+                <span className="message-output-file-link">
+                  <a
+                    className="message-output-file-name"
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => {
+                      if (href && window.dshDesktop?.openExternal) {
+                        e.preventDefault();
+                        void window.dshDesktop.openExternal(href);
+                      }
+                    }}
+                  >
+                    {children}
+                  </a>
+                  <OutputDirectoryButton className="message-output-dir-action message-output-dir-inline-action" />
+                </span>
+              );
+            }
+
+            return (
+              <a
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => {
+                  const linkText = reactNodeText(children).trim();
+                  if (linkText.includes("打开输出目录")) {
+                    e.preventDefault();
+                    requestOpenOutputDirectory();
+                    return;
+                  }
+                  if (href && window.dshDesktop?.openExternal) {
+                    e.preventDefault();
+                    void window.dshDesktop.openExternal(href);
+                  }
+                }}
+              >
+                {children}
+              </a>
+            );
+          },
           table: ({ children }) => (
             <div className="table-wrap">
               <table>{children}</table>
@@ -332,6 +486,7 @@ const BUILTIN_SKILL_START_PROMPTS: Record<string, string> = {
 
 function extractDigestItems(text: string): DigestItem[] {
   if (!text) return [];
+  const isPlaceholderTitle = (title: string) => /^(?:文章完整标题|完整标题|文章标题|标题|示例标题|新闻标题|待补(?:充)?)(?:[：:]?\.{3}|…)?$/u.test(title.trim());
 
   // 1. Try JSON block parsing
   const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/\[\s*\{[\s\S]*\}\s*\]/);
@@ -339,11 +494,21 @@ function extractDigestItems(text: string): DigestItem[] {
     try {
       const jsonStr = jsonMatch[1] || jsonMatch[0];
       const parsed = JSON.parse(jsonStr);
-      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].title) {
-        return parsed.map((item: any, idx: number) => ({
+      const validItems = Array.isArray(parsed)
+        ? parsed.filter((item: any) => {
+          const title = String(item?.title || "").trim();
+          const organization = item?.organization || item?.unit || item?.source || item?.site;
+          const publishTime = item?.publish_time || item?.date || item?.time;
+          const summary = item?.summary || item?.desc || item?.content;
+          const link = item?.link || item?.url;
+          return title && !isPlaceholderTitle(title) && organization && publishTime && summary && link;
+        })
+        : [];
+      if (validItems.length > 0) {
+        return validItems.map((item: any, idx: number) => ({
           id: item.link || item.url || `${item.title}_${idx}`,
           title: item.title || item.name || "未命名动态",
-          organization: item.organization || item.unit || item.source || item.site || "统计局",
+          organization: item.organization || item.unit || item.source || item.site || "未注明发布单位",
           publish_time: item.publish_time || item.date || item.time || "",
           summary: item.summary || item.desc || item.content || "",
           link: item.link || item.url || "",
@@ -355,88 +520,38 @@ function extractDigestItems(text: string): DigestItem[] {
     }
   }
 
-  // 2. Try parsing Markdown articles with book titles 《...》
+  // 2. Parse only complete, explicitly labeled article records. A report may
+  // cite titles in prose or tables; those citations are not selectable items.
   const items: DigestItem[] = [];
-  const bookTitleRegex = /《([^》]+)》\s*(?:[（(]([^）)]+)[）)])?/g;
-  let match: RegExpExecArray | null;
+  const plainText = text.replace(/```[\s\S]*?```/g, "");
+  const titleRegex = /^\s*(?:[-*]\s*)?(?:\*\*)?(?:标题|Title)(?:\*\*)?\s*[:：]\s*(.+?)\s*(?:\*\*)?\s*$/gim;
+  const titleMatches = [...plainText.matchAll(titleRegex)];
 
-  while ((match = bookTitleRegex.exec(text)) !== null) {
-    const rawTitle = match[1].trim();
-    if (rawTitle.includes("info_digest_html") || rawTitle.includes("weekly_report")) {
-      continue;
-    }
-    const pubTime = match[2]?.trim() || "";
+  for (const [index, titleMatch] of titleMatches.entries()) {
+    const rawTitle = titleMatch[1].trim().replace(/^["'《]|["'》]$/g, "").replace(/\*+$/g, "").trim();
+    if (!rawTitle || isPlaceholderTitle(rawTitle) || rawTitle.includes("info_digest_html") || rawTitle.includes("weekly_report")) continue;
 
-    const restText = text.slice(match.index + match[0].length);
-    const nextMatch = restText.search(/《[^》]+》|###|\n---\n/);
-    const block = nextMatch !== -1 ? restText.slice(0, nextMatch) : restText;
+    const blockStart = (titleMatch.index || 0) + titleMatch[0].length;
+    const nextTitleStart = titleMatches[index + 1]?.index ?? plainText.length;
+    const recordText = plainText.slice(blockStart, nextTitleStart);
+    const separatorIndex = recordText.search(/^\s*---+\s*$/m);
+    const block = separatorIndex >= 0 ? recordText.slice(0, separatorIndex) : recordText;
 
-    let summary = "";
-    const summaryMatch = block.match(/(?:核心内容|主要内容|摘要|简介|内容)[:：]\s*([^\n]+)/);
-    if (summaryMatch) {
-      summary = summaryMatch[1].trim();
-    } else {
-      const firstLine = block.split("\n").map(l => l.trim()).find(l => l.length > 5 && !l.startsWith("关联度") && !l.startsWith("来源") && !l.startsWith("附注"));
-      summary = firstLine || "";
-    }
+    const organization = block.match(/^\s*(?:单位|发布单位|来源)[:：]\s*([^\n]+)$/im)?.[1]?.trim() || "";
+    const publishTime = block.match(/^\s*(?:时间|发布日期|发布时间|日期)[:：]\s*([^\n]+)$/im)?.[1]?.trim() || "";
+    const summary = block.match(/^\s*(?:总结|摘要|简介|核心内容|主要内容)[:：]\s*([^\n]+)$/im)?.[1]?.trim() || "";
+    const linkMatch = block.match(/^\s*(?:链接|原文链接|文章链接)[:：]\s*(?:\[[^\]]*\]\()?((?:https?:\/\/)[^\s)\]<>]+)/im);
+    const link = linkMatch?.[1]?.replace(/[.,，。；;]+$/u, "") || "";
 
-    const linkMatch = block.match(/(https?:\/\/[^\s)\\]]+)/);
-    const link = linkMatch ? linkMatch[1] : "";
-
-    const orgMatch = block.match(/(?:来源|单位|发布方)[:：]\s*([^\n]+)/);
-    const organization = orgMatch ? orgMatch[1].trim() : "国家统计局";
+    // These fields must belong to the same record; nearby citations elsewhere
+    // in the answer must not promote an unrelated title into a selectable item.
+    if (!organization || !publishTime || !summary || !link) continue;
 
     items.push({
-      id: link || `${rawTitle}_${items.length}`,
+      id: link,
       title: rawTitle,
       organization,
-      publish_time: pubTime,
-      summary,
-      link,
-      category: "工作动态",
-    });
-  }
-
-  // 3. Try parsing text structured with "标题[:：]"
-  const titleRegex = /(?:标题|Title)[:：]\s*([^\n]+)/g;
-  let tMatch: RegExpExecArray | null;
-
-  while ((tMatch = titleRegex.exec(text)) !== null) {
-    const rawTitle = tMatch[1].trim().replace(/^["'《]|["'》]$/g, "");
-    if (!rawTitle || rawTitle.includes("info_digest_html") || rawTitle.includes("weekly_report")) {
-      continue;
-    }
-
-    const restText = text.slice(tMatch.index + tMatch[0].length);
-    const nextMatch = restText.search(/(?:标题|Title)[:：]|###|\n---\n/);
-    const block = nextMatch !== -1 ? restText.slice(0, nextMatch) : restText;
-
-    let time = "";
-    const timeMatch = block.match(/(?:时间|发布时间|日期)[:：]\s*([^\n]+)/);
-    if (timeMatch) time = timeMatch[1].trim();
-
-    let summary = "";
-    const summaryMatch = block.match(/(?:核心内容|主要内容|摘要|简介|内容|关键词)[:：]\s*([^\n]+)/);
-    if (summaryMatch) {
-      summary = summaryMatch[1].trim();
-    } else {
-      const firstLine = block.split("\n").map(l => l.trim()).find(l => l.length > 5 && !l.startsWith("链接") && !l.startsWith("来源"));
-      summary = firstLine || "";
-    }
-
-    let link = "";
-    const linkMatch = block.match(/(https?:\/\/[^\s)\\]]+)/);
-    if (linkMatch) link = linkMatch[1];
-
-    let organization = "国家统计局";
-    const orgMatch = block.match(/(?:来源|单位|发布方)[:：]\s*([^\n]+)/);
-    if (orgMatch) organization = orgMatch[1].trim();
-
-    items.push({
-      id: link || `${rawTitle}_${items.length}`,
-      title: rawTitle,
-      organization,
-      publish_time: time,
+      publish_time: publishTime,
       summary,
       link,
       category: "工作动态",
@@ -444,56 +559,27 @@ function extractDigestItems(text: string): DigestItem[] {
   }
 
   if (items.length > 0) {
-    return items;
+    return [...new Map(items.map((item) => [item.id, item])).values()];
   }
 
   return [];
 }
 
-function CheckableItemSection({
-  items,
-  selectedMap,
-  onToggleItem,
-  onToggleAll,
-}: {
-  items: DigestItem[];
-  selectedMap: Record<string, DigestItem>;
-  onToggleItem: (item: DigestItem) => void;
-  onToggleAll: (items: DigestItem[]) => void;
-}) {
+function DigestItemSection({ items }: { items: DigestItem[] }) {
   if (!items || items.length === 0) return null;
-  const allSelected = items.every((it) => Boolean(selectedMap[it.id]));
 
   return (
     <div className="digest-items-container">
       <div className="digest-items-header">
         <h4>
-          <span>📌</span> 检索提取条目 ({items.length} 条动态可选)
+          <span>📌</span> 检索提取条目 ({items.length} 条)
         </h4>
-        <button
-          type="button"
-          className="digest-items-select-all"
-          onClick={() => onToggleAll(items)}
-        >
-          {allSelected ? "取消全选" : "全选本组"}
-        </button>
       </div>
 
       <div className="digest-items-grid">
         {items.map((item) => {
-          const isChecked = Boolean(selectedMap[item.id]);
           return (
-            <div
-              key={item.id}
-              className={`digest-item-row ${isChecked ? "selected" : ""}`}
-              onClick={() => onToggleItem(item)}
-            >
-              <input
-                type="checkbox"
-                className="digest-checkbox"
-                checked={isChecked}
-                onChange={() => {}}
-              />
+            <div key={item.id} className="digest-item-row">
               <div className="digest-item-content">
                 <div className="digest-item-title-row">
                   <span className="digest-item-title">{item.title}</span>
@@ -520,33 +606,38 @@ function formatFileSize(size?: number): string {
 }
 
 function StreamActivityGlyph({ activity }: { activity: DshStreamActivity }) {
-  const isBash = activity.label === "Bash";
-  const isRead = activity.label === "Read";
-  const isBrowse = activity.label === "Browse";
+  const toolName = (activity.toolName || activity.label).toLowerCase();
+  const isBash = ["bash", "pwsh"].includes(toolName);
+  const isRead = ["read", "read_image", "web_fetch", "read_file"].includes(toolName);
+  const isSearch = ["grep", "glob", "web_search", "search"].includes(toolName);
+  const isFileEdit = ["edit", "write"].includes(toolName);
+  const isCode = ["code", "run_code"].includes(toolName) || toolName.startsWith("terminal_");
   const isSkillView = activity.label === "Skill View" || activity.label === "技能视图";
   const isPlan = activity.label === "Plan" || activity.label === "计划";
   const isThink = activity.kind === "thinking" || activity.label === "Think";
 
   return (
     <span className="stream-activity-glyph" aria-hidden="true">
-      <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1">
         {isThink ? (
           <>
-            <path d="M6.1 8.3a3.2 3.2 0 1 1 5.8 0c-.6.7-.9 1.4-1 2.5H7.1c-.1-1.1-.4-1.8-1-2.5Z" />
-            <path d="M7.3 12.2h3.4M7.7 14.2h2.6" />
+            <path d="M10.7554 5.24466C13.9891 8.4783 15.3769 12.3333 13.8552 13.8551C12.3335 15.3768 8.4785 13.989 5.24478 10.7553C2.01111 7.52165 0.623307 3.66664 2.14504 2.14491C3.66676 0.623189 7.52178 2.01099 10.7554 5.24466Z" />
+            <path d="M10.7554 10.7553C7.52178 13.989 3.66676 15.3768 2.14504 13.8551C0.623307 12.3333 2.01111 8.4783 5.24478 5.24466C8.4785 2.01099 12.3335 0.623189 13.8552 2.14491C15.3769 3.66664 13.9891 7.52165 10.7554 10.7553Z" />
+            <circle cx="8.0024" cy="8.00025" r="0.95626" fill="currentColor" stroke="none" />
           </>
         ) : isSkillView ? (
           <>
-            <path d="m10.8 2.4.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" />
-            <path d="m5.2 8.6.55 1.45 1.45.55-1.45.55-.55 1.45-.55-1.45-1.45-.55 1.45-.55.55-1.45Z" />
-            <path d="m8.5 13 2.6-2.6" />
+            <path d="M5.875 3C5.875 6.33333 7.54167 8 10.875 8C7.54167 8 5.875 9.66667 5.875 13C5.875 9.66667 4.20833 8 0.875 8C4.20833 8 5.875 6.33333 5.875 3Z" />
+            <path d="M12.375 1.55823C12.375 3.39156 13.2917 4.30823 15.125 4.30823C13.2917 4.30823 12.375 5.22489 12.375 7.05823C12.375 5.22489 11.4583 4.30823 9.625 4.30823C11.4583 4.30823 12.375 3.39156 12.375 1.55823Z" />
+            <path d="M12.375 10.4418C12.375 11.7751 13.0417 12.4418 14.375 12.4418C13.0417 12.4418 12.375 13.1084 12.375 14.4418C12.375 13.1084 11.7083 12.4418 10.375 12.4418C11.7083 12.4418 12.375 11.7751 12.375 10.4418Z" />
           </>
         ) : isPlan ? (
           <>
-            <rect x="4" y="3.5" width="10" height="12" rx="1.5" />
-            <path d="M7 3.5v-1h4v1" />
-            <path d="m6.2 7.5.9.9 1.5-1.7M10 7.5h2.2" />
-            <path d="m6.2 11 .9.9 1.5-1.7M10 11h2.2" />
+            <path d="M4.9375 5.90295H11.0625" />
+            <path d="M4.9375 9.02991H8.27841" />
+            <path d="M12.5 1.32617C13.3039 1.32617 14 1.95171 14 2.77637V7.61328L13 8.68164V2.77637C13 2.55186 12.8007 2.32617 12.5 2.32617H3.5C3.1993 2.32617 3 2.55186 3 2.77637V13.2246C3.00044 13.4489 3.19963 13.6738 3.5 13.6738H8.32812L7.39258 14.6738H3.5C2.69637 14.6738 2.00042 14.0489 2 13.2246V2.77637C2 1.95171 2.69613 1.32617 3.5 1.32617H12.5Z" fill="currentColor" stroke="none" />
+            <path d="M8.97212 14.3693C9.17511 14.5723 9.37811 14.7753 9.5811 14.9783C9.67012 14.8953 9.75914 14.8123 9.84815 14.7293C11.4505 13.2352 13.0528 11.7411 14.6551 10.247C14.7441 10.164 14.8331 10.081 14.9221 9.99803C14.5989 9.6748 14.2756 9.35157 13.9524 9.02834C13.8694 9.11736 13.7864 9.20637 13.7034 9.29539C12.2093 10.8977 10.7152 12.5 9.22113 14.1023C9.13813 14.1913 9.05513 14.2803 8.97212 14.3693Z" fill="currentColor" stroke="none" />
+            <path d="M11.6323 13.7841C11.6323 14.0395 11.6323 14.295 11.6323 14.5504C11.6812 14.5523 11.7301 14.5543 11.779 14.5562C12.659 14.5913 13.539 14.6263 14.419 14.6614C14.4679 14.6633 14.5168 14.6653 14.5657 14.6672C14.5657 14.3339 14.5657 14.0006 14.5657 13.6672C14.5168 13.6692 14.4679 13.6711 14.419 13.6731C13.539 13.7081 12.659 13.7432 11.779 13.7783C11.7301 13.7802 11.6812 13.7821 11.6323 13.7841Z" fill="currentColor" stroke="none" />
           </>
         ) : activity.kind === "narrative" ? (
           <>
@@ -560,23 +651,36 @@ function StreamActivityGlyph({ activity }: { activity: DshStreamActivity }) {
           </>
         ) : activity.kind === "error" ? (
           <>
-            <circle cx="9" cy="9" r="6.4" />
-            <path d="M9 5.6v4.2M9 12.6v.1" />
+            <circle cx="8" cy="8" r="6.4" />
+            <path d="M8 4.6v4.2M8 11.6v.1" />
           </>
         ) : isBash ? (
           <>
-            <path d="m4.5 4.4 4.3 4.6-4.3 4.6M10.8 13.6h2.8" />
+            <path d="M3 4L7 8L3 12" />
+            <path d="M9 12H13" />
           </>
         ) : isRead ? (
           <>
-            <rect x="3" y="3" width="12" height="12" rx="1.2" />
-            <path d="m4.2 7.2 6.6 6.6M4.2 4.5l9.3 9.3M7.4 3.8l6.8 6.8" />
+            <path d="M4.9375 5.90295H11.0625" />
+            <path d="M4.9375 9.02991H8.27841" />
+            <path d="M12.5 1.32617C13.3039 1.32617 14 1.95171 14 2.77637V13.2246C13.9996 14.0489 13.3036 14.6738 12.5 14.6738H3.5C2.69637 14.6738 2.00042 14.0489 2 13.2246V2.77637C2 1.95171 2.69613 1.32617 3.5 1.32617H12.5ZM3.5 2.32617C3.1993 2.32617 3 2.55186 3 2.77637V13.2246C3.00044 13.4489 3.19963 13.6738 3.5 13.6738H12.5C12.8004 13.6738 12.9996 13.4489 13 13.2246V2.77637C13 2.55186 12.8007 2.32617 12.5 2.32617H3.5Z" fill="currentColor" stroke="none" />
           </>
-        ) : isBrowse ? (
+        ) : isSearch ? (
           <>
-            <circle cx="9" cy="9" r="6.4" />
-            <circle cx="9" cy="9" r="2" />
-            <path d="M9 1.7v2M9 14.3v2M1.7 9h2M14.3 9h2" />
+            <path d="M6.58727 11.8586C9.55061 11.8586 11.9529 9.45637 11.9529 6.49304C11.9529 3.5297 9.55061 1.12744 6.58727 1.12744C3.62394 1.12744 1.22168 3.5297 1.22168 6.49304C1.22168 9.45637 3.62394 11.8586 6.58727 11.8586Z" />
+            <path d="M10.2991 10.3933L14.7783 14.8725" />
+          </>
+        ) : isFileEdit ? (
+          <>
+            <path d="M8.85596 2.69971H4.19971C3.37141 2.69971 2.69992 3.37146 2.69971 4.19971V11.8003C2.69992 12.6285 3.37141 13.3003 4.19971 13.3003H11.8003C12.6283 13.2999 13.3001 12.6283 13.3003 11.8003V7.89893H14.3003V11.8003C14.3001 13.1806 13.1806 14.2999 11.8003 14.3003H4.19971C2.81913 14.3003 1.69992 13.1808 1.69971 11.8003V4.19971C1.69992 2.81918 2.81913 1.69971 4.19971 1.69971H8.85596V2.69971Z" fill="currentColor" stroke="none" />
+            <path d="M7.7849 8.23878L13.888 2.13574" />
+          </>
+        ) : isCode ? (
+          <>
+            <path d="M6.27612 1.5L4.52612 14.5" />
+            <path d="M11.4739 1.5L9.72388 14.5" />
+            <path d="M2.39868 5.5H14.0681" />
+            <path d="M1.93188 10.5H13.6013" />
           </>
         ) : activity.kind === "subagent" ? (
           <>
@@ -586,26 +690,45 @@ function StreamActivityGlyph({ activity }: { activity: DshStreamActivity }) {
             <path d="m6.5 8.2 4.8-2.4M6.5 9.8l4.8 2.4" />
           </>
         ) : (
-          <rect x="3" y="3" width="12" height="12" rx="1.5" />
+          <path d="M5.875 3C5.875 6.33333 7.54167 8 10.875 8C7.54167 8 5.875 9.66667 5.875 13C5.875 9.66667 4.20833 8 0.875 8C4.20833 8 5.875 6.33333 5.875 3Z" />
         )}
       </svg>
     </span>
   );
 }
 
+function reasoningPreview(text: string, running: boolean): string {
+  const paragraphs = text.split(/\r?\n(?:[\t ]*\r?\n)+/);
+  if (!running) {
+    return (paragraphs[0]?.split(/\r?\n/, 1)[0] || "").replaceAll("**", "").trim();
+  }
+
+  let latestCompletedLine = "";
+  for (const paragraph of paragraphs) {
+    const firstLine = paragraph.split(/\r?\n/, 1)[0] || "";
+    if (paragraph.includes("\n") && firstLine.trim()) latestCompletedLine = firstLine;
+  }
+  return latestCompletedLine.replaceAll("**", "").trim();
+}
+
 function ThinkingActivityRow({ activity, detail }: { activity: DshStreamActivity; detail: string }) {
-  const isComplete = activity.status === "complete";
-  const [expanded, setExpanded] = useState(() => !isComplete);
-  const canToggle = isComplete && Boolean(detail.trim());
+  const isRunning = activity.status === "running";
+  const [expanded, setExpanded] = useState(false);
+  const preview = reasoningPreview(detail, isRunning);
+  const canToggle = Boolean(detail.trim());
 
   return (
-    <div className={`stream-activity-row ${activity.status} thinking${expanded ? " expanded" : " collapsed"}`}>
+    <div
+      className={`stream-activity-row ${activity.status} thinking${expanded ? " expanded" : " collapsed"}`}
+      role="listitem"
+      aria-label={`思考过程${preview ? ` · ${preview}` : ""}`}
+    >
       <button
         type="button"
         className="stream-activity-thinking-toggle"
         disabled={!canToggle}
         aria-expanded={canToggle ? expanded : undefined}
-        aria-label={`${activity.label} · ${detail}`}
+        aria-label={`${activity.label}${preview ? ` · ${preview}` : ""}`}
         onClick={() => {
           if (canToggle) {
             setExpanded((current) => !current);
@@ -613,30 +736,218 @@ function ThinkingActivityRow({ activity, detail }: { activity: DshStreamActivity
         }}
       >
         <StreamActivityGlyph activity={activity} />
-        <span className="stream-activity-label">{activity.label}</span>
-        <span className="stream-activity-separator" aria-hidden="true">·</span>
-        {!isComplete ? (
-          <span className="stream-activity-thinking-detail">{detail}</span>
-        ) : (
-          expanded ? null : <span className="stream-activity-thinking-collapsed">已完成</span>
-        )}
-        {activity.status === "running" ? (
+        <span className="stream-activity-label">思考</span>
+        {preview && !expanded ? (
+          <>
+            <span className="stream-activity-separator" aria-hidden="true">·</span>
+            <span className="stream-activity-thinking-preview" data-streaming={isRunning || undefined}>{preview}</span>
+          </>
+        ) : null}
+        {isRunning ? (
           <span className="stream-activity-state" aria-label="进行中">
             <span className="stream-activity-spinner" aria-hidden="true" />
           </span>
         ) : canToggle ? (
           <span className="stream-activity-thinking-chevron" aria-hidden="true">
             <svg viewBox="0 0 16 16" focusable="false">
-              <path d={expanded ? "m3.5 9.5 4.5-4 4.5 4" : "m3.5 6.5 4.5 4 4.5-4"} />
+              <path d="M4 6L7.29289 9.29289C7.68342 9.68342 8.31658 9.68342 8.70711 9.29289L12 6" />
             </svg>
           </span>
         ) : null}
       </button>
-      {isComplete && expanded ? (
-        <div className="stream-activity-thinking-body">{detail}</div>
+      {expanded ? (
+        <div className="stream-activity-thinking-body">
+          <MessageBody role="assistant" text={detail} />
+        </div>
       ) : null}
     </div>
   );
+}
+
+function toolPresentation(activity: DshStreamActivity, rawInput: string) {
+  const toolName = (activity.toolName || activity.label || "Tool").toLowerCase();
+  const variants: Record<string, "search" | "read" | "bash" | "write" | "edit" | "code" | "others"> = {
+    bash: "bash",
+    pwsh: "bash",
+    read: "read",
+    read_image: "read",
+    web_fetch: "read",
+    web_search: "search",
+    grep: "search",
+    glob: "search",
+    write: "write",
+    edit: "edit",
+    run_code: "code",
+  };
+  const variant = variants[toolName] || "others";
+  const titles: Record<string, string> = {
+    search: "搜索",
+    read: "读取",
+    bash: "运行命令",
+    write: "写入",
+    edit: "编辑",
+    code: "代码",
+    others: "工具调用",
+    grep: "搜索文件内容",
+    glob: "查找文件",
+    web_search: "网页搜索",
+    read_image: "读取图片",
+    ask_user_question: "提问",
+  };
+  let parsed: Record<string, unknown> | null = null;
+  try {
+    const value: unknown = JSON.parse(rawInput);
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      parsed = value as Record<string, unknown>;
+    }
+  } catch {
+    // DSH can retain malformed model arguments as raw text; show its first line.
+  }
+
+  const firstLine = (value: unknown) => typeof value === "string" ? value.split(/\r?\n/, 1)[0].trim() : "";
+  const summaryKeys: Record<string, string[]> = {
+    bash: ["description", "command"],
+    read: ["path", "file_path", "url"],
+    search: ["query", "pattern", "url"],
+    write: ["path", "file_path"],
+    edit: ["path", "file_path"],
+    code: ["description"],
+    others: [],
+  };
+  let summary = "";
+  if (variant === "search" && Array.isArray(parsed?.queries)) {
+    summary = parsed.queries.map(firstLine).filter(Boolean).join(", ");
+  }
+  for (const key of summaryKeys[variant]) {
+    if (!summary && parsed) summary = firstLine(parsed[key]);
+  }
+  if (!summary && parsed) {
+    summary = Object.values(parsed).map(firstLine).find(Boolean) || "";
+  }
+  if (!summary) summary = firstLine(rawInput);
+  if (variant === "others" && toolName !== "tool") {
+    summary = summary ? `${toolName} · ${summary}` : toolName;
+  }
+
+  let input = rawInput;
+  if (parsed) {
+    if ((variant === "bash" || variant === "code") && typeof parsed.command === "string") {
+      input = parsed.command;
+    } else if (variant === "code" && typeof parsed.code === "string") {
+      input = parsed.code;
+    } else {
+      input = JSON.stringify(parsed, null, 2);
+    }
+  }
+
+  return {
+    title: titles[toolName] || titles[variant],
+    summary,
+    input: input.trim() ? input : "",
+    output: activity.output || "",
+  };
+}
+
+function ToolActivityRow({ activity, detail, duration }: {
+  activity: DshStreamActivity;
+  detail: string;
+  duration: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const presentation = toolPresentation(activity, detail);
+  const isRunning = activity.status === "running";
+  const isError = activity.status === "error";
+  const expandable = Boolean(presentation.input || presentation.output);
+
+  return (
+    <div
+      className={`stream-activity-row tool ${activity.status}${expanded ? " expanded" : " collapsed"}`}
+      role="listitem"
+      aria-label={`${presentation.title}${presentation.summary ? ` · ${presentation.summary}` : ""}${duration}`}
+    >
+      <button
+        type="button"
+        className="stream-activity-tool-toggle"
+        disabled={!expandable}
+        aria-expanded={expandable ? expanded : undefined}
+        aria-label={`${presentation.title}${presentation.summary ? ` · ${presentation.summary}` : ""}${expandable ? (expanded ? " · 收起详情" : " · 展开详情") : ""}`}
+        onClick={() => expandable && setExpanded((current) => !current)}
+      >
+        <StreamActivityGlyph activity={activity} />
+        <span className="stream-activity-label">{presentation.title}</span>
+        {presentation.summary ? <span className="stream-activity-separator" aria-hidden="true">·</span> : null}
+        <span className="stream-activity-tool-summary">{presentation.summary}</span>
+        {isRunning ? (
+          <span className="stream-activity-state" aria-label="运行中">
+            <span className="stream-activity-spinner" aria-hidden="true" />
+          </span>
+        ) : isError ? (
+          <span className="stream-activity-tool-error">失败</span>
+        ) : duration ? (
+          <span className="stream-activity-duration">{duration}</span>
+        ) : null}
+        {expandable ? (
+          <span className="stream-activity-thinking-chevron" aria-hidden="true">
+            <svg viewBox="0 0 16 16" focusable="false">
+              <path d="M4 6L7.29289 9.29289C7.68342 9.68342 8.31658 9.68342 8.70711 9.29289L12 6" />
+            </svg>
+          </span>
+        ) : null}
+      </button>
+      {expanded ? (
+        <div className="stream-activity-tool-body">
+          {presentation.input ? (
+            <div className="stream-activity-tool-io">
+              <span className="stream-activity-tool-io-label">输入</span>
+              <pre>{presentation.input}</pre>
+            </div>
+          ) : null}
+          {presentation.output ? (
+            <div className="stream-activity-tool-io">
+              <span className="stream-activity-tool-io-label">输出</span>
+              <pre>{presentation.output}</pre>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function streamActivityProcessTitle(activities: DshStreamActivity[]): string {
+  const categoryFor = (activity: DshStreamActivity): string => {
+    if (activity.kind === "thinking") return "已完成分析";
+    if (activity.kind === "subagent") return "已协调子智能体";
+    if (activity.label === "Plan" || activity.label === "计划") return "更新了计划";
+    if (activity.kind !== "tool") return "";
+
+    const toolName = (activity.toolName || activity.label || "").toLowerCase();
+    if (["read_image", "image", "readimage"].includes(toolName)) return "已读取图片";
+    if (["read", "read_file"].includes(toolName)) return "已读取文件";
+    if (["web_fetch", "browse"].includes(toolName)) return "已访问网页";
+    if (["write", "write_file"].includes(toolName)) return "已写入文件";
+    if (["edit", "patch"].includes(toolName)) return "修改了文件";
+    if (["grep", "glob", "search"].includes(toolName)) return "已搜索代码";
+    if (toolName === "web_search") return "已搜索网页";
+    if (["bash", "pwsh", "shell", "terminal"].includes(toolName)) return "执行了命令";
+    if (["code", "run_code"].includes(toolName)) return "运行了代码";
+    if (toolName === "ask_user_question") return "向用户提出了问题";
+    return "已调用工具";
+  };
+
+  const categories = [...new Set(activities.map(categoryFor).filter(Boolean))].slice(0, 3);
+  if (categories.length === 0) return "已完成工作";
+  if (categories.length === 1) return categories[0];
+
+  const [first = "", ...rest] = categories;
+  const samePrefix = first.startsWith("已");
+  if (categories.length === 2) {
+    const second = rest[0] || "";
+    return `${first}并${samePrefix && second.startsWith("已") ? second.slice(1) : second.charAt(0).toLowerCase() + second.slice(1)}`;
+  }
+
+  const restLabels = rest.map((label) => samePrefix && label.startsWith("已") ? label.slice(1) : label);
+  return `${[first, ...restLabels].join("、")}等`;
 }
 
 function StreamActivityTimeline({
@@ -646,64 +957,99 @@ function StreamActivityTimeline({
   activities: DshStreamActivity[];
   live?: boolean;
 }) {
+  const [expanded, setExpanded] = useState(live);
+  useEffect(() => {
+    setExpanded(live);
+  }, [live]);
+
   const visibleActivities = activities.slice(-80);
   if (visibleActivities.length === 0) return null;
+  const processTitle = live ? "深度求索中" : streamActivityProcessTitle(visibleActivities);
 
   return (
-    <div className={`stream-activity-feed ${live ? "live" : ""}`} role="list" aria-label="智能体活动流" aria-live={live ? "polite" : undefined}>
-      {visibleActivities.map((activity) => {
-        const detail = activity.detail || (
-          activity.status === "running"
-            ? "处理中…"
-            : activity.status === "error"
-              ? "执行失败"
-              : "已完成"
-        );
-        const duration = typeof activity.durationMs === "number"
-          ? ` · ${(activity.durationMs / 1000).toFixed(activity.durationMs < 10_000 ? 1 : 0)}s`
-          : "";
-        const isNarrative = activity.kind === "narrative";
-        const isThinking = activity.kind === "thinking";
+    <section className={`stream-activity-process${expanded ? " expanded" : ""}${live ? " live" : ""}`}>
+      <button
+        type="button"
+        className="stream-activity-process-toggle"
+        aria-expanded={expanded}
+        aria-label={`${processTitle} · ${expanded ? "收起" : "展开"}思考与工具调用`}
+        onClick={() => setExpanded((current) => !current)}
+      >
+        <span className="stream-activity-process-title">{processTitle}</span>
+        <svg className="stream-activity-process-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M4 6L7.29289 9.29289C7.68342 9.68342 8.31658 9.68342 8.70711 9.29289L12 6" />
+        </svg>
+      </button>
+      {expanded ? (
+        <div className={`stream-activity-feed ${live ? "live" : ""}`} role="list" aria-label="智能体活动流" aria-live={live ? "polite" : undefined}>
+          {visibleActivities.map((activity) => {
+            const detail = activity.detail || (
+              activity.kind === "tool" || activity.kind === "thinking"
+                ? ""
+                : activity.status === "running"
+                  ? "处理中…"
+                  : activity.status === "error"
+                    ? "执行失败"
+                    : "已完成"
+            );
+            const duration = typeof activity.durationMs === "number"
+              ? ` · ${(activity.durationMs / 1000).toFixed(activity.durationMs < 10_000 ? 1 : 0)}s`
+              : "";
+            const isNarrative = activity.kind === "narrative";
+            const isThinking = activity.kind === "thinking";
 
-        if (isThinking) {
-          return (
-            <ThinkingActivityRow
-              key={`${activity.id}:${activity.status}`}
-              activity={activity}
-              detail={detail}
-            />
-          );
-        }
+            if (isThinking) {
+              return (
+                <ThinkingActivityRow
+                  key={activity.id}
+                  activity={activity}
+                  detail={detail}
+                />
+              );
+            }
 
-        return (
-          <div
-            key={activity.id}
-            className={`stream-activity-row ${activity.status}${isThinking ? " thinking" : ""}${isNarrative ? " narrative" : ""}`}
-            role="listitem"
-            aria-label={`${activity.label} · ${detail}${duration}`}
-          >
-            <StreamActivityGlyph activity={activity} />
-            {isNarrative ? (
-              <div className="stream-activity-narrative">
-                <MessageBody role="assistant" text={detail} />
+            if (activity.kind === "tool") {
+              return (
+                <ToolActivityRow
+                  key={activity.id}
+                  activity={activity}
+                  detail={detail}
+                  duration={duration}
+                />
+              );
+            }
+
+            return (
+              <div
+                key={activity.id}
+                className={`stream-activity-row ${activity.status}${isNarrative ? " narrative" : ""}`}
+                role="listitem"
+                aria-label={`${activity.label} · ${detail}${duration}`}
+              >
+                <StreamActivityGlyph activity={activity} />
+                {isNarrative ? (
+                  <div className="stream-activity-narrative">
+                    <MessageBody role="assistant" text={detail} />
+                  </div>
+                ) : (
+                  <>
+                    <span className="stream-activity-label">{activity.label}</span>
+                    <span className="stream-activity-separator" aria-hidden="true">·</span>
+                    <span className="stream-activity-detail">{detail}</span>
+                    {duration ? <span className="stream-activity-duration">{duration}</span> : null}
+                    {activity.status === "running" || activity.status === "error" ? (
+                      <span className="stream-activity-state" aria-label={activity.status === "running" ? "进行中" : "失败"}>
+                        {activity.status === "running" ? <span className="stream-activity-spinner" aria-hidden="true" /> : "×"}
+                      </span>
+                    ) : null}
+                  </>
+                )}
               </div>
-            ) : (
-              <>
-                <span className="stream-activity-label">{activity.label}</span>
-                <span className="stream-activity-separator" aria-hidden="true">·</span>
-                <span className="stream-activity-detail">{detail}</span>
-                {duration ? <span className="stream-activity-duration">{duration}</span> : null}
-                {activity.status === "running" || activity.status === "error" ? (
-                  <span className="stream-activity-state" aria-label={activity.status === "running" ? "进行中" : "失败"}>
-                    {activity.status === "running" ? <span className="stream-activity-spinner" aria-hidden="true" /> : "×"}
-                  </span>
-                ) : null}
-              </>
-            )}
-          </div>
-        );
-      })}
-    </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -721,10 +1067,14 @@ function InterruptedTurnDivider() {
 
 function App() {
   const [state, setState] = useState<DshAppState | null>(null);
+  const permissionSelection = state?.activeThreadId
+    ? state.currentPermissionPreset
+    : state?.permissionDefaultPreset || state?.settings.permissionDefaultPreset || "workspace-write";
+  const availablePermissionPresets = state?.permissionPresets || [];
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [bootstrapRetryKey, setBootstrapRetryKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [activeSettingsTab, setActiveSettingsTab] = useState<"runtime" | "chat" | "vision" | "tools">("runtime");
+  const [activeSettingsTab, setActiveSettingsTab] = useState<"runtime" | "chat">("runtime");
   const [draft, setDraft] = useState("");
   const [pendingVoiceTranscript, setPendingVoiceTranscript] = useState<string | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<"idle" | "preparing" | "recording" | "transcribing">("idle");
@@ -763,8 +1113,19 @@ function App() {
     }
   });
   const [isFolderMenuOpen, setIsFolderMenuOpen] = useState(false);
+  const [isPermissionMenuOpen, setIsPermissionMenuOpen] = useState(false);
+  const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
+  const [permissionBusy, setPermissionBusy] = useState(false);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [modelSelectionBusy, setModelSelectionBusy] = useState(false);
+  const [modelCatalogLoading, setModelCatalogLoading] = useState(false);
+  const [modelSelectionError, setModelSelectionError] = useState<string | null>(null);
+  const [permissionConfirmationOpen, setPermissionConfirmationOpen] = useState(false);
+  const [permissionConfirmationAcknowledged, setPermissionConfirmationAcknowledged] = useState(false);
   const [workspaceSelectionLocked, setWorkspaceSelectionLocked] = useState(false);
   const folderMenuRef = useRef<HTMLDivElement>(null);
+  const permissionMenuRef = useRef<HTMLDivElement>(null);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isFolderMenuOpen) return;
@@ -781,39 +1142,45 @@ function App() {
     };
   }, [isFolderMenuOpen]);
 
+  useEffect(() => {
+    if (!isPermissionMenuOpen) return;
+
+    function handleClickOutside(event: MouseEvent) {
+      if (permissionMenuRef.current && !permissionMenuRef.current.contains(event.target as Node)) {
+        setIsPermissionMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isPermissionMenuOpen]);
+
+  useEffect(() => {
+    if (!isModelMenuOpen) return;
+
+    function handleClickOutside(event: MouseEvent) {
+      if (modelMenuRef.current && !modelMenuRef.current.contains(event.target as Node)) {
+        setIsModelMenuOpen(false);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setIsModelMenuOpen(false);
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [isModelMenuOpen]);
+
   const [activeBranch, setActiveBranch] = useState<string | null>(null);
   const [activeMainTab, setActiveMainTab] = useState<"chat" | "skills" | "archive">("chat");
   const [skillsSearchQuery, setSkillsSearchQuery] = useState("");
   const [selectedSkillTag, setSelectedSkillTag] = useState<string | null>(null);
   const [stylePickerSkillName, setStylePickerSkillName] = useState<string | null>(null);
-  const [selectedDigestItems, setSelectedDigestItems] = useState<Record<string, DigestItem>>({});
-
-  function handleToggleDigestItem(item: DigestItem) {
-    setSelectedDigestItems((prev) => {
-      const next = { ...prev };
-      if (next[item.id]) {
-        delete next[item.id];
-      } else {
-        next[item.id] = item;
-      }
-      return next;
-    });
-  }
-
-  function handleToggleAllDigestItems(items: DigestItem[]) {
-    setSelectedDigestItems((prev) => {
-      const next = { ...prev };
-      const allSelected = items.every((it) => Boolean(next[it.id]));
-      if (allSelected) {
-        items.forEach((it) => delete next[it.id]);
-      } else {
-        items.forEach((it) => {
-          next[it.id] = it;
-        });
-      }
-      return next;
-    });
-  }
 
   function isWorkspaceLocked() {
     // 只有在当前会话已经产生真实交互消息或正在生成中时，才锁定工作区选择
@@ -825,48 +1192,6 @@ function App() {
     );
   }
 
-  function handleClearSelectedDigestItems() {
-    setSelectedDigestItems({});
-  }
-
-  const selectedDigestList = useMemo(() => Object.values(selectedDigestItems), [selectedDigestItems]);
-
-  function formatSelectedItemsForPrompt(items: DigestItem[]): string {
-    return items
-      .map((item, idx) => {
-        let line = `${idx + 1}. 《${item.title}》`;
-        if (item.organization) line += `（${item.organization}）`;
-        if (item.publish_time) line += ` [${item.publish_time}]`;
-        if (item.summary) line += `\n   摘要：${item.summary}`;
-        return line;
-      })
-      .join("\n\n");
-  }
-
-  function handleDigestActionBriefing() {
-    if (selectedDigestList.length === 0) return;
-    const itemsText = formatSelectedItemsForPrompt(selectedDigestList);
-    const prompt = `请针对我勾选的这 ${selectedDigestList.length} 条统计/政务动态进行深度分析与核心要点提炼：\n\n${itemsText}`;
-    setDraft(prompt);
-    focusEditor();
-  }
-
-  function handleDigestActionCompare() {
-    if (selectedDigestList.length < 2) return;
-    const itemsText = formatSelectedItemsForPrompt(selectedDigestList);
-    const prompt = `请对我勾选的这 ${selectedDigestList.length} 条统计/政务动态进行交叉对比，梳理出各单位在工作重点、技术路径、建设进度上的异同与值得借鉴的亮点：\n\n${itemsText}`;
-    setDraft(prompt);
-    focusEditor();
-  }
-
-  function handleDigestActionGenerateHtml() {
-    if (selectedDigestList.length === 0) return;
-    handleUseSkillInChat("info_digest_html");
-    const itemsText = formatSelectedItemsForPrompt(selectedDigestList);
-    const prompt = `请根据我勾选的这 ${selectedDigestList.length} 条动态生成 HTML 参阅报表，默认使用极客卡片风：\n\n${itemsText}`;
-    setDraft(prompt);
-    focusEditor();
-  }
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const voiceCaptureRef = useRef<{ recorder: MediaRecorder; stream: MediaStream; chunks: Blob[] } | null>(null);
   const voiceSetupOperationRef = useRef(0);
@@ -1129,17 +1454,17 @@ function App() {
     const normalizedSkill = skillName.replace(/_/g, "-");
     let prompt = "";
     if (normalizedSkill === "info-digest-html") {
-      prompt = `请生成动态信息汇总 HTML 报表，使用内置“${style.label}”风格模版（template_style: ${style.id}）。采集或整理统计、政务和信息化动态，直接在工作区 output/ 目录下生成完整的独立 HTML 文件；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接，并在对话末尾给出 [打开输出目录] 链接。`;
+      prompt = `请生成动态信息汇总 HTML 报表，使用内置“${style.label}”风格模版（template_style: ${style.id}）。采集或整理统计、政务和信息化动态，直接在工作区 output/ 目录下生成完整的独立 HTML 文件；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接。写入后检查文件存在且非空；若未写入或检查失败，明确说明未生成。回复只写核验过的文件名和 output/ 相对路径，不要生成“打开输出目录”超链接；用户可使用工作台的原生目录按钮打开。`;
     } else if (normalizedSkill === "weekly-report") {
-      prompt = `请采集最近 7 天统计信息化、数字化、人工智能和大数据相关动态，使用内置“${style.label}”风格模版（template_style: ${style.id}），生成统计信息化动态周报独立的 HTML 文件并写入工作区 output/ 目录；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接，并在对话末尾给出 [打开输出目录] 链接。`;
+      prompt = `请采集最近 7 天统计信息化、数字化、人工智能和大数据相关动态，使用内置“${style.label}”风格模版（template_style: ${style.id}），生成统计信息化动态周报独立的 HTML 文件并写入工作区 output/ 目录；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接。写入后检查文件存在且非空；若未写入或检查失败，明确说明未生成。回复只写核验过的文件名和 output/ 相对路径，不要生成“打开输出目录”超链接；用户可使用工作台的原生目录按钮打开。`;
     } else if (normalizedSkill === "price-index-gdp-impact") {
-      prompt = `请默认以深圳市为分析对象，分析 CPI、PPI、GDP 平减指数等价格指数对 GDP 各项（消费、投资、净出口及名义/实际 GDP）的影响；优先使用深圳市统计局及深圳市政府官方统计数据，国家和广东省数据只作口径或对照，区分相关性与因果性，并为每个事实附发布单位或网站全称、完整标题和具体原文链接。\n\n【输出要求】：请直接使用内置“${style.label}”风格模版（template_style: ${style.id}），生成完整的可视化独立 HTML 报告文件并写入工作区 output/ 目录（如 output/价格指数×深圳GDP影响速查卡.html）。页面必须包含顶部 KPI 芯片、吸顶章节导航、高密度映射表格、证据分级标签及可点击原文超链接；严格遵守表格自然流排版，严禁使用导致内容遮挡的样式；并在对话最后提供 [打开输出目录] 链接。`;
+      prompt = `请默认以深圳市为分析对象，分析 CPI、PPI、GDP 平减指数等价格指数对 GDP 各项（消费、投资、净出口及名义/实际 GDP）的影响；优先使用深圳市统计局及深圳市政府官方统计数据，国家和广东省数据只作口径或对照，区分相关性与因果性，并为每个事实附发布单位或网站全称、完整标题和具体原文链接。\n\n【输出要求】：请直接使用内置“${style.label}”风格模版（template_style: ${style.id}），生成完整的可视化独立 HTML 报告文件并写入工作区 output/ 目录（如 output/价格指数×深圳GDP影响速查卡.html）。页面必须包含顶部 KPI 芯片、吸顶章节导航、高密度映射表格、证据分级标签及可点击原文超链接；严格遵守表格自然流排版，严禁使用导致内容遮挡的样式。回复中只写明实际生成的文件名和 output/ 相对路径，不要生成“打开输出目录”超链接；用户可使用工作台的原生目录按钮打开。`;
     } else if (normalizedSkill === "source-verification") {
-      prompt = `请核验我接下来提交的文件或链接：确认是否为官方来源、发布日期、发布机构、具体原文链接是否有效，并识别重复、转载和二次改写关系；输出逐项证据和发布单位或网站全称、完整标题、具体原文链接。\n\n【输出要求】：请同时使用内置“${style.label}”风格模版（template_style: ${style.id}），直接在工作区 output/ 目录生成独立的 HTML 证据核验报告文件，包含核验结论 KPI、核验结果明细表、重复转载对照表和完整可点击来源链，并在对话末尾给出 [打开输出目录] 链接。`;
+      prompt = `请核验我接下来提交的文件或链接：确认是否为官方来源、发布日期、发布机构、具体原文链接是否有效，并识别重复、转载和二次改写关系；输出逐项证据和发布单位或网站全称、完整标题、具体原文链接。\n\n【输出要求】：请同时使用内置“${style.label}”风格模版（template_style: ${style.id}），直接在工作区 output/ 目录生成独立的 HTML 证据核验报告文件，包含核验结论 KPI、核验结果明细表、重复转载对照表和完整可点击来源链。回复中只写明实际生成的文件名和 output/ 相对路径，不要生成“打开输出目录”超链接；用户可使用工作台的原生目录按钮打开。`;
     } else if (normalizedSkill === "gov-official-document-drafting") {
-      prompt = `请按深圳市统计局官方网站公开页面的政务文风起草公文：先根据我的任务判断合适的文种，保留文号、落款、联系人等待补字段，不虚构正式发布信息，并为事实、政策依据和数据附发布单位或网站全称、完整标题和具体原文链接。\n\n【输出要求】：除了在对话中提供可直接审阅的 Markdown 公文草案外，请同时使用内置“${style.label}”风格模版（template_style: ${style.id}），在工作区 output/ 目录生成一份排版规范、打印友好且来源标注完整的独立 HTML 参阅公文文件，并在对话末尾给出 [打开输出目录] 链接。`;
+      prompt = `请按深圳市统计局官方网站公开页面的政务文风起草公文：先根据我的任务判断合适的文种，保留文号、落款、联系人等待补字段，不虚构正式发布信息，并为事实、政策依据和数据附发布单位或网站全称、完整标题和具体原文链接。\n\n【输出要求】：除了在对话中提供可直接审阅的 Markdown 公文草案外，请同时使用内置“${style.label}”风格模版（template_style: ${style.id}），在工作区 output/ 目录生成一份排版规范、打印友好且来源标注完整的独立 HTML 参阅公文文件。回复中只写明实际生成的文件名和 output/ 相对路径，不要生成“打开输出目录”超链接；用户可使用工作台的原生目录按钮打开。`;
     } else {
-      prompt = `${BUILTIN_SKILL_START_PROMPTS[normalizedSkill] || BUILTIN_SKILL_START_PROMPTS[skillName] || "请使用当前技能完成我的任务，并为所有事实性内容附发布单位或网站全称、文章来源/页面完整标题和具体原文链接。"}\n\n【输出要求】：请按“${style.label}”风格（template_style: ${style.id}）生成独立可打开的 HTML 成果文件并保存到工作区 output/ 目录，并在末尾给出可点击链接：${style.description}`;
+      prompt = `${BUILTIN_SKILL_START_PROMPTS[normalizedSkill] || BUILTIN_SKILL_START_PROMPTS[skillName] || "请使用当前技能完成我的任务，并为所有事实性内容附发布单位或网站全称、文章来源/页面完整标题和具体原文链接。"}\n\n【输出要求】：请按“${style.label}”风格（template_style: ${style.id}）生成独立可打开的 HTML 成果文件并保存到工作区 output/ 目录。回复只写明实际生成的文件名和 output/ 相对路径，不要自行生成输出目录链接；用户可用工作台的原生“打开输出目录”按钮打开。`;
     }
 
     setStylePickerSkillName(null);
@@ -1261,21 +1586,24 @@ function App() {
     document.addEventListener("mouseup", handleMouseUp);
   };
 
-  const [headerModelSelection, setHeaderModelSelection] = useState("");
   const [busyElapsedSeconds, setBusyElapsedSeconds] = useState(0);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [settingsBusyText, setSettingsBusyText] = useState<string | null>(null);
-  const headerModelDirtyRef = useRef(false);
   const [customModelInput, setCustomModelInput] = useState("");
   const [selectedModelToAdd, setSelectedModelToAdd] = useState("");
   const [isManualInputMode, setIsManualInputMode] = useState(false);
   const [draftSettings, setDraftSettings] = useState<DshAppState["settings"]>({
     dshBin: "",
-    yoloMode: true,
+    permissionDefaultPreset: "workspace-write",
     model: "",
+    authMode: "api",
+    apiModel: "deepseek-flash",
+    accountModel: "deepseek-flash",
     cwd: "",
     defaultOutputDir: "output",
     customModels: [],
+    customModelsByProvider: { deepseek: ["deepseek-flash", "deepseek-v4-pro"] },
+    apiModelsByProvider: { deepseek: "deepseek-flash" },
     apiProvider: "deepseek",
     apiKey: "",
     apiBaseUrl: "",
@@ -1309,10 +1637,6 @@ function App() {
       hasState = true;
       setState(nextState);
       setBootstrapError(null);
-      if (!headerModelDirtyRef.current) {
-        setHeaderModelSelection(nextState.settings.model || "");
-      }
-      setDraftSettings(withDisplayModel(nextState));
     }
 
     const bridge = window.dshDesktop;
@@ -1474,6 +1798,7 @@ function App() {
       }
     });
 
+    const generated = state?.generatedFiles || [];
     const lastGen = state?.lastGeneratedFiles || [];
     const normalizeFileIdentity = (filePath: string) => {
       let normalized = filePath.trim().replace(/^file:\/\//i, "");
@@ -1485,7 +1810,7 @@ function App() {
     };
     const allFiles = Array.from(
       new Map(
-        [...filesFromStorage, ...lastGen, ...filesFromMessages]
+        [...filesFromStorage, ...generated, ...lastGen, ...filesFromMessages]
           .filter(Boolean)
           .map((file) => [normalizeFileIdentity(file), file] as const)
       ).values()
@@ -1495,7 +1820,7 @@ function App() {
       localStorage.setItem(key, JSON.stringify(allFiles));
     }
     setThreadFiles(allFiles);
-  }, [state?.activeThreadId, state?.messages, state?.lastGeneratedFiles]);
+  }, [state?.activeThreadId, state?.messages, state?.generatedFiles, state?.lastGeneratedFiles]);
 
   useEffect(() => {
     // 如果用户手动向上滚动解锁了自动跟随，则保持在用户浏览位置，不强行将页面拽回底部
@@ -1578,9 +1903,7 @@ function App() {
   }
 
   useEffect(() => {
-    const isModelSwitching = !!state?.busy && !!state?.status && state.status.includes("切换模型");
-    const isBusy = isModelSwitching || !!settingsBusyText;
-    if (!isBusy) {
+    if (!settingsBusyText) {
       setBusyElapsedSeconds(0);
       return;
     }
@@ -1592,12 +1915,12 @@ function App() {
     }, 250);
 
     return () => window.clearInterval(timer);
-  }, [state?.busy, state?.status, settingsBusyText]);
+  }, [settingsBusyText]);
 
   // Reset draft settings to current actual saved settings whenever settings modal is opened
   useEffect(() => {
     if (settingsOpen && state) {
-      setDraftSettings(withDisplayModel(state));
+      setDraftSettings(makeSettingsDraft(state));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsOpen]);
@@ -1842,6 +2165,43 @@ function App() {
     }
   }
 
+  async function applyPermissionPreset(preset: "read-only" | "workspace-write" | "danger-full-access"): Promise<boolean> {
+    if (!window.dshDesktop || permissionBusy) return false;
+    setPermissionBusy(true);
+    setPermissionError(null);
+    try {
+      const nextState = await window.dshDesktop.setPermissionPreset(preset);
+      setState(nextState);
+      return true;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setPermissionError(detail);
+      return false;
+    } finally {
+      setPermissionBusy(false);
+    }
+  }
+
+  function choosePermissionPreset(preset: "read-only" | "workspace-write" | "danger-full-access") {
+    setIsPermissionMenuOpen(false);
+    setPermissionError(null);
+    if (permissionSelection === preset) return;
+    if (preset === "danger-full-access") {
+      setPermissionConfirmationAcknowledged(false);
+      setPermissionConfirmationOpen(true);
+      return;
+    }
+    void applyPermissionPreset(preset).then((applied) => {
+      if (!applied) setIsPermissionMenuOpen(true);
+    });
+  }
+
+  async function confirmFullAccessPermission() {
+    if (!permissionConfirmationAcknowledged || permissionBusy) return;
+    const applied = await applyPermissionPreset("danger-full-access");
+    if (applied) setPermissionConfirmationOpen(false);
+  }
+
   async function respondClarification() {
     const pending = state?.pendingClarification;
     if (!pending || !window.dshDesktop?.respondClarification) return;
@@ -1901,14 +2261,21 @@ function App() {
 
     setSettingsBusyText("正在保存配置并应用...");
     const workspaceChanged = draftSettings.cwd !== state?.settings.cwd;
-
-    const customList = Array.isArray(draftSettings.customModels) ? [...draftSettings.customModels] : [];
-    if (draftSettings.model && !customList.includes(draftSettings.model)) {
-      customList.push(draftSettings.model);
-    }
+    const provider = draftSettings.apiProvider;
+    const authMode = draftSettings.authMode === "account" ? "account" : "api";
+    const model = authMode === "account" ? draftSettings.accountModel : (draftSettings.model || draftSettings.apiModel);
+    const customList = authMode === "api"
+      ? Array.from(new Set([...getConfiguredProviderModels(draftSettings, provider), model].filter(Boolean)))
+      : getConfiguredProviderModels(draftSettings, provider);
+    const apiModel = authMode === "api" ? model : draftSettings.apiModel;
     const finalSettings = {
       ...draftSettings,
-      customModels: Array.from(new Set(customList.map(String).map((s) => s.trim()).filter(Boolean))),
+      authMode,
+      model,
+      apiModel,
+      apiModelsByProvider: { ...draftSettings.apiModelsByProvider, [provider]: apiModel },
+      customModels: customList,
+      customModelsByProvider: { ...draftSettings.customModelsByProvider, [provider]: customList },
     };
 
     try {
@@ -1998,15 +2365,13 @@ function App() {
     if (!modelName) return;
 
     setDraftSettings((current: DshAppState["settings"]) => {
-      const presets = (PROVIDER_PRESET_MODELS[current.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
-      const existingList = Array.isArray(current.customModels) && current.customModels.length > 0
-        ? current.customModels
-        : presets;
+      const provider = current.apiProvider || "deepseek";
+      const existingList = getConfiguredProviderModels(current, provider);
       const nextCustomModels = Array.from(new Set([...existingList, modelName]));
       return {
         ...current,
-        model: modelName,
         customModels: nextCustomModels,
+        customModelsByProvider: { ...current.customModelsByProvider, [provider]: nextCustomModels },
       };
     });
     setCustomModelInput("");
@@ -2016,36 +2381,98 @@ function App() {
 
   function handleRemoveCustomModel(modelToRemove: string) {
     setDraftSettings((current: DshAppState["settings"]) => {
-      const presets = (PROVIDER_PRESET_MODELS[current.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
-      const existingList = Array.isArray(current.customModels) && current.customModels.length > 0
-        ? current.customModels
-        : presets;
+      const provider = current.apiProvider || "deepseek";
+      const existingList = getConfiguredProviderModels(current, provider);
+      if (existingList.length <= 1) return current;
       const nextCustomModels = existingList.filter((m) => m !== modelToRemove);
+      const nextModel = current.model === modelToRemove ? (nextCustomModels[0] || "") : current.model;
       return {
         ...current,
+        model: nextModel,
+        apiModel: nextModel,
+        apiModelsByProvider: { ...current.apiModelsByProvider, [provider]: nextModel },
         customModels: nextCustomModels,
-        model: current.model === modelToRemove ? (nextCustomModels[0] || "") : current.model,
+        customModelsByProvider: { ...current.customModelsByProvider, [provider]: nextCustomModels },
       };
     });
   }
 
-  async function applyModelChange(selectedModel: string) {
-    if (!window.dshDesktop) {
-      return;
-    }
-    setHeaderModelSelection(selectedModel);
-    headerModelDirtyRef.current = true;
-    const customList = Array.isArray(state?.settings.customModels) ? [...state.settings.customModels] : [];
-    if (selectedModel && !customList.includes(selectedModel)) {
-      customList.push(selectedModel);
-    }
-    const nextState = await window.dshDesktop.updateSettings({
-      ...state?.settings,
-      model: selectedModel,
-      customModels: customList,
+  function selectDraftAuthMode(authMode: "api" | "account") {
+    setCustomModelInput("");
+    setSelectedModelToAdd("");
+    setIsManualInputMode(false);
+    setDraftSettings((current) => {
+      const provider = current.apiProvider || "deepseek";
+      const apiModelsByProvider = { ...current.apiModelsByProvider };
+      const customModelsByProvider = { ...current.customModelsByProvider };
+
+      if (authMode === "account") {
+        const apiModel = current.authMode === "api" ? current.model : current.apiModel || current.apiModelsByProvider?.[provider] || "deepseek-flash";
+        apiModelsByProvider[provider] = apiModel;
+        const accountModel = provider === "deepseek" && getProviderPresetModels("deepseek").includes(current.model)
+          ? current.model
+          : (getProviderPresetModels("deepseek").includes(current.accountModel) ? current.accountModel : "deepseek-flash");
+        return {
+          ...current,
+          authMode,
+          apiModel,
+          apiModelsByProvider,
+          customModelsByProvider,
+          accountModel,
+          model: accountModel,
+        };
+      }
+
+      const apiModel = current.authMode === "account"
+        ? current.apiModelsByProvider?.[provider] || current.apiModel || getProviderPresetModels(provider)[0]
+        : current.apiModel || current.model || getProviderPresetModels(provider)[0];
+      const customModels = getConfiguredProviderModels(current, provider);
+      apiModelsByProvider[provider] = apiModel;
+      customModelsByProvider[provider] = customModels;
+      return {
+        ...current,
+        authMode,
+        apiModel,
+        apiModelsByProvider,
+        customModelsByProvider,
+        customModels,
+        model: apiModel,
+      };
     });
-    setState(nextState);
-    await window.dshDesktop.switchSessionModel(selectedModel);
+  }
+
+  async function selectComposerModel(selection: { provider: string; model: string; reasoningEffort?: string }) {
+    if (!window.dshDesktop || modelSelectionBusy) return;
+    setModelSelectionBusy(true);
+    setModelSelectionError(null);
+    try {
+      const nextState = await window.dshDesktop.selectSessionModel(selection);
+      setState(nextState);
+    } catch (error) {
+      setModelSelectionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setModelSelectionBusy(false);
+    }
+  }
+
+  async function reloadModelCatalog() {
+    if (!window.dshDesktop || modelCatalogLoading) return;
+    setModelCatalogLoading(true);
+    setModelSelectionError(null);
+    try {
+      setState(await window.dshDesktop.refreshModelCatalog());
+    } catch (error) {
+      setModelSelectionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setModelCatalogLoading(false);
+    }
+  }
+
+  function toggleModelMenu() {
+    const opening = !isModelMenuOpen;
+    setModelSelectionError(null);
+    setIsModelMenuOpen(opening);
+    if (opening && !state?.modelCatalog) void reloadModelCatalog();
   }
 
   async function registerNewSkill() {
@@ -2180,31 +2607,42 @@ function App() {
   const hasDeepSeekAccount = state?.account?.status === "credential-stored";
   const selectedProvider = state?.settings.apiProvider || "deepseek";
   const hasProviderApiKey = Boolean(state?.providerCredentialStatus?.[selectedProvider]?.configured);
-  const needsProviderSetup = !hasProviderApiKey && !(selectedProvider === "deepseek" && hasDeepSeekAccount);
+  const activeAuthMode = state ? resolveAuthMode(state.settings, state) : "api";
+  const needsProviderSetup = activeAuthMode === "account" ? !hasDeepSeekAccount : !hasProviderApiKey;
   const runtimeInstalled = !!state?.runtime.installed;
-  const currentProviderPresets = (PROVIDER_PRESET_MODELS[state?.settings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
-  const currentSavedModel = state?.settings.model;
-  const savedCustomModels = Array.isArray(state?.settings.customModels) ? state.settings.customModels : [];
-  const draftCustomModels = Array.isArray(draftSettings.customModels) ? draftSettings.customModels : [];
-  const customModelList = Array.from(
-    new Set(
-      [
-        currentSavedModel,
-        ...savedCustomModels,
-        ...draftCustomModels,
-        ...currentProviderPresets,
-      ].filter(Boolean) as string[]
-    )
-  );
-
-  const quickModelOptions = customModelList;
-
-  const currentActiveModel = state?.settings.model || "";
-  const quickModelDirty = !!state && !!headerModelSelection && headerModelSelection !== currentActiveModel;
+  const customModelList = state
+    ? activeAuthMode === "account"
+      ? getProviderPresetModels("deepseek")
+      : getConfiguredProviderModels(state.settings)
+    : [];
+  const configuredComposerProvider = activeAuthMode === "account"
+    ? "deepseek-account"
+    : selectedProvider === "custom"
+      ? "stat-pilot-custom"
+      : selectedProvider === "deepseek"
+        ? "deepseek-official"
+        : selectedProvider;
+  const composerModelSelection = state?.currentModelSelection || (state ? {
+    provider: configuredComposerProvider,
+    model: state.settings.model,
+    ...(state.settings.reasoningEffort ? { reasoningEffort: state.settings.reasoningEffort } : {}),
+  } : null);
+  const composerModelGroup = state?.modelCatalog?.groups.find((group) => group.id === composerModelSelection?.provider);
+  const listedComposerModels = composerModelGroup?.models?.length
+    ? composerModelGroup.models
+    : customModelList.map((id) => ({ id, name: id, reasoning: undefined }));
+  const composerModelOptions = composerModelSelection?.model && !listedComposerModels.some((model) => model.id === composerModelSelection.model)
+    ? [{ id: composerModelSelection.model, name: `${composerModelSelection.model}（当前选择）`, reasoning: undefined }, ...listedComposerModels]
+    : listedComposerModels;
+  const selectedComposerModel = composerModelOptions.find((model) => model.id === composerModelSelection?.model);
+  const composerModelEfforts = selectedComposerModel?.reasoning?.efforts || [];
+  const currentEffortId = composerModelSelection?.reasoningEffort || selectedComposerModel?.reasoning?.defaultEffort || "";
+  const currentEffortName = composerModelEfforts.find((effort) => effort.id === currentEffortId)?.name || currentEffortId;
+  const composerModelName = selectedComposerModel?.name || composerModelSelection?.model || "选择模型";
+  const composerModelButtonLabel = currentEffortName ? `${composerModelName} ${currentEffortName}` : composerModelName;
   const selectedSkillDisplayName = selectedSkillTag
     ? state?.skills.find((skill) => skill.name === selectedSkillTag)?.displayName || BUILTIN_SKILL_DISPLAY_NAMES[selectedSkillTag] || selectedSkillTag
     : "";
-  const isModelSwitching = !!state?.busy && !!state?.status && state.status.includes("切换模型");
   const isDshUnavailable = !state?.runtime.installed || (!!state?.error && (
     state.error.includes("ENOENT") || 
     state.error.includes("找不到 DSH") ||
@@ -2242,7 +2680,7 @@ function App() {
     : isDshUnavailable
     ? "运行时未就绪"
     : needsProviderSetup
-      ? (state?.settings.apiProvider === "deepseek" && !hasDeepSeekAccount ? "未登录 DeepSeek 账号或未配置 API Key" : "未配置 API 密钥")
+      ? (activeAuthMode === "account" ? "未登录 DeepSeek 账号" : "未配置 API 密钥")
       : state?.error
         ? "运行异常"
         : (concurrencyOverview || state?.status || "Ready.");
@@ -2534,54 +2972,6 @@ function App() {
               <h2 title={activeName}>{activeName}</h2>
             </div>
             <div className="header-actions">
-                <div className={`model-header-pill ${quickModelDirty ? "dirty" : ""}`}>
-                  <span className="pill-label" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <svg className="w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="4" y="4" width="16" height="16" rx="2" />
-                      <rect x="9" y="9" width="6" height="6" rx="1" />
-                      <path d="M9 1v3" />
-                      <path d="M15 1v3" />
-                      <path d="M9 20v3" />
-                      <path d="M15 20v3" />
-                      <path d="M20 9h3" />
-                      <path d="M20 15h3" />
-                      <path d="M1 9h3" />
-                      <path d="M1 15h3" />
-                    </svg>
-                    <span>运行模型</span>
-                  </span>
-                  <select
-                    value={headerModelSelection || currentActiveModel}
-                    onChange={(event) => {
-                      headerModelDirtyRef.current = true;
-                      setHeaderModelSelection(event.target.value);
-                    }}
-                    className="header-model-select"
-                    disabled={state.busy}
-                    title={
-                      quickModelDirty
-                        ? `当前：${currentActiveModel}，切换到：${headerModelSelection}。点击“应用切换”后在当前对话内立即生效。`
-                        : "直接在这里选目标模型，然后点击“应用切换”。"
-                    }
-                  >
-                    {!currentActiveModel && <option value="">未设置模型</option>}
-                    {quickModelOptions.map((modelId) => (
-                      <option key={modelId} value={modelId}>
-                        {modelId}
-                      </option>
-                    ))}
-                  </select>
-                  {quickModelDirty && (
-                    <button
-                      className="header-apply-button"
-                      onClick={() => void applyModelChange(headerModelSelection)}
-                      disabled={state.busy}
-                      title={`当前：${currentActiveModel}，切换到：${headerModelSelection}。点击“应用切换”后在当前对话内立即生效。`}
-                    >
-                      应用切换
-                    </button>
-                  )}
-                </div>
               <button
                 className={`header-toggle-sidebar-button ${rightSidebarOpen ? "active" : ""}`}
                 onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
@@ -2687,23 +3077,23 @@ function App() {
                 ) : needsProviderSetup ? (
                   <div className="onboarding-card">
                     <div className="onboarding-title">
-                    <h3>先配置模型 API</h3>
+                      <h3>{activeAuthMode === "account" ? "登录 DeepSeek 账号" : "配置模型 API"}</h3>
                     </div>
                     <p>
-                      {state.settings.apiProvider === "deepseek"
-                        ? "在设置中填写 DeepSeek API Key，或登录 DeepSeek 账号后即可开始对话。"
-                        : "先在右上角「设置」里填好 provider、model 和 API key，就可以开始对话。"}
+                      {activeAuthMode === "account"
+                        ? "当前选择账号登录方式。登录 DeepSeek 账号后即可开始对话。"
+                        : "当前选择 API 方式。请配置所选 Provider 的 API Key 和模型后开始对话。"}
                     </p>
                     <div className="guide-steps">
-                      {state.settings.apiProvider === "deepseek" ? (
+                      {activeAuthMode === "account" ? (
                         <div className="step-item">
-                          <strong>推荐配置</strong>
-                          <p>使用 DeepSeek V4.1 Flash（模型 ID：<b>deepseek-flash</b>），再填入 API Key 或登录 DeepSeek 账号。</p>
+                          <strong>账号登录</strong>
+                          <p>打开设置中的“模型与账号登录”，保持账号模式并完成 DeepSeek 授权。</p>
                         </div>
                       ) : (
                         <div className="step-item">
-                          <strong>模型 API 配置</strong>
-                          <p>在设置中选择 provider，并配置模型、API Key 与必要的 Base URL。</p>
+                          <strong>API 配置</strong>
+                          <p>在设置中选择 Provider 和模型，填写 API Key；自定义兼容接口还需填写 Base URL。</p>
                         </div>
                       )}
                     </div>
@@ -2714,7 +3104,7 @@ function App() {
                       </div>
                     ) : null}
                     <div className="onboarding-footer">
-                      <button className="primary-button" onClick={() => { setSettingsOpen(true); setActiveSettingsTab("runtime"); }}>打开运行设置</button>
+                      <button className="primary-button" onClick={() => { setSettingsOpen(true); setActiveSettingsTab("chat"); }}>打开模型与登录设置</button>
                     </div>
                   </div>
                 ) : null}
@@ -2891,12 +3281,7 @@ function App() {
                         </div>
                       ) : null}
 
-                      <CheckableItemSection
-                        items={digestItems}
-                        selectedMap={selectedDigestItems}
-                        onToggleItem={handleToggleDigestItem}
-                        onToggleAll={handleToggleAllDigestItems}
-                      />
+                      <DigestItemSection items={digestItems} />
                       </article>
                       {isInterrupted ? <InterruptedTurnDivider /> : null}
                     </React.Fragment>
@@ -2963,46 +3348,6 @@ function App() {
                 </button>
               </div>
             )}
-            {selectedDigestList.length > 0 && (
-              <div className="digest-composer-toolbar">
-                <div className="digest-bar-info">
-                  <span className="digest-bar-badge">已选择 {selectedDigestList.length} 项动态</span>
-                  <button
-                    type="button"
-                    className="digest-bar-clear"
-                    onClick={handleClearSelectedDigestItems}
-                  >
-                    清空
-                  </button>
-                </div>
-                <div className="digest-bar-actions">
-                  <button
-                    type="button"
-                    className="digest-bar-btn"
-                    onClick={handleDigestActionBriefing}
-                  >
-                    ✨ 提炼简报
-                  </button>
-                  <button
-                    type="button"
-                    className={`digest-bar-btn ${selectedDigestList.length < 2 ? "disabled" : ""}`}
-                    disabled={selectedDigestList.length < 2}
-                    title={selectedDigestList.length < 2 ? "至少需勾选 2 条动态才能交叉比对" : "交叉比对分析"}
-                    onClick={handleDigestActionCompare}
-                  >
-                    🔀 比对分析 {selectedDigestList.length < 2 ? "(需≥2条)" : ""}
-                  </button>
-                  <button
-                    type="button"
-                    className="digest-bar-btn primary"
-                    onClick={handleDigestActionGenerateHtml}
-                  >
-                    📰 生成动态信息汇总 HTML 报表
-                  </button>
-                </div>
-              </div>
-            )}
-
             {state?.error ? (
               <div className="composer-error-banner">
                 <span>⚠️ 错误提示: <code>{state.error}</code></span>
@@ -3376,36 +3721,196 @@ function App() {
                     )}
                   </div>
                   )}
+                  {availablePermissionPresets.length > 0 && (
+                    <div ref={permissionMenuRef} className="trae-permission-selector">
+                      <button
+                        type="button"
+                        className="trae-selector-pill trae-permission-trigger"
+                        aria-haspopup="menu"
+                        aria-expanded={isPermissionMenuOpen}
+                        disabled={isDshUnavailable || permissionBusy || Boolean(state?.busy) || isThreadLoading}
+                        onClick={() => {
+                          setPermissionError(null);
+                          setIsPermissionMenuOpen((open) => !open);
+                        }}
+                        title={state?.activeThreadId ? "当前会话权限" : "新对话默认权限"}
+                      >
+                        <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M12 3 5 6v5c0 4.7 2.9 8.1 7 10 4.1-1.9 7-5.3 7-10V6l-7-3Z" />
+                        </svg>
+                        <span>{permissionPresetLabel(permissionSelection)}</span>
+                        <svg className="w-3 h-3 text-slate-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                      </button>
+                      {isPermissionMenuOpen && (
+                        <div className="trae-permission-menu" role="menu" aria-label="选择 DSH 权限">
+                          <div className="trae-permission-menu-heading">
+                            <strong>{state?.activeThreadId ? "当前会话权限" : "新对话默认权限"}</strong>
+                            <span>{state?.activeThreadId ? "只影响当前对话" : "保存后用于之后新建的对话"}</span>
+                          </div>
+                          {PERMISSION_PRESET_ORDER
+                            .filter((preset) => availablePermissionPresets.some((option) => option.value === preset))
+                            .map((preset) => (
+                              <button
+                                key={preset}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={permissionSelection === preset}
+                                className={`trae-permission-option ${permissionSelection === preset ? "active" : ""} ${preset === "danger-full-access" ? "danger" : ""}`}
+                                disabled={permissionBusy}
+                                onClick={() => choosePermissionPreset(preset as "read-only" | "workspace-write" | "danger-full-access")}
+                              >
+                                <svg className="trae-permission-option-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  {preset === "read-only" ? (
+                                    <>
+                                      <path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z" />
+                                      <circle cx="12" cy="12" r="2.5" />
+                                    </>
+                                  ) : (
+                                    <>
+                                      <path d="M12 3 5 6v5c0 4.7 2.9 8.1 7 10 4.1-1.9 7-5.3 7-10V6l-7-3Z" />
+                                      {preset === "danger-full-access" ? <path d="M12 8v4m0 3h.01" /> : <path d="m9.2 12 1.8 1.8 3.9-4" />}
+                                    </>
+                                  )}
+                                </svg>
+                                <span className="trae-permission-option-copy">
+                                  <strong>{PERMISSION_PRESET_LABELS[preset]}</strong>
+                                  <small>{PERMISSION_PRESET_DESCRIPTIONS[preset]}</small>
+                                </span>
+                                {permissionSelection === preset && <span className="trae-permission-check" aria-hidden="true">✓</span>}
+                              </button>
+                            ))}
+                          {permissionError && <p className="trae-permission-error" role="alert">{permissionError}</p>}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                {/* Right Side: Send or Stop Button */}
-              {isCurrentThreadBusy ? (
-                <button
-                  type="button"
-                  className="trae-stop-icon-btn"
-                  onClick={() => void handleStopMessage()}
-                  title="终止当前智能体处理"
-                  aria-label="终止当前智能体处理"
-                >
-                  <svg className="w-3.5 h-3.5 fill-white" viewBox="0 0 24 24">
-                    <rect x="5" y="5" width="14" height="14" rx="2" />
-                  </svg>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="primary-button-icon"
-                  onClick={() => void sendMessage()}
-                  disabled={(!draft.trim() && !selectedSkillTag && selectedAttachments.length === 0) || !canSend}
-                  title="发送消息 (Enter)"
-                  aria-label="发送消息"
-                >
-                  <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="12" y1="19" x2="12" y2="5" />
-                    <polyline points="5 12 12 5 19 12" />
-                  </svg>
-                </button>
-              )}
+                <div className="trae-composer-actions-right">
+                  {state && composerModelSelection && (
+                    <div ref={modelMenuRef} className="trae-model-selector">
+                      <button
+                        type="button"
+                        className="trae-model-trigger"
+                        aria-haspopup="dialog"
+                        aria-expanded={isModelMenuOpen}
+                        aria-label={`运行模型：${composerModelButtonLabel}`}
+                        disabled={isDshUnavailable || modelSelectionBusy || Boolean(state.busy) || isThreadLoading}
+                        onClick={toggleModelMenu}
+                        title={`${composerModelSelection.provider} · ${composerModelSelection.model}`}
+                      >
+                        <svg className="trae-model-trigger-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <rect x="4" y="5" width="16" height="14" rx="3" />
+                          <path d="M9 9h6v6H9zM8 2v3m8-3v3M8 19v3m8-3v3M2 9h2m-2 6h2m16-6h2m-2 6h2" />
+                        </svg>
+                        <span className="trae-model-trigger-name">{composerModelName}</span>
+                        {currentEffortName && <span className="trae-model-trigger-effort">{currentEffortName}</span>}
+                        <svg className={`trae-model-trigger-chevron ${isModelMenuOpen ? "open" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                      </button>
+
+                      {isModelMenuOpen && (
+                        <div className="trae-model-menu" role="dialog" aria-label="选择运行模型">
+                          <div className="trae-model-menu-status">选择后立即用于当前对话后续消息，无需重启 DSH。</div>
+                          <label className="trae-model-setting-row">
+                            <span>模型</span>
+                            <select
+                              value={composerModelSelection.model}
+                              disabled={modelSelectionBusy || modelCatalogLoading || composerModelOptions.length === 0}
+                              onChange={(event) => {
+                                const selected = composerModelOptions.find((model) => model.id === event.target.value);
+                                if (!selected || !composerModelSelection) return;
+                                const reasoningEffort = selected.reasoning?.defaultEffort;
+                                void selectComposerModel({
+                                  provider: composerModelSelection.provider,
+                                  model: selected.id,
+                                  ...(reasoningEffort ? { reasoningEffort } : {}),
+                                });
+                              }}
+                              aria-label="选择模型"
+                            >
+                              {!composerModelSelection.model && <option value="">选择模型…</option>}
+                              {composerModelOptions.map((model) => (
+                                <option key={model.id} value={model.id}>
+                                  {model.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+
+                          {composerModelEfforts.length > 0 && (
+                            <label className="trae-model-setting-row">
+                              <span>推理等级</span>
+                              <select
+                                value={currentEffortId}
+                                disabled={modelSelectionBusy || modelCatalogLoading || state.busy || isThreadLoading}
+                                onChange={(event) => {
+                                  if (!composerModelSelection) return;
+                                  void selectComposerModel({
+                                    provider: composerModelSelection.provider,
+                                    model: composerModelSelection.model,
+                                    ...(event.target.value ? { reasoningEffort: event.target.value } : {}),
+                                  });
+                                }}
+                                aria-label="选择推理等级"
+                              >
+                                {composerModelEfforts.map((effort) => (
+                                  <option key={effort.id} value={effort.id} title={effort.description}>
+                                    {effort.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          )}
+
+                          {modelCatalogLoading && <div className="trae-model-menu-status" role="status">正在读取 DSH 模型列表…</div>}
+                          {modelSelectionError && <div className="trae-model-menu-error" role="alert">{modelSelectionError}</div>}
+                          {(state.modelCatalog?.failures.length || composerModelOptions.length === 0) ? (
+                            <button
+                              type="button"
+                              className="trae-model-refresh"
+                              onClick={() => void reloadModelCatalog()}
+                              disabled={modelCatalogLoading || modelSelectionBusy}
+                            >
+                              {modelCatalogLoading ? "正在刷新…" : "刷新 DSH 模型列表"}
+                            </button>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {isCurrentThreadBusy ? (
+                    <button
+                      type="button"
+                      className="trae-stop-icon-btn"
+                      onClick={() => void handleStopMessage()}
+                      title="终止当前智能体处理"
+                      aria-label="终止当前智能体处理"
+                    >
+                      <svg className="w-3.5 h-3.5 fill-white" viewBox="0 0 24 24">
+                        <rect x="5" y="5" width="14" height="14" rx="2" />
+                      </svg>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="primary-button-icon"
+                      onClick={() => void sendMessage()}
+                      disabled={(!draft.trim() && !selectedSkillTag && selectedAttachments.length === 0) || !canSend}
+                      title="发送消息 (Enter)"
+                      aria-label="发送消息"
+                    >
+                      <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="12" y1="19" x2="12" y2="5" />
+                        <polyline points="5 12 12 5 19 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
             </div>
           </div>
 
@@ -3498,19 +4003,7 @@ function App() {
             <button
               className="right-sidebar-open-dir-button"
               style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}
-              onClick={() => {
-                const targetCwd = state?.activeThread?.cwd || state?.settings?.cwd || "";
-                const defaultOutputDir = state?.settings?.defaultOutputDir || "output";
-                let resolvedPath = defaultOutputDir;
-                if (targetCwd && !defaultOutputDir.startsWith("/") && !defaultOutputDir.includes(":")) {
-                  resolvedPath = `${targetCwd}/${defaultOutputDir}`;
-                } else if (!targetCwd && threadFiles[0]) {
-                  const parts = threadFiles[0].split(/[/\\]/);
-                  parts.pop();
-                  resolvedPath = parts.join("/") || defaultOutputDir;
-                }
-                void window.dshDesktop.openExternal(`file://${resolvedPath}`);
-              }}
+              onClick={requestOpenOutputDirectory}
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2" />
@@ -3558,20 +4051,7 @@ function App() {
           <div className="toast-footer">
             <button
               className="toast-open-dir-button"
-              onClick={() => {
-                const targetCwd = state?.activeThread?.cwd || state?.settings?.cwd || "";
-                const defaultOutputDir = state?.settings?.defaultOutputDir || "output";
-                let resolvedPath = defaultOutputDir;
-                const firstFile = state.lastGeneratedFiles?.[0];
-                if (firstFile) {
-                  const parts = firstFile.split(/[/\\]/);
-                  parts.pop();
-                  resolvedPath = parts.join("/") || defaultOutputDir;
-                } else if (targetCwd && !defaultOutputDir.startsWith("/") && !defaultOutputDir.includes(":")) {
-                  resolvedPath = `${targetCwd}/${defaultOutputDir}`;
-                }
-                void window.dshDesktop.openExternal(`file://${resolvedPath}`);
-              }}
+              onClick={requestOpenOutputDirectory}
             >
               打开输出目录
             </button>
@@ -3638,31 +4118,6 @@ function App() {
                   </span>
                   模型与账号登录
                 </button>
-                <button
-                  type="button"
-                  className={`settings-tab-btn ${activeSettingsTab === "vision" ? "active" : ""}`}
-                  onClick={() => setActiveSettingsTab("vision")}
-                >
-                  <span className="tab-icon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  </span>
-                  图片理解
-                </button>
-                <button
-                  type="button"
-                  className={`settings-tab-btn ${activeSettingsTab === "tools" ? "active" : ""}`}
-                  onClick={() => setActiveSettingsTab("tools")}
-                >
-                  <span className="tab-icon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M12 22v-5M9 8V2M15 8V2M18 8H6A2 2 0 0 0 4 10v2a4 4 0 0 0 4 4h8a4 4 0 0 0 4-4v-2a2 2 0 0 0-2-2z" />
-                    </svg>
-                  </span>
-                  外部工具 & API
-                </button>
               </nav>
             </div>
 
@@ -3670,9 +4125,7 @@ function App() {
             <div className="settings-content">
               <div className="settings-content-header">
                 {activeSettingsTab === "runtime" && <h3>运行状态与工作区</h3>}
-                {activeSettingsTab === "chat" && <h3>对话模型配置</h3>}
-                {activeSettingsTab === "vision" && <h3>图片理解 (Image Understanding)</h3>}
-                {activeSettingsTab === "tools" && <h3>外部工具 & API 配置</h3>}
+                {activeSettingsTab === "chat" && <h3>模型与账号登录</h3>}
               </div>
 
               <div className="settings-content-body">
@@ -3737,48 +4190,36 @@ function App() {
 
                 {activeSettingsTab === "chat" && (
                   <div className="settings-tab-pane">
-                    <p className="field-hint">当前使用 DSH 本地服务连接 DeepSeek API。</p>
+                    <p className="field-hint">选择使用 API 密钥，或通过 DeepSeek 账号授权。切换方式不会删除另一种方式已保存的凭据。</p>
 
-                    <div className={`yolo-setting-card ${draftSettings.yoloMode ? "enabled" : "disabled"}`}>
-                      <div className="yolo-setting-copy">
-                        <div className="yolo-setting-title">
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                            <path d="M12 3 5 6v5c0 4.7 2.9 8.1 7 10 4.1-1.9 7-5.3 7-10V6l-7-3Z" />
-                            <path d="m9.2 12 1.8 1.8 3.9-4" />
-                          </svg>
-                          <strong>YOLO / 自动执行</strong>
-                          <span className={`yolo-setting-status ${draftSettings.yoloMode ? "on" : "off"}`}>
-                            {draftSettings.yoloMode ? "已开启" : "已关闭"}
-                          </span>
-                        </div>
-                        <p>
-                          开启后，新对话使用 DSH Full Access 权限预设，不受工作区沙箱限制且不会弹出普通审批；关闭后，新对话仅允许在工作区内写入，范围外操作需要授权。
-                          <br />
-                          此设置只影响新对话，已有对话保留创建时的权限。DSH 发出的审批请求仍会显示在授权面板中。
-                        </p>
-                      </div>
-                      <label className="yolo-toggle" title="切换 YOLO 自动执行模式">
-                        <input
-                          type="checkbox"
-                          checked={draftSettings.yoloMode}
-                          onChange={(event) =>
-                            setDraftSettings((current: DshAppState["settings"]) => ({
-                              ...current,
-                              yoloMode: event.target.checked,
-                            }))
-                          }
-                        />
-                        <span className="yolo-toggle-track" aria-hidden="true">
-                          <span className="yolo-toggle-thumb" />
-                        </span>
-                      </label>
+                    <div className="auth-mode-choice-grid" role="group" aria-label="模型连接方式">
+                      <button
+                        type="button"
+                        className={`auth-mode-choice ${draftSettings.authMode === "api" ? "active" : ""}`}
+                        aria-pressed={draftSettings.authMode === "api"}
+                        onClick={() => selectDraftAuthMode("api")}
+                      >
+                        <strong>使用 API</strong>
+                        <span>配置 OpenAI、OpenRouter、DeepSeek 或兼容接口</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`auth-mode-choice ${draftSettings.authMode === "account" ? "active" : ""}`}
+                        aria-pressed={draftSettings.authMode === "account"}
+                        onClick={() => selectDraftAuthMode("account")}
+                      >
+                        <strong>DeepSeek 账号登录</strong>
+                        <span>登录后使用账号授权，无需填写 API Key</span>
+                      </button>
                     </div>
 
+                    {draftSettings.authMode === "api" && (
+                    <>
                     <label>
-                      Model (对话模型)
+                      Provider 模型列表
                       <div className="provider-models-manager" style={{ marginTop: "4px" }}>
                           <div style={{ fontSize: "12.5px", color: "#64748b", marginBottom: "8px", lineHeight: 1.4 }}>
-                            模型在下拉框选择或手动输入模型 ID 后，点击右侧 [+] 按钮添加到列表。
+                            在对话输入框右侧选择本次对话使用的模型。这里仅维护此 Provider 的可选模型 ID；能否调用仍取决于服务商和当前账号权限。
                           </div>
 
                           <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "14px" }}>
@@ -3882,7 +4323,7 @@ function App() {
                               type="button"
                               onClick={() => handleAddCustomModel()}
                               disabled={isManualInputMode ? !customModelInput.trim() : !selectedModelToAdd}
-                              title="添加到列表并设为当前生效模型"
+                              title="添加到 Provider 模型列表"
                               style={{
                                 width: "36px",
                                 height: "36px",
@@ -3909,8 +4350,14 @@ function App() {
                                 const defaultPresets = (PROVIDER_PRESET_MODELS[draftSettings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
                                 setDraftSettings((current) => ({
                                   ...current,
-                                  customModels: defaultPresets,
                                   model: current.model && defaultPresets.includes(current.model) ? current.model : (defaultPresets[0] || ""),
+                                  apiModel: current.model && defaultPresets.includes(current.model) ? current.model : (defaultPresets[0] || ""),
+                                  apiModelsByProvider: {
+                                    ...current.apiModelsByProvider,
+                                    [current.apiProvider]: current.model && defaultPresets.includes(current.model) ? current.model : (defaultPresets[0] || ""),
+                                  },
+                                  customModels: defaultPresets,
+                                  customModelsByProvider: { ...current.customModelsByProvider, [current.apiProvider]: defaultPresets },
                                 }));
                               }}
                               title="恢复当前 Provider 预设推荐模型列表"
@@ -3943,7 +4390,7 @@ function App() {
 
                             {draftSettings.apiProvider === "deepseek" && (
                               <div style={{ fontSize: "12px", color: "#64748b", marginBottom: "8px", lineHeight: 1.4 }}>
-                                默认使用 <b>deepseek-flash</b>（V4.1 Flash，支持原生视觉理解）；官方 API 当前也将兼容 ID <b>deepseek-v4-pro</b> 路由到 V4.1 Flash。
+                                DSH 目录将 <b>deepseek-flash</b> 标记为支持图片、将 <b>deepseek-v4-pro</b> 标记为文本模型。自定义 ID 会注册为文本模型；能否调用仍取决于 DeepSeek 是否开放该模型。
                               </div>
                             )}
 
@@ -3956,16 +4403,10 @@ function App() {
                                 const fullList = Array.from(new Set([draftSettings.model, ...currentList].filter(Boolean) as string[]));
 
                                 return fullList.map((modelId) => {
-                                  const isSelected = (draftSettings.model || presets[0]) === modelId;
+                                  const isDefault = (draftSettings.model || presets[0]) === modelId;
                                   return (
-                                    <div
+                                    <span
                                       key={modelId}
-                                      onClick={() => {
-                                        setDraftSettings((current) => ({
-                                          ...current,
-                                          model: modelId,
-                                        }));
-                                      }}
                                       style={{
                                         display: "inline-flex",
                                         alignItems: "center",
@@ -3974,26 +4415,26 @@ function App() {
                                         borderRadius: "8px",
                                         fontSize: "13px",
                                         fontFamily: "monospace",
-                                        cursor: "pointer",
-                                        border: isSelected ? "1.5px solid #3b82f6" : "1px solid #cbd5e1",
-                                        backgroundColor: isSelected ? "#eff6ff" : "#f8fafc",
-                                        color: isSelected ? "#1d4ed8" : "#334155",
-                                        fontWeight: isSelected ? 600 : 500,
-                                        boxShadow: isSelected ? "0 1px 3px rgba(59, 130, 246, 0.15)" : "none",
-                                        transition: "all 0.15s ease",
+                                        border: isDefault ? "1.5px solid #3b82f6" : "1px solid #cbd5e1",
+                                        backgroundColor: isDefault ? "#eff6ff" : "#f8fafc",
+                                        color: isDefault ? "#1d4ed8" : "#334155",
+                                        fontWeight: isDefault ? 600 : 500,
                                       }}
-                                      title={isSelected ? "当前生效的默认模型" : "点击切换为此模型"}
+                                      title={isDefault ? "新对话默认模型；可在输入框右侧切换当前对话模型" : "已加入此 Provider 的模型列表"}
                                     >
                                       <span>
                                         {draftSettings.apiProvider === "deepseek" && modelId === "deepseek-flash"
                                           ? "deepseek-flash · V4.1 Flash"
                                           : modelId}
                                       </span>
-                                      <span
+                                      {isDefault && <small style={{ fontSize: "10px", fontFamily: "inherit", opacity: 0.8 }}>默认</small>}
+                                      <button
+                                        type="button"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           handleRemoveCustomModel(modelId);
                                         }}
+                                        aria-label={`移除模型 ${modelId}`}
                                         title="移除此模型"
                                         style={{
                                           display: "inline-flex",
@@ -4001,17 +4442,19 @@ function App() {
                                           justifyContent: "center",
                                           width: "16px",
                                           height: "16px",
+                                          padding: 0,
+                                          border: "none",
                                           borderRadius: "50%",
                                           fontSize: "11px",
-                                          color: isSelected ? "#2563eb" : "#94a3b8",
-                                          backgroundColor: isSelected ? "rgba(59, 130, 246, 0.15)" : "rgba(0, 0, 0, 0.06)",
+                                          color: isDefault ? "#2563eb" : "#94a3b8",
+                                          backgroundColor: isDefault ? "rgba(59, 130, 246, 0.15)" : "rgba(0, 0, 0, 0.06)",
                                           cursor: "pointer",
                                           transition: "background-color 0.15s",
                                         }}
                                       >
                                         ✕
-                                      </span>
-                                    </div>
+                                      </button>
+                                    </span>
                                   );
                                 });
                               })()}
@@ -4019,7 +4462,7 @@ function App() {
                           </div>
 
                           <div style={{ fontSize: "12px", color: "#64748b", margin: "6px 0 0 0" }}>
-                            蓝色高亮项为当前生效的默认模型，点击其他模型标签可直接切换。
+                            蓝色标签标记新对话默认模型；切换当前对话的模型和推理等级请使用输入框右侧的选择器。
                           </div>
                         </div>
                     </label>
@@ -4030,11 +4473,36 @@ function App() {
                         value={draftSettings.apiProvider}
                         onChange={(event) => {
                           const newProvider = event.target.value as DshAppState["settings"]["apiProvider"];
-                          setDraftSettings((current: DshAppState["settings"]) => ({
-                            ...current,
-                            apiProvider: newProvider,
-                            apiBaseUrl: newProvider === "deepseek" && !current.apiBaseUrl ? "https://api.deepseek.com" : current.apiBaseUrl,
-                          }));
+                          setCustomModelInput("");
+                          setSelectedModelToAdd("");
+                          setIsManualInputMode(false);
+                          setDraftSettings((current: DshAppState["settings"]) => {
+                            const oldProvider = current.apiProvider;
+                            const currentModels = getConfiguredProviderModels(current, oldProvider);
+                            const targetModels = current.customModelsByProvider?.[newProvider]?.length
+                              ? current.customModelsByProvider[newProvider]!
+                              : getProviderPresetModels(newProvider);
+                            const apiModelsByProvider = {
+                              ...current.apiModelsByProvider,
+                              [oldProvider]: current.model || current.apiModel,
+                            };
+                            const targetModel = apiModelsByProvider[newProvider] || targetModels[0] || "";
+                            apiModelsByProvider[newProvider] = targetModel;
+                            return {
+                              ...current,
+                              apiProvider: newProvider,
+                              apiBaseUrl: newProvider === "deepseek" && !current.apiBaseUrl ? "https://api.deepseek.com" : current.apiBaseUrl,
+                              model: targetModel,
+                              apiModel: targetModel,
+                              apiModelsByProvider,
+                              customModels: targetModels,
+                              customModelsByProvider: {
+                                ...current.customModelsByProvider,
+                                [oldProvider]: currentModels,
+                                [newProvider]: targetModels,
+                              },
+                            };
+                          });
                         }}
                         className="settings-select"
                       >
@@ -4094,12 +4562,21 @@ function App() {
                       </label>
                     )}
 
-                    {draftSettings.apiProvider === "deepseek" && state && (
+                    </>
+                    )}
+
+                    {draftSettings.authMode === "account" && state && (
+                      <>
+                        <div className="provider-models-manager">
+                          <strong>DeepSeek 账号模型</strong>
+                          <p className="field-hint">当前对话的模型和推理等级在输入框右侧选择。账号模式使用 DSH 提供的模型目录；可用模型还取决于账号权限。</p>
+                        </div>
+
                       <section className="dsh-account-settings-card">
                         <div className="dsh-account-settings-heading">
                           <div>
                             <h4>DeepSeek 账号</h4>
-                            <p>账号授权由 DSH 保存和管理。未配置 DeepSeek API Key 时，新对话会使用此账号。</p>
+                            <p>账号授权由 DSH 保存和管理。登录后将使用账号授权发送新对话。</p>
                           </div>
                           <span className={`dsh-account-status ${state.account?.status === "credential-stored" ? "connected" : "disconnected"}`}>
                             {state.account?.status === "credential-stored" ? "已登录" : "未登录"}
@@ -4141,37 +4618,17 @@ function App() {
                           )}
                         </div>
                       </section>
+                      </>
                     )}
                   </div>
                 )}
 
-                {activeSettingsTab === "vision" && (
-                  <div className="settings-tab-pane">
-                    <p className="tab-pane-desc" role="note">
-                      图片通过 DSH 原生附件接口提交给当前对话模型。DeepSeek 默认模型 deepseek-flash（V4.1 Flash）支持视觉理解；无需单独配置视觉模型。
-                    </p>
-                  </div>
-                )}
-
-                {activeSettingsTab === "tools" && (
-                  <div className="settings-tab-pane">
-                    <p className="tab-pane-desc" role="note">
-                      DSH 基础 profile 已提供 DeepSeek 原生 web_search，并复用上方由 DSH 管理的 DeepSeek API Key。语音输入接入 DSH 本地 SenseVoice，转写结果只写入草稿；首次使用需确认下载模型。
-                    </p>
-
-                    <h4 className="settings-section-title">当前已接入的工具</h4>
-                    <p className="field-hint">网页检索由 DSH 的 DeepSeek 原生 web_search 提供。语音输入由本地 SenseVoice 转写，不会自动发送录音或识别结果。</p>
-
-                    <h4 className="settings-section-title" style={{ marginTop: "12px" }}>未迁移的旧配置</h4>
-                    <p className="field-hint">迁移前的 Firecrawl、Exa、FAL、Browserbase 和 OpenAI Voice 项只有密钥输入框，没有连接到任何后端调用。应用成功启动后会清除这些未使用的旧设置，不会迁移到 DSH。</p>
-                  </div>
-                )}
               </div>
 
               {/* Shared Footer Actions */}
               <div className="settings-content-footer">
                 <p className="modal-copy">
-                  主对话、图片附件、DeepSeek 原生网页检索和本地语音转写通过 DSH 工作；独立视觉后端及旧版 Firecrawl/Exa、FAL、Browserbase 配置没有接入后端。
+                  图片附件、网页检索和本地语音转写仍由 DSH 提供；模型连接可使用 API 或 DeepSeek 账号登录。
                 </p>
                 <div className="modal-actions">
                   <button className="secondary-button" onClick={() => void closeSettingsModal()}>
@@ -4187,19 +4644,73 @@ function App() {
         </div>
       ) : null}
 
+      {permissionConfirmationOpen && (
+        <div
+          className="modal-backdrop"
+          style={{ zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => {
+            if (permissionBusy) return;
+            setPermissionConfirmationOpen(false);
+            setPermissionError(null);
+          }}
+        >
+          <section
+            className="permission-risk-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="permission-risk-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="permission-risk-heading">
+              <span className="permission-risk-icon" aria-hidden="true">!</span>
+              <div>
+                <h3 id="permission-risk-title">启用完全权限？</h3>
+                <p>{state?.activeThreadId ? "此更改只作用于当前会话。" : "此更改会保存为之后新建对话的默认权限。"}</p>
+              </div>
+            </div>
+            <p className="permission-risk-description">
+              完全权限会绕过 DSH 工作区沙箱与一般操作审批。智能体可在当前操作系统用户有权访问的位置读写文件。请只对可信任务启用。
+            </p>
+            <label className="permission-risk-acknowledgement">
+              <input
+                type="checkbox"
+                checked={permissionConfirmationAcknowledged}
+                disabled={permissionBusy}
+                onChange={(event) => setPermissionConfirmationAcknowledged(event.target.checked)}
+              />
+              <span>我已了解完全权限的影响，仍要继续</span>
+            </label>
+            {permissionError && <p className="trae-permission-error" role="alert">{permissionError}</p>}
+            <div className="permission-risk-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={permissionBusy}
+                onClick={() => {
+                  setPermissionConfirmationOpen(false);
+                  setPermissionError(null);
+                }}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="permission-risk-confirm-button"
+                disabled={!permissionConfirmationAcknowledged || permissionBusy}
+                onClick={() => void confirmFullAccessPermission()}
+              >
+                {permissionBusy ? "正在应用…" : "启用完全权限"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {stylePickerSkillName ? (
         <ReportStylePicker
           skillName={stylePickerSkillName}
           onCancel={() => setStylePickerSkillName(null)}
           onSelect={handleReportStyleSelect}
-        />
-      ) : null}
-
-      {isModelSwitching ? (
-        <BusyOverlay
-          title="正在切换模型"
-          detail="模型切换约需 30-60s，在此期间请勿重复点击或继续发送消息。"
-          elapsedSeconds={busyElapsedSeconds}
         />
       ) : null}
 

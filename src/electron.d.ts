@@ -29,8 +29,10 @@ declare global {
     kind: "context" | "thinking" | "narrative" | "tool" | "status" | "subagent" | "error";
     label: string;
     detail?: string;
+    output?: string;
     status: "running" | "complete" | "error" | "info";
     toolName?: string;
+    streamIndex?: number;
     durationMs?: number;
   };
 
@@ -100,15 +102,40 @@ declare global {
     status: string;
     error: string | null;
     currentRuntimeModel: string | null;
+    currentModelSelection: { provider: string; model: string; reasoningEffort?: string } | null;
+    modelCatalog: {
+      default: { provider: string; model: string; reasoningEffort?: string };
+      routableProviders: string[];
+      groups: Array<{
+        id: string;
+        name: string;
+        models: Array<{
+          id: string;
+          name: string;
+          description?: string;
+          reasoning?: {
+            efforts: Array<{ id: string; name: string; description?: string }>;
+            defaultEffort?: string;
+          };
+        }>;
+      }>;
+      failures: Array<{ id: string; name: string; message: string }>;
+    } | null;
     lastUsageModel: string | null;
     reasoningTrace: string | null;
     settings: {
       dshBin: string;
-      yoloMode: boolean;
+      permissionDefaultPreset: "read-only" | "workspace-write" | "danger-full-access";
       model: string;
+      reasoningEffort?: string;
+      authMode: "auto" | "api" | "account";
+      apiModel: string;
+      accountModel: string;
       cwd: string;
       defaultOutputDir?: string;
       customModels?: string[];
+      customModelsByProvider?: Partial<Record<"deepseek" | "openai" | "openrouter" | "custom", string[]>>;
+      apiModelsByProvider?: Partial<Record<"deepseek" | "openai" | "openrouter" | "custom", string>>;
       apiProvider: "openrouter" | "deepseek" | "openai" | "custom";
       apiKey: string;
       apiBaseUrl: string;
@@ -123,6 +150,11 @@ declare global {
       bundledWithApp: boolean;
     };
     account: DshAccountView | null;
+    permissionPresets: Array<{ value: string; name: string; description?: string }>;
+    permissionDefaultPreset: string;
+    currentPermissionPreset: string | null;
+    defaultAgentPreset: string;
+    currentAgentPreset: string | null;
     providerCredentialStatus: Record<"deepseek" | "openai" | "openrouter" | "custom", { configured: boolean; writable: boolean }>;
     threads: DshThreadSummary[];
     archivedThreads: DshThreadSummary[];
@@ -140,6 +172,7 @@ declare global {
     } | null;
     busy: boolean;
     skills: Array<{ name: string; displayName?: string; description: string; path: string }>;
+    generatedFiles?: string[];
     lastGeneratedFiles?: string[] | null;
     pendingApproval?: {
       sessionId: string;
@@ -169,7 +202,9 @@ declare global {
       stopMessage: () => Promise<DshAppState>;
       selectWorkspaceFolder: () => Promise<{ cwd: string; folderName: string; branch: string | null } | null>;
       selectFiles: () => Promise<DshSelectedFile[]>;
-      switchSessionModel: (model: string) => Promise<DshAppState>;
+      selectSessionModel: (selection: { provider: string; model: string; reasoningEffort?: string }) => Promise<DshAppState>;
+      refreshModelCatalog: () => Promise<DshAppState>;
+      setPermissionPreset: (preset: "read-only" | "workspace-write" | "danger-full-access") => Promise<DshAppState>;
       archiveThread: (threadId: string) => Promise<DshAppState>;
       unarchiveThread: (threadId: string) => Promise<DshAppState>;
       deleteArchivedThread: (threadId: string) => Promise<{ state: DshAppState; pendingDeletion: boolean }>;
@@ -184,6 +219,7 @@ declare global {
       signOutAccount: () => Promise<DshAppState>;
       repairRuntime: () => Promise<DshAppState>;
       openExternal: (url: string) => Promise<void>;
+      openOutputDirectory: () => Promise<string>;
       onState: (handler: (state: DshAppState) => void) => () => void;
       registerSkillFile: () => Promise<DshAppState>;
       unregisterSkill: (path: string) => Promise<DshAppState>;

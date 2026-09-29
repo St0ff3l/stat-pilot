@@ -12,6 +12,7 @@
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
+    "postinstall": "node scripts/patch-dsh-archive-plugin.mjs",
     "dev": "concurrently -k --success first \"vite --host 127.0.0.1 --strictPort\" \"cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 node scripts/watch-electron.mjs\"",
     "dev:web": "vite --host 127.0.0.1",
     "dev:electron": "node scripts/watch-electron.mjs",

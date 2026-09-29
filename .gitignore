@@ -52,5 +52,6 @@ out/
 
 scraped_data/
 output/
+outputs/
 
 .omo/

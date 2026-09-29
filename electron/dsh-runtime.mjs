@@ -283,10 +283,6 @@ export function resolveDshBinaryPath(customPath) {
       unpackedAppDsh,
     ];
 
-  // Optional system installation fallback for developers who keep DSH Desktop
-  // installed separately from this app.
-  candidates.push("/Applications/DSH Desktop.app/Contents/Resources/app.asar.unpacked/node_modules/@deepseek-ai/dsh/lib/bin.js");
-
   for (const candidate of candidates) {
     if (candidate && existsSync(candidate)) {
       return candidate;
@@ -300,21 +296,19 @@ export function resolveDshBinaryPath(customPath) {
  * Resolves the DSH Home directory.
  */
 export function getDshHomeDir() {
-  if (process.env.DSH_HOME && existsSync(process.env.DSH_HOME)) {
-    return process.env.DSH_HOME;
-  }
-
-  const home = typeof app?.getPath === "function" ? app.getPath("home") : os.homedir();
-  const userHomeDsh = path.join(home, ".dsh");
-  if (existsSync(userHomeDsh)) {
-    return userHomeDsh;
+  // DSH_HOME may point at DSH Desktop's data. Only honor this app-specific
+  // override; otherwise keep StatPilot's sessions, credentials, and profiles
+  // under its own Electron userData directory.
+  const override = process.env.STAT_PILOT_DSH_HOME?.trim();
+  if (override) {
+    return path.resolve(override);
   }
 
   if (typeof app?.getPath === "function") {
     return path.join(app.getPath("userData"), "dsh-home");
   }
 
-  return path.join(home, ".stat-pilot", "dsh-home");
+  return path.join(os.homedir(), ".stat-pilot", "dsh-home");
 }
 
 /** Prefer PowerShell 7 for DSH's Windows terminal, then Windows PowerShell 5.1. */
@@ -367,7 +361,7 @@ const SHENXIAOTONG_INSTRUCTIONS = `# 深小统（深圳市统计局智能工作�
 
 ## 四、文件输出规范
 - 未明确指定输出路径时，所有抓取结果、周报、公文草案、HTML 报表及导出数据统一保存至当前工作区下的 \`output/\` 目录（单数），不得直接写入工作区根目录。
-- 生成文件后，在回复末尾提供可点击的文件链接或输出目录链接：\`[打开输出目录](file:///.../output/)\`。
+- 生成文件后，必须检查实际目标文件存在且非空，再在回复末尾写明文件名和工作区相对路径。若没有写入或检查失败，明确说明未生成，不要声称成功。不要自行构造 file://、localhost 或 127.0.0.1 形式的输出目录链接；用户可通过工作台的原生“打开输出目录”按钮打开。
 
 ## 五、公文与统计风格规范
 - **文风**：克制、严谨、平实，符合政务公文规范；先事实依据，后分析建议。

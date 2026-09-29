@@ -231,8 +231,8 @@ const appleDoubleSkillDir = path.join(dshHome, "skills", "._invalid-skill");
 await mkdir(appleDoubleSkillDir, { recursive: true });
 await writeFile(path.join(appleDoubleSkillDir, "SKILL.md"), Buffer.from([0x00, 0x81, 0xff]));
 await writeFile(path.join(dshHome, "skills", ".DS_Store"), Buffer.from([0x00, 0x81, 0xff]));
-const previousDshHome = process.env.DSH_HOME;
-process.env.DSH_HOME = dshHome;
+const previousStatPilotDshHome = process.env.STAT_PILOT_DSH_HOME;
+process.env.STAT_PILOT_DSH_HOME = dshHome;
 
 const appRuntimeDir = path.join(verifyRoot, "runtime");
 const manager = new DshRuntimeManager({ appRuntimeDir });
@@ -549,8 +549,8 @@ try {
   await manager.stop().catch((error) => {
     console.warn("[verify-dsh] DSH 停止时报告错误:", error);
   });
-  if (previousDshHome === undefined) delete process.env.DSH_HOME;
-  else process.env.DSH_HOME = previousDshHome;
+  if (previousStatPilotDshHome === undefined) delete process.env.STAT_PILOT_DSH_HOME;
+  else process.env.STAT_PILOT_DSH_HOME = previousStatPilotDshHome;
   await rm(verifyRoot, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
 }
 

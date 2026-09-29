@@ -217,7 +217,7 @@ export class DshClient extends EventEmitter {
   }
 
   async getModelCatalog() {
-    return this.request("session/modelCatalog", {});
+    return this.request("session/modelCatalog", {}, { timeoutMs: 15000 });
   }
 
   async getSpeechCatalog() {
@@ -272,6 +272,25 @@ export class DshClient extends EventEmitter {
     return this.request("permissionPresets/catalog", {}, { timeoutMs: 15000 });
   }
 
+  async getAgentPresetRoster() {
+    return this.request("agentPresets/list", {}, { timeoutMs: 15000 });
+  }
+
+  async selectAgentPreset(sessionId, preset) {
+    return this.request("agentPresets/select", {
+      agentId: sessionId,
+      agentPreset: preset,
+    }, { timeoutMs: 15000 });
+  }
+
+  async executeSessionCommand(sessionId, line) {
+    return this.request("commands/execute", {
+      agentId: sessionId,
+      line,
+      submittedAttachments: [],
+    }, { timeoutMs: 15000 });
+  }
+
   async setCredential(ref, value) {
     return this.request("credentials/set", { ref, value }, { timeoutMs: 15000 });
   }
@@ -292,7 +311,7 @@ export class DshClient extends EventEmitter {
         model,
         reasoningEffort,
       },
-    });
+    }, { timeoutMs: 15000 });
   }
 
   async listSkills(sessionId) {
@@ -632,7 +651,7 @@ export class DshClient extends EventEmitter {
           if (chunk.type === "text-delta") {
             this.emit("textDelta", { text: chunk.text });
           } else if (chunk.type === "reasoning-delta") {
-            this.emit("reasoningDelta", { text: chunk.text });
+            this.emit("reasoningDelta", { text: chunk.text, index: chunk.index });
           } else if (chunk.type === "block-start") {
             this.emit("blockStart", chunk);
           } else if (chunk.type === "block-end") {
