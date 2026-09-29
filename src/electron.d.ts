@@ -1,7 +1,7 @@
 declare global {
   const __APP_VERSION__: string;
 
-  type HermesThreadSummary = {
+  type DshThreadSummary = {
     id: string;
     name: string | null;
     preview: string;
@@ -13,7 +13,7 @@ declare global {
     taskStatus?: "idle" | "running" | "queued" | "completed" | "error" | "clarifying" | "approving";
   };
 
-  type HermesChatMessage = {
+  type DshChatMessage = {
     id: string;
     role: "user" | "assistant";
     text: string;
@@ -21,10 +21,10 @@ declare global {
     phase?: string | null;
     meta?: string;
     reasoning?: string | null;
-    activities?: HermesStreamActivity[];
+    activities?: DshStreamActivity[];
   };
 
-  type HermesStreamActivity = {
+  type DshStreamActivity = {
     id: string;
     kind: "context" | "thinking" | "narrative" | "tool" | "status" | "subagent" | "error";
     label: string;
@@ -34,21 +34,76 @@ declare global {
     durationMs?: number;
   };
 
-  type HermesSelectedFile = {
+  type DshSelectedFile = {
     path: string;
     name: string;
     size?: number;
   };
 
-  type HermesAppState = {
+  type DshAccountView = {
+    status: "signed-out" | "credential-stored";
+    links: { usageUrl: string; topUpUrl: string };
+    attempt: {
+      id: string;
+      phase: "initializing" | "waiting-browser" | "exchanging" | "committing" | "succeeded" | "cancelled" | "expired" | "failed";
+      authorizeUrl?: string;
+      expiresAt?: number;
+      errorCode?: "network" | "protocol" | "expired" | "storage";
+    } | null;
+  };
+
+  type DshSpeechProviderView = {
+    id: string;
+    name: string;
+    preparation?: {
+      phase: string;
+      completedBytes?: number;
+      totalBytes?: number;
+      message?: string;
+    };
+  };
+
+  type DshSpeechCatalog = {
+    providers: DshSpeechProviderView[];
+    selection: { providerId: string; language: string };
+    maxAudioBytes: number;
+    maxDurationSeconds: number;
+  };
+
+  type DshQuestionOption = {
+    label: string;
+    description?: string;
+  };
+
+  type DshUserQuestion = {
+    id: string;
+    question: string;
+    detail?: string;
+    header?: string;
+    options?: DshQuestionOption[];
+    multiSelect?: boolean;
+    intent?: { kind: string; approve?: string; callId?: string };
+  };
+
+  type DshQuestionAnswer = {
+    id: string;
+    selected: string[];
+    custom?: string;
+  };
+
+  type DshQuestionDraft = {
+    selected: string[];
+    custom: string;
+  };
+
+  type DshAppState = {
     status: string;
     error: string | null;
     currentRuntimeModel: string | null;
     lastUsageModel: string | null;
     reasoningTrace: string | null;
     settings: {
-      hermesBin: string;
-      runtimeMode: "private" | "official";
+      dshBin: string;
       yoloMode: boolean;
       model: string;
       cwd: string;
@@ -57,19 +112,6 @@ declare global {
       apiProvider: "openrouter" | "deepseek" | "openai" | "custom";
       apiKey: string;
       apiBaseUrl: string;
-      visionModel: string;
-      visionProvider: "openai" | "openrouter" | "ollama" | "custom";
-      visionApiKey: string;
-      visionBaseUrl: string;
-      registeredSkills: Array<{ name: string; displayName?: string; description: string; path: string }>;
-      firecrawlApiKey?: string;
-      exaApiKey?: string;
-      falApiKey?: string;
-      voiceToolsOpenaiKey?: string;
-      browserbaseApiKey?: string;
-      browserbaseProjectId?: string;
-      logoutOfficial?: boolean;
-      loginOfficial?: boolean;
     };
     runtime: {
       installed: boolean;
@@ -80,25 +122,13 @@ declare global {
       bundledSourceDir: string;
       bundledWithApp: boolean;
     };
-    official: {
-      available: boolean;
-      homeDir: string;
-      configPath: string;
-      authPath: string;
-      provider: string;
-      defaultModel: string;
-      isLoggedIn: boolean;
-      subscriptionLabel: string;
-      rateLimitSource: string;
-      availableModels: string[];
-      freeRecommendedModels: string[];
-      paidRecommendedModels: string[];
-      userCode?: string | null;
-    };
-    threads: HermesThreadSummary[];
+    account: DshAccountView | null;
+    providerCredentialStatus: Record<"deepseek" | "openai" | "openrouter" | "custom", { configured: boolean; writable: boolean }>;
+    threads: DshThreadSummary[];
+    archivedThreads: DshThreadSummary[];
     activeThreadId: string | null;
-    activeThread: HermesThreadSummary | null;
-    messages: HermesChatMessage[];
+    activeThread: DshThreadSummary | null;
+    messages: DshChatMessage[];
     activeDraft: {
       id: string;
       threadId: string;
@@ -106,51 +136,65 @@ declare global {
       pendingText?: string;
       reasoning?: string;
       segments?: Array<{ reasoning?: string; text?: string }>;
-      activities?: HermesStreamActivity[];
+      activities?: DshStreamActivity[];
     } | null;
     busy: boolean;
     skills: Array<{ name: string; displayName?: string; description: string; path: string }>;
     lastGeneratedFiles?: string[] | null;
     pendingApproval?: {
       sessionId: string;
-      approvalId?: string | null;
+      requestId: string;
+      agentId: string;
       command: string;
       description: string;
       patternKey: string;
       allowPermanent?: boolean;
     } | null;
     pendingClarification?: {
-      sessionId: string;
-      requestId?: string | null;
-      question: string;
-      choices?: string[] | null;
+      sessionId: string | null;
+      requestId: string;
+      agentId: string;
+      questions: DshUserQuestion[];
     } | null;
   };
 
-  interface Window {
-    hermesDesktop: {
-      getState: () => Promise<HermesAppState>;
-      newThread: () => Promise<HermesAppState>;
-      selectThread: (threadId: string) => Promise<HermesAppState>;
-      sendMessage: (payload: { text: string }) => Promise<HermesAppState>;
-      stopMessage: () => Promise<HermesAppState>;
+  type DshDesktopBridge = {
+      getState: () => Promise<DshAppState>;
+      newThread: () => Promise<DshAppState>;
+      selectThread: (threadId: string) => Promise<DshAppState>;
+      sendMessage: (payload: {
+        text: string;
+        attachments?: Array<Pick<DshSelectedFile, "path" | "name">>;
+      }) => Promise<DshAppState>;
+      stopMessage: () => Promise<DshAppState>;
       selectWorkspaceFolder: () => Promise<{ cwd: string; folderName: string; branch: string | null } | null>;
-      selectFiles: () => Promise<HermesSelectedFile[]>;
-      switchSessionModel: (model: string) => Promise<HermesAppState>;
-      archiveThread: (threadId: string) => Promise<HermesAppState>;
-      updateSettings: (settings: Partial<HermesAppState["settings"]>) => Promise<HermesAppState>;
-      cancelOfficialLogin: () => Promise<HermesAppState>;
-      repairRuntime: () => Promise<HermesAppState>;
-      uninstallRuntime: () => Promise<HermesAppState>;
+      selectFiles: () => Promise<DshSelectedFile[]>;
+      switchSessionModel: (model: string) => Promise<DshAppState>;
+      archiveThread: (threadId: string) => Promise<DshAppState>;
+      unarchiveThread: (threadId: string) => Promise<DshAppState>;
+      deleteArchivedThread: (threadId: string) => Promise<{ state: DshAppState; pendingDeletion: boolean }>;
+      getSpeechCatalog: () => Promise<DshSpeechCatalog>;
+      prepareSpeechProvider: (providerId: string) => Promise<void>;
+      cancelSpeechPreparation: (providerId: string) => Promise<void>;
+      transcribeSpeech: (request: { audioBase64: string; providerId?: string; language?: string }) => Promise<{ text: string; audioSeconds: number; inferenceSeconds: number }>;
+      updateSettings: (settings: Partial<DshAppState["settings"]>) => Promise<DshAppState>;
+      clearProviderApiKey: (provider: DshAppState["settings"]["apiProvider"]) => Promise<DshAppState>;
+      startAccountSignIn: () => Promise<DshAppState>;
+      cancelAccountSignIn: () => Promise<DshAppState>;
+      signOutAccount: () => Promise<DshAppState>;
+      repairRuntime: () => Promise<DshAppState>;
       openExternal: (url: string) => Promise<void>;
-      onState: (handler: (state: HermesAppState) => void) => () => void;
-      registerSkillFile: () => Promise<HermesAppState>;
-      unregisterSkill: (path: string) => Promise<HermesAppState>;
-      respondApproval: (choice: "once" | "session" | "always" | "deny") => Promise<HermesAppState>;
-      respondClarification: (answer: string) => Promise<HermesAppState>;
-      ackThreadCompleted: (threadId: string) => Promise<HermesAppState>;
-    };
-    dshDesktop?: Window["hermesDesktop"];
+      onState: (handler: (state: DshAppState) => void) => () => void;
+      registerSkillFile: () => Promise<DshAppState>;
+      unregisterSkill: (path: string) => Promise<DshAppState>;
+      respondApproval: (requestId: string, choice: "once" | "deny") => Promise<DshAppState>;
+      respondClarification: (requestId: string, answers: DshQuestionAnswer[]) => Promise<DshAppState>;
+      cancelClarification: (requestId: string) => Promise<DshAppState>;
+      ackThreadCompleted: (threadId: string) => Promise<DshAppState>;
+  };
+
+  interface Window {
+    dshDesktop: DshDesktopBridge;
   }
 }
 

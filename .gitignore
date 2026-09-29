@@ -9,7 +9,6 @@ lerna-debug.log*
 
 node_modules
 dist/
-dist-server/
 dist-ssr/
 build/
 coverage/
@@ -53,7 +52,5 @@ out/
 
 scraped_data/
 output/
-outputs/*
-!outputs/.gitkeep
 
 .omo/

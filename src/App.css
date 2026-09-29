@@ -539,7 +539,7 @@ body {
   @apply text-[0.76rem] text-amber-700/90 leading-relaxed;
 }
 
-/* Hermes activity stream: quiet, line-oriented rows like the reference TUI. */
+/* DSH activity stream: quiet, line-oriented rows like the reference TUI. */
 .stream-activity-feed {
   display: flex;
   flex-direction: column;
@@ -1445,6 +1445,51 @@ body {
   @apply text-text-primary;
 }
 
+.dsh-account-settings-card {
+  @apply flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4;
+}
+
+.dsh-account-settings-heading {
+  @apply flex items-start justify-between gap-4;
+}
+
+.dsh-account-settings-heading h4 {
+  @apply m-0 text-sm font-bold text-slate-800;
+}
+
+.dsh-account-settings-heading p {
+  @apply m-1 text-xs leading-relaxed text-slate-500;
+}
+
+.dsh-account-status {
+  @apply shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold;
+}
+
+.dsh-account-status.connected {
+  @apply bg-emerald-50 text-emerald-700;
+}
+
+.dsh-account-status.disconnected {
+  @apply bg-slate-200 text-slate-600;
+}
+
+.dsh-account-progress,
+.dsh-account-error {
+  @apply m-0 text-xs;
+}
+
+.dsh-account-progress {
+  @apply text-blue-700;
+}
+
+.dsh-account-error {
+  @apply text-red-600;
+}
+
+.dsh-account-actions {
+  @apply flex flex-wrap items-center gap-2;
+}
+
 .settings-section-title {
   @apply m-0 mt-3 text-[0.88rem] font-bold text-text-primary border-b border-border-main pb-1.5;
 }
@@ -1590,6 +1635,11 @@ body {
   border-color: rgba(37, 99, 235, 0.20);
   box-shadow: 0 12px 36px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(37, 99, 235, 0.08);
   animation: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.archive-session-toast {
+  bottom: 24px;
+  width: min(360px, calc(100vw - 48px));
 }
 
 @keyframes slide-up {
@@ -1856,6 +1906,12 @@ body {
   animation: startup-sidebar-pulse 1.8s ease-in-out infinite;
 }
 
+.startup-sidebar-status.has-error .startup-sidebar-status-dot {
+  background: #ef4444;
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12);
+  animation: none;
+}
+
 .startup-chat {
   display: flex;
   align-items: center;
@@ -1983,6 +2039,10 @@ body {
   line-height: 1.7;
 }
 
+.startup-boot-copy p.startup-boot-error {
+  color: #b91c1c;
+}
+
 .startup-boot-loader {
   width: min(280px, 100%);
   height: 4px;
@@ -1999,6 +2059,28 @@ body {
   border-radius: inherit;
   background: linear-gradient(90deg, #60a5fa, #2563eb);
   animation: startup-loading-bar 1.7s ease-in-out infinite;
+}
+
+.startup-boot-retry {
+  margin-top: 28px;
+  padding: 10px 22px;
+  border: 0;
+  border-radius: 10px;
+  background: #2563eb;
+  color: #fff;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.startup-boot-retry:hover {
+  background: #1d4ed8;
+}
+
+.startup-boot-retry:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 3px;
 }
 
 .startup-boot-meta {
@@ -2348,12 +2430,32 @@ body {
   @apply text-[0.84rem] text-slate-700 leading-relaxed whitespace-pre-wrap;
 }
 
+.composer-clarification-question-card {
+  @apply flex flex-col gap-2 border-t border-blue-100 pt-3;
+}
+
+.composer-clarification-header {
+  @apply text-[0.72rem] font-bold uppercase tracking-wide text-blue-600;
+}
+
+.composer-clarification-detail {
+  @apply max-h-36 overflow-auto rounded-lg bg-white/80 px-3 py-2 text-[0.8rem] leading-relaxed text-slate-600 whitespace-pre-wrap;
+}
+
 .composer-clarification-choices {
   @apply flex flex-wrap gap-2;
 }
 
 .composer-clarification-choice {
-  @apply px-3 py-1.5 rounded-lg text-[0.82rem] font-semibold text-blue-700 bg-white border border-blue-200 hover:bg-blue-100 cursor-pointer;
+  @apply flex flex-col items-start gap-0.5 px-3 py-2 rounded-lg text-left text-[0.82rem] font-semibold text-blue-700 bg-white border border-blue-200 hover:bg-blue-100 cursor-pointer;
+}
+
+.composer-clarification-choice.selected {
+  @apply bg-blue-100 border-blue-500 ring-1 ring-blue-300;
+}
+
+.composer-clarification-choice small {
+  @apply text-[0.72rem] font-normal leading-snug text-slate-500;
 }
 
 .composer-clarification-input-row {
@@ -2368,6 +2470,14 @@ body {
   @apply px-4 py-2 rounded-lg text-[0.82rem] font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed;
 }
 
+.composer-clarification-skip {
+  @apply px-3 py-2 rounded-lg text-[0.78rem] font-semibold text-slate-600 bg-white border border-slate-200 hover:bg-slate-100 cursor-pointer;
+}
+
+.composer-clarification-footer {
+  @apply flex items-center justify-between gap-3 pt-1 text-[0.72rem] text-slate-500;
+}
+
 /* Sidebar Actions (Matching Image 2) */
 .sidebar-action-list {
   @apply flex flex-col gap-0.5 my-1;
@@ -2379,6 +2489,100 @@ body {
 
 .sidebar-action-item:active {
   @apply bg-slate-200/80;
+}
+
+.sidebar-action-count {
+  @apply ml-auto rounded-full bg-slate-100 px-2 py-0.5 text-[0.7rem] font-semibold text-slate-500;
+}
+
+.archive-page-view {
+  @apply min-w-0 min-h-0 flex-1 overflow-y-auto bg-slate-50 px-8 py-7;
+}
+
+.archive-page-header {
+  @apply flex items-center justify-between gap-4 border-b border-slate-200 pb-5;
+}
+
+.archive-page-header h2 {
+  @apply m-0 text-xl font-bold text-slate-900;
+}
+
+.archive-page-subtitle {
+  @apply mt-1.5 mb-0 text-sm text-slate-500;
+}
+
+.archive-search-label {
+  @apply mt-5 flex h-10 w-full max-w-[480px] items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3 text-slate-500;
+}
+
+.archive-search-label:focus-within {
+  border-color: #93b4ff;
+  box-shadow: 0 0 0 3px rgb(59 130 246 / 10%);
+}
+
+.archive-search-label svg {
+  @apply h-4 w-4 shrink-0;
+}
+
+.archive-search-label input {
+  @apply min-w-0 flex-1 border-0 bg-transparent text-[13px] text-slate-800 outline-none;
+}
+
+.archive-page-note {
+  @apply mt-3 mb-0 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[0.82rem] leading-relaxed text-amber-900;
+}
+
+.archive-thread-list {
+  @apply flex flex-col gap-3 py-5;
+}
+
+.archive-thread-card {
+  @apply flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-4;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.03);
+}
+
+.archive-thread-copy {
+  @apply min-w-0;
+}
+
+.archive-thread-copy h3 {
+  @apply m-0 truncate text-[0.95rem] font-semibold text-slate-800;
+}
+
+.archive-thread-copy p {
+  @apply mt-1 mb-0 truncate text-xs text-slate-400;
+}
+
+.archive-thread-actions {
+  @apply flex shrink-0 items-center gap-2;
+}
+
+.archive-delete-button {
+  @apply rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-600 transition-colors;
+}
+
+.archive-delete-button:hover:not(:disabled) {
+  @apply border-red-300 bg-red-50;
+}
+
+.archive-delete-button:disabled {
+  @apply cursor-not-allowed opacity-50;
+}
+
+.archive-page-empty {
+  @apply flex flex-col items-center justify-center gap-2 py-24 text-center;
+}
+
+.archive-page-empty > span {
+  @apply text-4xl text-slate-300;
+}
+
+.archive-page-empty h3 {
+  @apply m-0 text-base font-semibold text-slate-700;
+}
+
+.archive-page-empty p {
+  @apply m-0 text-sm text-slate-400;
 }
 
 /* TRAE IDE Style Theme & Layout */
@@ -2656,6 +2860,42 @@ body {
 
 .trae-attach-button {
   @apply flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-100 text-blue-600 text-[0.76rem] font-semibold cursor-pointer transition-all duration-150 hover:bg-blue-100 hover:border-blue-200 disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap shrink-0;
+}
+
+.trae-voice-button {
+  @apply flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-slate-600 text-[0.76rem] font-semibold cursor-pointer transition-all duration-150 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600 disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap shrink-0;
+}
+
+.trae-voice-button.recording {
+  @apply bg-rose-50 border-rose-200 text-rose-600 hover:bg-rose-100 hover:border-rose-300;
+}
+
+.trae-voice-status {
+  @apply text-[0.68rem] text-slate-500 max-w-40 truncate;
+}
+
+.trae-voice-pending {
+  @apply mb-2 rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-xs text-slate-700;
+}
+
+.trae-voice-pending-heading {
+  @apply flex flex-wrap items-center gap-x-2 gap-y-1;
+}
+
+.trae-voice-pending-heading strong {
+  @apply text-amber-800;
+}
+
+.trae-voice-pending-heading span {
+  @apply text-slate-500;
+}
+
+.trae-voice-pending p {
+  @apply my-2 max-h-24 overflow-y-auto whitespace-pre-wrap break-words;
+}
+
+.trae-voice-pending-actions {
+  @apply flex items-center gap-2;
 }
 
 .trae-attach-count {

@@ -3,6 +3,88 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import szLogo from "./assets/sz-logo.png";
 
+const VOICE_PROVIDER_ID = "sensevoice-local";
+const VOICE_SAMPLE_RATE = 16_000;
+const MAX_VOICE_SECONDS = 120;
+
+function readMigratedLocalValue(key: string, previousKey: string): string | null {
+  let current: string | null;
+  try {
+    current = localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+
+  if (current !== null) {
+    try { localStorage.removeItem(previousKey); } catch { /* keep the current value usable */ }
+    return current;
+  }
+
+  let previous: string | null;
+  try {
+    previous = localStorage.getItem(previousKey);
+  } catch {
+    return null;
+  }
+  if (previous === null) return null;
+
+  try {
+    localStorage.setItem(key, previous);
+    localStorage.removeItem(previousKey);
+  } catch {
+    // Return the legacy value even when quota or storage policy blocks migration.
+  }
+  return previous;
+}
+
+async function encodeSpeechWavBase64(recording: Blob): Promise<string> {
+  const audioContext = new AudioContext();
+  try {
+    const decoded = await audioContext.decodeAudioData(await recording.arrayBuffer());
+    const frameCount = Math.max(1, Math.floor(Math.min(decoded.duration, MAX_VOICE_SECONDS) * VOICE_SAMPLE_RATE));
+    const offlineContext = new OfflineAudioContext(1, frameCount, VOICE_SAMPLE_RATE);
+    const source = offlineContext.createBufferSource();
+    source.buffer = decoded;
+    source.connect(offlineContext.destination);
+    source.start(0);
+    const resampled = await offlineContext.startRendering();
+    const samples = resampled.getChannelData(0);
+    const wav = new Uint8Array(44 + samples.length * 2);
+    const header = new DataView(wav.buffer);
+    const writeAscii = (offset: number, value: string) => {
+      for (let index = 0; index < value.length; index += 1) wav[offset + index] = value.charCodeAt(index);
+    };
+
+    writeAscii(0, "RIFF");
+    header.setUint32(4, wav.length - 8, true);
+    writeAscii(8, "WAVE");
+    writeAscii(12, "fmt ");
+    header.setUint32(16, 16, true);
+    header.setUint16(20, 1, true);
+    header.setUint16(22, 1, true);
+    header.setUint32(24, VOICE_SAMPLE_RATE, true);
+    header.setUint32(28, VOICE_SAMPLE_RATE * 2, true);
+    header.setUint16(32, 2, true);
+    header.setUint16(34, 16, true);
+    writeAscii(36, "data");
+    header.setUint32(40, samples.length * 2, true);
+
+    for (let index = 0; index < samples.length; index += 1) {
+      const sample = Math.max(-1, Math.min(1, samples[index]));
+      header.setInt16(44 + index * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    }
+
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let offset = 0; offset < wav.length; offset += chunkSize) {
+      binary += String.fromCharCode(...wav.subarray(offset, Math.min(offset + chunkSize, wav.length)));
+    }
+    return btoa(binary);
+  } finally {
+    await audioContext.close().catch(() => {});
+  }
+}
+
 function formatRelativeTime(value: number): string {
   const date = new Date(value * 1000);
   return new Intl.DateTimeFormat("zh-CN", {
@@ -13,22 +95,21 @@ function formatRelativeTime(value: number): string {
   }).format(date);
 }
 
-function withDisplayModel(appState: HermesAppState): HermesAppState["settings"] {
+function withDisplayModel(appState: DshAppState): DshAppState["settings"] {
   return {
     defaultOutputDir: "output",
     customModels: [],
     ...appState.settings,
-    model: appState.settings.runtimeMode === "official" ? appState.official.defaultModel : appState.settings.model,
+    model: appState.settings.model,
   };
 }
 
-const EMPTY_MESSAGES: HermesChatMessage[] = [];
+const EMPTY_MESSAGES: DshChatMessage[] = [];
 
 const PROVIDER_PRESET_MODELS: Record<string, Array<{ id: string; label: string; desc: string }>> = {
   deepseek: [
-    { id: "deepseek-v4-flash", label: "deepseek-v4-flash", desc: "DeepSeek-V4 Flash 快速" },
-    { id: "deepseek-v4-pro", label: "deepseek-v4-pro", desc: "DeepSeek-V4 Pro 旗舰" },
-    { id: "deepseek-v4-flash-vision-exp", label: "deepseek-v4-flash-vision-exp", desc: "DeepSeek-V4 Flash Vision 视觉实验版" },
+    { id: "deepseek-flash", label: "deepseek-flash", desc: "DeepSeek-V4.1 Flash 最新版，原生视觉理解" },
+    { id: "deepseek-v4-pro", label: "deepseek-v4-pro", desc: "官方兼容 ID，当前路由到 V4.1 Flash" },
   ],
   openai: [
     { id: "gpt-5.5", label: "gpt-5.5", desc: "GPT-5.5 最新旗舰" },
@@ -51,7 +132,7 @@ const PROVIDER_PRESET_MODELS: Record<string, Array<{ id: string; label: string; 
   ],
 };
 
-function MessageBody({ role, text }: { role: HermesChatMessage["role"]; text: string }) {
+function MessageBody({ role, text }: { role: DshChatMessage["role"]; text: string }) {
   const safeText = text ?? "";
   if (role === "user") {
     return <pre className="message-plain">{safeText}</pre>;
@@ -94,9 +175,9 @@ function MessageBody({ role, text }: { role: HermesChatMessage["role"]; text: st
               target="_blank"
               rel="noreferrer"
               onClick={(e) => {
-                if (href && window.hermesDesktop?.openExternal) {
+                if (href && window.dshDesktop?.openExternal) {
                   e.preventDefault();
-                  void window.hermesDesktop.openExternal(href);
+                  void window.dshDesktop.openExternal(href);
                 }
               }}
             >
@@ -438,7 +519,7 @@ function formatFileSize(size?: number): string {
   return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-function StreamActivityGlyph({ activity }: { activity: HermesStreamActivity }) {
+function StreamActivityGlyph({ activity }: { activity: DshStreamActivity }) {
   const isBash = activity.label === "Bash";
   const isRead = activity.label === "Read";
   const isBrowse = activity.label === "Browse";
@@ -512,7 +593,7 @@ function StreamActivityGlyph({ activity }: { activity: HermesStreamActivity }) {
   );
 }
 
-function ThinkingActivityRow({ activity, detail }: { activity: HermesStreamActivity; detail: string }) {
+function ThinkingActivityRow({ activity, detail }: { activity: DshStreamActivity; detail: string }) {
   const isComplete = activity.status === "complete";
   const [expanded, setExpanded] = useState(() => !isComplete);
   const canToggle = isComplete && Boolean(detail.trim());
@@ -562,7 +643,7 @@ function StreamActivityTimeline({
   activities,
   live = false,
 }: {
-  activities: HermesStreamActivity[];
+  activities: DshStreamActivity[];
   live?: boolean;
 }) {
   const visibleActivities = activities.slice(-80);
@@ -639,15 +720,28 @@ function InterruptedTurnDivider() {
 }
 
 function App() {
-  const [state, setState] = useState<HermesAppState | null>(null);
+  const [state, setState] = useState<DshAppState | null>(null);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const [bootstrapRetryKey, setBootstrapRetryKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeSettingsTab, setActiveSettingsTab] = useState<"runtime" | "chat" | "vision" | "tools">("runtime");
   const [draft, setDraft] = useState("");
-  const [selectedAttachments, setSelectedAttachments] = useState<HermesSelectedFile[]>([]);
-  const [clarificationDraft, setClarificationDraft] = useState("");
+  const [pendingVoiceTranscript, setPendingVoiceTranscript] = useState<string | null>(null);
+  const [voiceStatus, setVoiceStatus] = useState<"idle" | "preparing" | "recording" | "transcribing">("idle");
+  const [voicePreparationText, setVoicePreparationText] = useState("");
+  const [selectedAttachments, setSelectedAttachments] = useState<DshSelectedFile[]>([]);
+  const [clarificationDraftState, setClarificationDraftState] = useState<{
+    requestId: string;
+    answers: Record<string, DshQuestionDraft>;
+  } | null>(null);
+  const clarificationRequestId = state?.pendingClarification?.requestId;
+  const clarificationDraft = clarificationRequestId && clarificationDraftState?.requestId === clarificationRequestId
+    ? clarificationDraftState.answers
+    : {};
   const [isThreadLoading, setIsThreadLoading] = useState(false);
   const [dismissedFiles, setDismissedFiles] = useState<string[] | null>(null);
   const [dismissedError, setDismissedError] = useState<string | null>(null);
+  const [archivedThread, setArchivedThread] = useState<{ id: string; title: string } | null>(null);
 
   const isTokenError = (err?: string | null) => {
     if (!err) return false;
@@ -662,7 +756,7 @@ function App() {
 
   const [recentFolders, setRecentFolders] = useState<Array<{ path: string; name: string }>>(() => {
     try {
-      const saved = localStorage.getItem("hermes_recent_folders");
+      const saved = readMigratedLocalValue("statpilot_recent_folders", "hermes_recent_folders");
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
@@ -688,7 +782,7 @@ function App() {
   }, [isFolderMenuOpen]);
 
   const [activeBranch, setActiveBranch] = useState<string | null>(null);
-  const [activeMainTab, setActiveMainTab] = useState<"chat" | "skills">("chat");
+  const [activeMainTab, setActiveMainTab] = useState<"chat" | "skills" | "archive">("chat");
   const [skillsSearchQuery, setSkillsSearchQuery] = useState("");
   const [selectedSkillTag, setSelectedSkillTag] = useState<string | null>(null);
   const [stylePickerSkillName, setStylePickerSkillName] = useState<string | null>(null);
@@ -774,12 +868,200 @@ function App() {
     focusEditor();
   }
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const voiceCaptureRef = useRef<{ recorder: MediaRecorder; stream: MediaStream; chunks: Blob[] } | null>(null);
+  const voiceSetupOperationRef = useRef(0);
+  const voiceRecordingTimeoutRef = useRef<number | null>(null);
+  const currentVoiceThreadId = state?.activeThreadId ?? null;
+  const activeVoiceThreadIdRef = useRef<string | null>(currentVoiceThreadId);
+  activeVoiceThreadIdRef.current = currentVoiceThreadId;
+  const voiceObservedThreadIdRef = useRef<string | null>(currentVoiceThreadId);
 
   function focusEditor() {
     window.setTimeout(() => {
       textareaRef.current?.focus();
     }, 0);
   }
+
+  async function waitForVoiceProviderReady(operation: number): Promise<boolean> {
+    if (!window.dshDesktop) throw new Error("DSH 语音接口尚未连接");
+    let catalog = await window.dshDesktop.getSpeechCatalog();
+    let provider = catalog.providers.find((item) => item.id === VOICE_PROVIDER_ID);
+    if (!provider) throw new Error("当前 DSH profile 没有启用本地语音识别 Bundle，请重启应用后重试");
+
+    let phase = provider.preparation?.phase || "unprepared";
+    if (phase !== "ready") {
+      if (["unprepared", "standby", "cancelled", "failed"].includes(phase)) {
+        const shouldPrepare = window.confirm("首次使用需要下载或加载本地 SenseVoice 语音模型。录音只会发送到本机 DSH，并在转写后放入草稿，不会自动发送。现在准备吗？");
+        if (!shouldPrepare) return false;
+        await window.dshDesktop.prepareSpeechProvider(VOICE_PROVIDER_ID);
+      }
+
+      setVoiceStatus("preparing");
+      const deadline = Date.now() + 30 * 60 * 1000;
+      while (Date.now() < deadline) {
+        if (operation !== voiceSetupOperationRef.current) return false;
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        catalog = await window.dshDesktop.getSpeechCatalog();
+        provider = catalog.providers.find((item) => item.id === VOICE_PROVIDER_ID);
+        if (!provider) throw new Error("DSH 本地语音识别 Provider 已不可用");
+        phase = provider.preparation?.phase || "unprepared";
+        const preparation = provider.preparation;
+        const progress = preparation?.totalBytes && preparation.completedBytes !== undefined
+          ? ` ${Math.round((preparation.completedBytes / preparation.totalBytes) * 100)}%`
+          : "";
+        setVoicePreparationText(`${preparation?.message || "正在准备本地语音模型"}${progress}`);
+        if (phase === "ready") break;
+        if (phase === "failed") throw new Error(preparation?.message || "本地语音模型准备失败");
+        if (phase === "cancelled") return false;
+      }
+      if (phase !== "ready") throw new Error("准备本地语音模型超时，请稍后重试");
+    }
+    setVoicePreparationText("");
+    return true;
+  }
+
+  function stopVoiceRecording() {
+    const capture = voiceCaptureRef.current;
+    if (capture && capture.recorder.state !== "inactive") capture.recorder.stop();
+  }
+
+  async function transcribeVoiceRecording(recording: Blob, operation: number, targetThreadId: string | null) {
+    if (!window.dshDesktop) return;
+    setVoiceStatus("transcribing");
+    try {
+      const catalog = await window.dshDesktop.getSpeechCatalog();
+      const audioBase64 = await encodeSpeechWavBase64(recording);
+      const result = await window.dshDesktop.transcribeSpeech({
+        audioBase64,
+        providerId: VOICE_PROVIDER_ID,
+        language: catalog.selection.language || "auto",
+      });
+      const transcript = result.text.trim();
+      if (!transcript) throw new Error("没有识别到语音文字");
+      if (operation !== voiceSetupOperationRef.current || activeVoiceThreadIdRef.current !== targetThreadId) {
+        setPendingVoiceTranscript(transcript);
+        return;
+      }
+      setDraft((current) => current.trim() ? `${current.trimEnd()}\n${transcript}` : transcript);
+      focusEditor();
+    } catch (error) {
+      if (operation === voiceSetupOperationRef.current) {
+        const detail = error instanceof Error ? error.message : String(error);
+        window.alert(`语音转写失败：${detail}`);
+      }
+    } finally {
+      if (operation === voiceSetupOperationRef.current) {
+        setVoiceStatus("idle");
+        setVoicePreparationText("");
+      }
+    }
+  }
+
+  async function handleVoiceInput() {
+    if (voiceStatus === "recording") {
+      stopVoiceRecording();
+      return;
+    }
+    if (voiceStatus === "preparing") {
+      voiceSetupOperationRef.current += 1;
+      await window.dshDesktop.cancelSpeechPreparation(VOICE_PROVIDER_ID).catch(() => {});
+      setVoiceStatus("idle");
+      setVoicePreparationText("");
+      return;
+    }
+    if (voiceStatus !== "idle" || !window.dshDesktop) return;
+
+    const operation = ++voiceSetupOperationRef.current;
+    const targetThreadId = activeVoiceThreadIdRef.current;
+    let pendingStream: MediaStream | null = null;
+    setVoiceStatus("preparing");
+    try {
+      const ready = await waitForVoiceProviderReady(operation);
+      if (!ready || operation !== voiceSetupOperationRef.current) {
+        setVoiceStatus("idle");
+        return;
+      }
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+        throw new Error("当前系统暂不支持浏览器录音");
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true },
+        video: false,
+      });
+      pendingStream = stream;
+      if (operation !== voiceSetupOperationRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        pendingStream = null;
+        return;
+      }
+
+      const recorder = new MediaRecorder(stream);
+      const capture = { recorder, stream, chunks: [] as Blob[] };
+      voiceCaptureRef.current = capture;
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) capture.chunks.push(event.data);
+      };
+      recorder.onstop = () => {
+        if (voiceRecordingTimeoutRef.current !== null) {
+          window.clearTimeout(voiceRecordingTimeoutRef.current);
+          voiceRecordingTimeoutRef.current = null;
+        }
+        stream.getTracks().forEach((track) => track.stop());
+        if (voiceCaptureRef.current !== capture) return;
+        voiceCaptureRef.current = null;
+        const recording = new Blob(capture.chunks, { type: recorder.mimeType || "audio/webm" });
+        if (recording.size === 0) {
+          setVoiceStatus("idle");
+          window.alert("没有录到音频，请检查麦克风权限后重试。");
+          return;
+        }
+        void transcribeVoiceRecording(recording, operation, targetThreadId);
+      };
+      recorder.start();
+      pendingStream = null;
+      setVoiceStatus("recording");
+      voiceRecordingTimeoutRef.current = window.setTimeout(stopVoiceRecording, MAX_VOICE_SECONDS * 1000);
+    } catch (error) {
+      pendingStream?.getTracks().forEach((track) => track.stop());
+      if (operation === voiceSetupOperationRef.current) {
+        const detail = error instanceof Error ? error.message : String(error);
+        setVoiceStatus("idle");
+        setVoicePreparationText("");
+        window.alert(`无法开始语音输入：${detail}`);
+      }
+    }
+  }
+
+  useEffect(() => () => {
+    voiceSetupOperationRef.current += 1;
+    if (voiceRecordingTimeoutRef.current !== null) window.clearTimeout(voiceRecordingTimeoutRef.current);
+    const capture = voiceCaptureRef.current;
+    voiceCaptureRef.current = null;
+    if (capture) {
+      if (capture.recorder.state !== "inactive") capture.recorder.stop();
+      capture.stream.getTracks().forEach((track) => track.stop());
+    }
+  }, []);
+
+  useEffect(() => {
+    const threadChanged = voiceObservedThreadIdRef.current !== currentVoiceThreadId;
+    voiceObservedThreadIdRef.current = currentVoiceThreadId;
+    if (activeMainTab === "chat" && !settingsOpen && !threadChanged) return;
+
+    voiceSetupOperationRef.current += 1;
+    if (voiceRecordingTimeoutRef.current !== null) {
+      window.clearTimeout(voiceRecordingTimeoutRef.current);
+      voiceRecordingTimeoutRef.current = null;
+    }
+    const capture = voiceCaptureRef.current;
+    voiceCaptureRef.current = null;
+    if (capture) {
+      if (capture.recorder.state !== "inactive") capture.recorder.stop();
+      capture.stream.getTracks().forEach((track) => track.stop());
+    }
+    setVoiceStatus("idle");
+    setVoicePreparationText("");
+  }, [activeMainTab, currentVoiceThreadId, settingsOpen]);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -865,9 +1147,9 @@ function App() {
   }
 
   async function handleSelectAttachments() {
-    if (!window.hermesDesktop) return;
+    if (!window.dshDesktop) return;
     try {
-      const files = await window.hermesDesktop.selectFiles();
+      const files = await window.dshDesktop.selectFiles();
       if (files.length === 0) return;
       setSelectedAttachments((previous) => {
         const existingPaths = new Set(previous.map((file) => file.path));
@@ -885,20 +1167,31 @@ function App() {
   }
 
   async function handleStopMessage() {
-    if (!window.hermesDesktop) return;
+    if (!window.dshDesktop) return;
     try {
-      const nextState = await window.hermesDesktop.stopMessage();
+      const nextState = await window.dshDesktop.stopMessage();
       setState(nextState);
     } finally {
       setIsThreadLoading(false);
-      setClarificationDraft("");
+      setClarificationDraftState(null);
+    }
+  }
+
+  async function respondApproval(requestId: string, choice: "once" | "deny") {
+    if (!window.dshDesktop) return;
+    try {
+      const nextState = await window.dshDesktop.respondApproval(requestId, choice);
+      setState(nextState);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      window.alert(`权限审批提交失败：${detail}`);
     }
   }
 
   async function handleSelectWorkspaceFolder() {
-    if (!window.hermesDesktop || isWorkspaceLocked()) return;
+    if (!window.dshDesktop || isWorkspaceLocked()) return;
     setIsFolderMenuOpen(false);
-    const result = await window.hermesDesktop.selectWorkspaceFolder();
+    const result = await window.dshDesktop.selectWorkspaceFolder();
     if (result) {
       setWorkspaceSelectionLocked(true);
       setActiveBranch(result.branch);
@@ -906,19 +1199,19 @@ function App() {
       setRecentFolders((prev) => {
         const filtered = prev.filter((item) => item.path !== result.cwd);
         const updated = [newEntry, ...filtered].slice(0, 5);
-        localStorage.setItem("hermes_recent_folders", JSON.stringify(updated));
+        localStorage.setItem("statpilot_recent_folders", JSON.stringify(updated));
         return updated;
       });
-      const nextState = await window.hermesDesktop.getState();
+      const nextState = await window.dshDesktop.getState();
       setState(nextState);
     }
   }
 
   async function handleSwitchWorkspaceFolder(folderPath: string) {
-    if (!window.hermesDesktop || isWorkspaceLocked()) return;
+    if (!window.dshDesktop || isWorkspaceLocked()) return;
     setIsFolderMenuOpen(false);
     setActiveBranch(null);
-    const nextState = await window.hermesDesktop.updateSettings({ cwd: folderPath });
+    const nextState = await window.dshDesktop.updateSettings({ cwd: folderPath });
     // 选完文件夹不立即锁定，保留在输入框左下方展示当前选中的文件夹名称，等用户发消息后再锁定
     setState(nextState);
   }
@@ -926,7 +1219,7 @@ function App() {
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [threadFiles, setThreadFiles] = useState<string[]>([]);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const saved = localStorage.getItem("hermes_sidebar_width");
+    const saved = readMigratedLocalValue("statpilot_sidebar_width", "hermes_sidebar_width");
     if (saved) {
       const parsed = parseInt(saved, 10);
       if (!isNaN(parsed) && parsed >= 220 && parsed <= 500) {
@@ -951,7 +1244,7 @@ function App() {
       const newWidth = mouseMoveEvent.clientX;
       if (newWidth >= 220 && newWidth <= 500) {
         setSidebarWidth(newWidth);
-        localStorage.setItem("hermes_sidebar_width", String(newWidth));
+        localStorage.setItem("statpilot_sidebar_width", String(newWidth));
       }
     };
 
@@ -976,9 +1269,8 @@ function App() {
   const [customModelInput, setCustomModelInput] = useState("");
   const [selectedModelToAdd, setSelectedModelToAdd] = useState("");
   const [isManualInputMode, setIsManualInputMode] = useState(false);
-  const [draftSettings, setDraftSettings] = useState<HermesAppState["settings"]>({
-    hermesBin: "hermes",
-    runtimeMode: "private",
+  const [draftSettings, setDraftSettings] = useState<DshAppState["settings"]>({
+    dshBin: "",
     yoloMode: true,
     model: "",
     cwd: "",
@@ -987,17 +1279,6 @@ function App() {
     apiProvider: "deepseek",
     apiKey: "",
     apiBaseUrl: "",
-    visionModel: "",
-    visionProvider: "openai",
-    visionApiKey: "",
-    visionBaseUrl: "",
-    registeredSkills: [],
-    firecrawlApiKey: "",
-    exaApiKey: "",
-    falApiKey: "",
-    voiceToolsOpenaiKey: "",
-    browserbaseApiKey: "",
-    browserbaseProjectId: "",
   });
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLElement | null>(null);
@@ -1009,37 +1290,93 @@ function App() {
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
+    let disposed = false;
+    let receivedUpdate = false;
+    let hasState = false;
 
-    async function bootstrap() {
-      if (!window.hermesDesktop) {
-        return;
-      }
-
-      const initial = await window.hermesDesktop.getState();
-      setState(initial);
-      const initialModel = initial.settings.runtimeMode === "official"
-        ? initial.official.defaultModel
-        : initial.settings.model;
-      setHeaderModelSelection(initialModel || "");
-      headerModelDirtyRef.current = false;
-      setDraftSettings(withDisplayModel(initial));
-
-      unsubscribe = window.hermesDesktop.onState((nextState) => {
-        setState(nextState);
-        if (!headerModelDirtyRef.current) {
-          const nextModel = nextState.settings.runtimeMode === "official"
-            ? nextState.official.defaultModel
-            : nextState.settings.model;
-          setHeaderModelSelection(nextModel || "");
-        }
-        setDraftSettings(withDisplayModel(nextState));
-      });
+    function isUsableState(value: unknown): value is DshAppState {
+      if (typeof value !== "object" || value === null) return false;
+      const candidate = value as Record<string, unknown>;
+      return typeof candidate.status === "string"
+        && typeof candidate.settings === "object"
+        && candidate.settings !== null
+        && typeof candidate.runtime === "object"
+        && candidate.runtime !== null;
     }
 
-    void bootstrap();
+    function applyState(nextState: DshAppState) {
+      if (disposed || !isUsableState(nextState)) return;
+      hasState = true;
+      setState(nextState);
+      setBootstrapError(null);
+      if (!headerModelDirtyRef.current) {
+        setHeaderModelSelection(nextState.settings.model || "");
+      }
+      setDraftSettings(withDisplayModel(nextState));
+    }
 
-    return () => unsubscribe?.();
-  }, []);
+    const bridge = window.dshDesktop;
+    if (!bridge) {
+      queueMicrotask(() => {
+        if (!disposed) setBootstrapError("桌面运行时连接不可用，请重启应用后重试。");
+      });
+      return () => {
+        disposed = true;
+      };
+    }
+
+    // Subscribe before reading the initial snapshot so startup broadcasts cannot
+    // be lost while the renderer is waiting for the IPC round trip.
+    try {
+      unsubscribe = bridge.onState((nextState) => {
+        if (!isUsableState(nextState)) return;
+        receivedUpdate = true;
+        applyState(nextState);
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      queueMicrotask(() => {
+        if (!disposed) setBootstrapError(`订阅工作台状态失败：${detail}`);
+      });
+      return () => {
+        disposed = true;
+      };
+    }
+
+    const timeout = window.setTimeout(() => {
+      if (!disposed && !hasState) {
+        setBootstrapError("等待桌面主进程状态超过 5 秒。可以重试连接；如果仍失败，请完全退出后重新启动应用。");
+      }
+    }, 5000);
+
+    void Promise.resolve().then(() => bridge.getState()).then((initial) => {
+      if (receivedUpdate) {
+        window.clearTimeout(timeout);
+        return;
+      }
+      if (!isUsableState(initial)) {
+        window.clearTimeout(timeout);
+        setBootstrapError("桌面主进程没有返回有效的工作台状态。可以重试连接；如果仍失败，请完全退出后重新启动应用。");
+        return;
+      }
+      window.clearTimeout(timeout);
+      applyState(initial);
+    }).catch((error: unknown) => {
+      window.clearTimeout(timeout);
+      if (disposed) return;
+      const detail = error instanceof Error ? error.message : String(error);
+      const missingHandler = /No handler registered for ['"]dsh:getState['"]/.test(detail);
+      setBootstrapError(missingHandler
+        ? "当前界面与桌面主进程版本不一致。请完全退出并重新启动应用。"
+        : `读取工作台状态失败：${detail}`);
+    });
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(timeout);
+      unsubscribe?.();
+    };
+  }, [bootstrapRetryKey]);
 
   // Load and auto-extract files when active thread or messages change
   useEffect(() => {
@@ -1049,9 +1386,9 @@ function App() {
       return;
     }
 
-    const key = `hermes_files_${threadId}`;
+    const key = `statpilot_files_${threadId}`;
     let filesFromStorage: string[] = [];
-    const existingStr = localStorage.getItem(key);
+    const existingStr = readMigratedLocalValue(key, `hermes_files_${threadId}`);
     if (existingStr) {
       try {
         const parsed = JSON.parse(existingStr);
@@ -1266,7 +1603,7 @@ function App() {
   }, [settingsOpen]);
 
   async function createNewChat() {
-    if (!window.hermesDesktop) {
+    if (!window.dshDesktop) {
       return;
     }
 
@@ -1279,7 +1616,7 @@ function App() {
     isAutoScrollUnlockedRef.current = false;
     setShowScrollBottomBtn(false);
     try {
-      const nextState = await window.hermesDesktop.newThread();
+      const nextState = await window.dshDesktop.newThread();
       setState(nextState);
     } finally {
       setIsThreadLoading(false);
@@ -1287,7 +1624,7 @@ function App() {
   }
 
   async function selectThread(threadId: string) {
-    if (!window.hermesDesktop) {
+    if (!window.dshDesktop) {
       return;
     }
 
@@ -1298,10 +1635,10 @@ function App() {
     setShowScrollBottomBtn(false);
     setIsThreadLoading(true);
     try {
-      const nextState = await window.hermesDesktop.selectThread(threadId);
+      const nextState = await window.dshDesktop.selectThread(threadId);
       setState(nextState);
-      if (window.hermesDesktop.ackThreadCompleted) {
-        void window.hermesDesktop.ackThreadCompleted(threadId);
+      if (window.dshDesktop.ackThreadCompleted) {
+        void window.dshDesktop.ackThreadCompleted(threadId);
       }
     } finally {
       setIsThreadLoading(false);
@@ -1337,9 +1674,9 @@ function App() {
   async function handleConfirmNavInterrupt() {
     const { targetType, targetThreadId } = navInterruptConfirm;
     setNavInterruptConfirm({ open: false, targetType: "newChat" });
-    if (window.hermesDesktop && state?.busy) {
+    if (window.dshDesktop && state?.busy) {
       try {
-        const nextState = await window.hermesDesktop.stopMessage();
+        const nextState = await window.dshDesktop.stopMessage();
         setState(nextState);
       } catch (e) {
         console.error("Failed to stop message on nav interrupt:", e);
@@ -1357,21 +1694,98 @@ function App() {
     setNavInterruptConfirm({ open: false, targetType: "newChat" });
   }
 
-  async function deleteThread(threadId: string, threadName?: string | null) {
-    if (!window.hermesDesktop) {
+  async function archiveThreadFromSidebar(threadId: string, threadName?: string | null) {
+    if (!window.dshDesktop) {
       return;
     }
 
-    const confirmed = window.confirm(`确认删除这条历史对话吗？${threadName ? `\n\n${threadName}` : ""}`);
+    const confirmed = window.confirm(
+      `确认从侧边栏移除这条对话吗？\n\nDSH 会将对话归档，历史记录仍会保留在本地。${threadName ? `\n\n${threadName}` : ""}`
+    );
     if (!confirmed) {
       return;
     }
 
+    const wasActive = state?.activeThreadId === threadId;
     setIsThreadLoading(true);
     try {
-      const nextState = await window.hermesDesktop.archiveThread(threadId);
+      const nextState = await window.dshDesktop.archiveThread(threadId);
       setState(nextState);
-      localStorage.removeItem(`hermes_files_${threadId}`);
+      setArchivedThread({ id: threadId, title: threadName || "这条对话" });
+      if (wasActive) {
+        setActiveMainTab("chat");
+        setDraft("");
+        setSelectedAttachments([]);
+        setSelectedSkillTag(null);
+        setActiveBranch(null);
+        setWorkspaceSelectionLocked(false);
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      window.alert(`未能移除对话：${detail}`);
+    } finally {
+      setIsThreadLoading(false);
+    }
+  }
+
+  async function undoArchiveThread() {
+    if (!archivedThread || !window.dshDesktop) return;
+
+    try {
+      const nextState = await restoreArchivedThread(archivedThread.id);
+      setState(nextState);
+      setArchivedThread(null);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      window.alert(`恢复对话失败：${detail}`);
+    }
+  }
+
+  async function restoreArchivedThread(threadId: string) {
+    if (!window.dshDesktop) {
+      throw new Error("桌面端接口尚未就绪");
+    }
+
+    setIsThreadLoading(true);
+    try {
+      const nextState = await window.dshDesktop.unarchiveThread(threadId);
+      if (archivedThread?.id === threadId) {
+        setArchivedThread(null);
+      }
+      return nextState;
+    } finally {
+      setIsThreadLoading(false);
+    }
+  }
+
+  async function permanentlyDeleteArchivedThread(threadId: string, title: string) {
+    if (!window.dshDesktop) return;
+
+    const confirmed = window.confirm(
+      `确定彻底删除“${title}”吗？\n\n会话日志和工作区关联会删除，且无法恢复。DSH 全局附件库中的共享数据或缓存可能仍会保留。`
+    );
+    if (!confirmed) return;
+
+    const wasActive = state?.activeThreadId === threadId;
+    setIsThreadLoading(true);
+    try {
+      const result = await window.dshDesktop.deleteArchivedThread(threadId);
+      setState(result.state);
+      if (archivedThread?.id === threadId) setArchivedThread(null);
+      if (wasActive) {
+        setActiveMainTab("chat");
+        setDraft("");
+        setSelectedAttachments([]);
+        setSelectedSkillTag(null);
+        setActiveBranch(null);
+        setWorkspaceSelectionLocked(false);
+      }
+      if (result.pendingDeletion) {
+        window.alert("删除请求已保存；DSH 会继续重试，若本次未完成，下次启动会接着清理。");
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      window.alert(`彻底删除失败：${detail}`);
     } finally {
       setIsThreadLoading(false);
     }
@@ -1381,13 +1795,12 @@ function App() {
     const rawText = draft.trim();
     const attachmentText = selectedAttachments.length > 0
       ? [
-          "用户已提交以下本地文件，请先读取这些文件，再完成本次任务：",
-          ...selectedAttachments.map((file, index) => `${index + 1}. 文件名：${file.name}；绝对路径：${file.path}`),
-          "如果文件无法读取，请明确指出具体文件和原因；不要把文件路径本身当作来源证据。",
+          "我已附上以下文件，请直接阅读附件内容后完成本次任务：",
+          ...selectedAttachments.map((file, index) => `${index + 1}. ${file.name}`),
         ].join("\n")
       : "";
     const taskText = rawText || (selectedAttachments.length > 0 ? "请先概述这些文件的内容、来源和可用字段。" : "");
-    if ((!taskText && !selectedSkillTag) || !window.hermesDesktop) {
+    if ((!taskText && !selectedSkillTag) || !window.dshDesktop) {
       return;
     }
 
@@ -1407,7 +1820,10 @@ function App() {
     isAutoScrollUnlockedRef.current = false;
     setShowScrollBottomBtn(false);
     try {
-      const nextState = await window.hermesDesktop.sendMessage({ text });
+      const nextState = await window.dshDesktop.sendMessage({
+        text,
+        attachments: previousAttachments.map(({ path, name }) => ({ path, name })),
+      });
       setState(nextState);
       if (nextState.error) {
         setDraft(previousDraft);
@@ -1420,26 +1836,66 @@ function App() {
       setSelectedSkillTag(previousSkillTag);
       setSelectedAttachments(previousAttachments);
       try {
-        const currentState = await window.hermesDesktop.getState();
+        const currentState = await window.dshDesktop.getState();
         setState(currentState);
       } catch {}
     }
   }
 
-  async function respondClarification(answer: string) {
-    const text = answer.trim();
-    if (!text || !window.hermesDesktop?.respondClarification) return;
-    setClarificationDraft("");
+  async function respondClarification() {
+    const pending = state?.pendingClarification;
+    if (!pending || !window.dshDesktop?.respondClarification) return;
+    const answers = pending.questions.map((question) => {
+      const draftAnswer = clarificationDraft[question.id] || { selected: [], custom: "" };
+      const custom = draftAnswer.custom.trim();
+      return {
+        id: question.id,
+        selected: question.multiSelect === true || !custom ? draftAnswer.selected : [],
+        ...(custom ? { custom } : {}),
+      };
+    });
     try {
-      const nextState = await window.hermesDesktop.respondClarification(text);
+      const nextState = await window.dshDesktop.respondClarification(pending.requestId, answers);
       setState(nextState);
     } catch (e) {
       console.error("Failed to respond to clarification:", e);
+      const detail = e instanceof Error ? e.message : String(e);
+      window.alert(`提交回答失败：${detail}`);
     }
   }
 
+  async function cancelClarification() {
+    const pending = state?.pendingClarification;
+    if (!pending || !window.dshDesktop?.cancelClarification) return;
+    try {
+      const nextState = await window.dshDesktop.cancelClarification(pending.requestId);
+      setState(nextState);
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      window.alert(`关闭提问失败：${detail}`);
+    }
+  }
+
+  function updateClarificationDraft(questionId: string, patch: Partial<DshQuestionDraft>) {
+    const requestId = state?.pendingClarification?.requestId;
+    if (!requestId) return;
+    setClarificationDraftState((current) => {
+      const answers = current?.requestId === requestId ? current.answers : {};
+      return {
+        requestId,
+        answers: {
+          ...answers,
+          [questionId]: {
+            ...(answers[questionId] || { selected: [], custom: "" }),
+            ...patch,
+          },
+        },
+      };
+    });
+  }
+
   async function saveSettings() {
-    if (!window.hermesDesktop) {
+    if (!window.dshDesktop) {
       return;
     }
 
@@ -1447,7 +1903,7 @@ function App() {
     const workspaceChanged = draftSettings.cwd !== state?.settings.cwd;
 
     const customList = Array.isArray(draftSettings.customModels) ? [...draftSettings.customModels] : [];
-    if (draftSettings.model && draftSettings.runtimeMode !== "official" && !customList.includes(draftSettings.model)) {
+    if (draftSettings.model && !customList.includes(draftSettings.model)) {
       customList.push(draftSettings.model);
     }
     const finalSettings = {
@@ -1456,7 +1912,7 @@ function App() {
     };
 
     try {
-      const nextState = await window.hermesDesktop.updateSettings(finalSettings);
+      const nextState = await window.dshDesktop.updateSettings(finalSettings);
       if (workspaceChanged) {
         setWorkspaceSelectionLocked(true);
       }
@@ -1469,20 +1925,37 @@ function App() {
     }
   }
 
+  async function clearCurrentProviderApiKey() {
+    if (!window.dshDesktop || !state) return;
+    const provider = draftSettings.apiProvider;
+    if (!state.providerCredentialStatus?.[provider]?.writable) return;
+    if (!window.confirm(`清除 DSH 中保存的 ${provider} API Key？`)) return;
+
+    setSettingsBusyText("正在清除 DSH 凭据...");
+    try {
+      const nextState = await window.dshDesktop.clearProviderApiKey(provider);
+      setState(nextState);
+      setDraftSettings((current) => ({ ...current, apiKey: "" }));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      window.alert(`清除 API Key 失败：${detail}`);
+    } finally {
+      setSettingsBusyText(null);
+    }
+  }
+
   async function closeSettingsModal() {
-    if (!window.hermesDesktop) {
+    if (!window.dshDesktop) {
       setSettingsOpen(false);
       return;
     }
 
-    setSettingsBusyText(isLoggingIn ? "正在取消官方登录..." : "正在关闭...");
+    const loginPending = ["initializing", "waiting-browser", "exchanging", "committing"].includes(state?.account?.attempt?.phase || "");
+    setSettingsBusyText(loginPending ? "正在取消 DeepSeek 账号登录..." : "正在关闭...");
     try {
-      if (isLoggingIn) {
-        const nextState = await window.hermesDesktop.cancelOfficialLogin();
+      if (loginPending) {
+        const nextState = await window.dshDesktop.cancelAccountSignIn();
         setState(nextState);
-        if (!headerModelDirtyRef.current) {
-          setHeaderModelSelection(nextState.official.defaultModel);
-        }
         setIsLoggingIn(false);
       }
       setSettingsOpen(false);
@@ -1493,43 +1966,30 @@ function App() {
     }
   }
 
-  async function refreshOfficialConfig() {
-    if (!window.hermesDesktop || !state) {
-      return;
-    }
-    const nextState = await window.hermesDesktop.updateSettings({});
-    setState(nextState);
-    if (!headerModelDirtyRef.current) {
-      setHeaderModelSelection(nextState.official.defaultModel);
-    }
-  }
-
-  async function logoutOfficialConfig() {
-    if (!window.hermesDesktop || !state) {
-      return;
-    }
-    const nextState = await window.hermesDesktop.updateSettings({ logoutOfficial: true });
-    setState(nextState);
-    if (!headerModelDirtyRef.current) {
-      setHeaderModelSelection(nextState.official.defaultModel);
-    }
-  }
-
-  async function loginOfficialConfig() {
-    if (!window.hermesDesktop || !state) {
+  async function startDshAccountSignIn() {
+    if (!window.dshDesktop || !state) {
       return;
     }
     setIsLoggingIn(true);
     try {
-      const nextState = await window.hermesDesktop.updateSettings({ loginOfficial: true });
+      const nextState = await window.dshDesktop.startAccountSignIn();
       setState(nextState);
-      if (!headerModelDirtyRef.current) {
-        setHeaderModelSelection(nextState.official.defaultModel);
-      }
     } catch (e) {
-      console.error("Login failed:", e);
+      const detail = e instanceof Error ? e.message : String(e);
+      window.alert(`DeepSeek 账号登录失败：${detail}`);
     } finally {
       setIsLoggingIn(false);
+    }
+  }
+
+  async function signOutDshAccount() {
+    if (!window.dshDesktop) return;
+    try {
+      const nextState = await window.dshDesktop.signOutAccount();
+      setState(nextState);
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      window.alert(`退出 DeepSeek 账号失败：${detail}`);
     }
   }
 
@@ -1537,7 +1997,7 @@ function App() {
     const modelName = (modelToAdd || (isManualInputMode ? customModelInput : selectedModelToAdd) || customModelInput).trim();
     if (!modelName) return;
 
-    setDraftSettings((current: HermesAppState["settings"]) => {
+    setDraftSettings((current: DshAppState["settings"]) => {
       const presets = (PROVIDER_PRESET_MODELS[current.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
       const existingList = Array.isArray(current.customModels) && current.customModels.length > 0
         ? current.customModels
@@ -1555,7 +2015,7 @@ function App() {
   }
 
   function handleRemoveCustomModel(modelToRemove: string) {
-    setDraftSettings((current: HermesAppState["settings"]) => {
+    setDraftSettings((current: DshAppState["settings"]) => {
       const presets = (PROVIDER_PRESET_MODELS[current.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
       const existingList = Array.isArray(current.customModels) && current.customModels.length > 0
         ? current.customModels
@@ -1570,66 +2030,45 @@ function App() {
   }
 
   async function applyModelChange(selectedModel: string) {
-    if (!window.hermesDesktop) {
+    if (!window.dshDesktop) {
       return;
     }
     setHeaderModelSelection(selectedModel);
     headerModelDirtyRef.current = true;
-    if (state?.settings.runtimeMode === "official") {
-      const nextState = await window.hermesDesktop.switchSessionModel(selectedModel);
-      setState(nextState);
-    } else {
-      const customList = Array.isArray(state?.settings.customModels) ? [...state.settings.customModels] : [];
-      if (selectedModel && !customList.includes(selectedModel)) {
-        customList.push(selectedModel);
-      }
-      const nextState = await window.hermesDesktop.updateSettings({
-        ...state?.settings,
-        model: selectedModel,
-        customModels: customList,
-      });
-      setState(nextState);
-      await window.hermesDesktop.switchSessionModel(selectedModel);
+    const customList = Array.isArray(state?.settings.customModels) ? [...state.settings.customModels] : [];
+    if (selectedModel && !customList.includes(selectedModel)) {
+      customList.push(selectedModel);
     }
+    const nextState = await window.dshDesktop.updateSettings({
+      ...state?.settings,
+      model: selectedModel,
+      customModels: customList,
+    });
+    setState(nextState);
+    await window.dshDesktop.switchSessionModel(selectedModel);
   }
 
   async function registerNewSkill() {
-    if (!window.hermesDesktop) {
+    if (!window.dshDesktop) {
       return;
     }
-    const nextState = await window.hermesDesktop.registerSkillFile();
+    const nextState = await window.dshDesktop.registerSkillFile();
     setState(nextState);
   }
 
   async function unregisterSkill(path: string) {
-    if (!window.hermesDesktop) {
+    if (!window.dshDesktop) {
       return;
     }
-    const nextState = await window.hermesDesktop.unregisterSkill(path);
+    const nextState = await window.dshDesktop.unregisterSkill(path);
     setState(nextState);
   }
 
   async function repairRuntime() {
-    if (!window.hermesDesktop) {
+    if (!window.dshDesktop) {
       return;
     }
-    const nextState = await window.hermesDesktop.repairRuntime();
-    setState(nextState);
-  }
-
-  async function uninstallRuntime() {
-    if (!window.hermesDesktop) {
-      return;
-    }
-
-    const confirmed = window.confirm(
-      "这会停止当前 Hermes 后台，并删除这个 Electron 应用私有目录里的 Hermes 运行时与会话数据。API 配置会保留。继续吗？"
-    );
-    if (!confirmed) {
-      return;
-    }
-
-    const nextState = await window.hermesDesktop.uninstallRuntime();
+    const nextState = await window.dshDesktop.repairRuntime();
     setState(nextState);
   }
 
@@ -1668,8 +2107,8 @@ function App() {
     : null;
 
   const groupedThreads = useMemo(() => {
-    const groups: Array<{ folderName: string; threads: HermesThreadSummary[] }> = [];
-    const map = new Map<string, HermesThreadSummary[]>();
+    const groups: Array<{ folderName: string; threads: DshThreadSummary[] }> = [];
+    const map = new Map<string, DshThreadSummary[]>();
 
     for (const thread of orderedThreads) {
       const rawCwd = (thread.cwd || "").trim();
@@ -1713,7 +2152,7 @@ function App() {
     interface RenderTurnGroup {
       id: string;
       role: "user" | "assistant";
-      messages: HermesChatMessage[];
+      messages: DshChatMessage[];
     }
     const groups: RenderTurnGroup[] = [];
     for (const message of activeMessages) {
@@ -1738,14 +2177,13 @@ function App() {
     }
     return groups;
   }, [activeMessages]);
-  const isOfficialMode = state?.settings.runtimeMode === "official";
-  const resolvedUsageModel = state?.lastUsageModel?.trim() || state?.currentRuntimeModel?.trim() || null;
-  const displayModel = resolvedUsageModel || (isOfficialMode ? state?.official.defaultModel : state?.settings.model) || "未设置";
-  const needsProviderSetup = isOfficialMode ? !state?.official.isLoggedIn : !state?.settings.apiKey.trim();
+  const hasDeepSeekAccount = state?.account?.status === "credential-stored";
+  const selectedProvider = state?.settings.apiProvider || "deepseek";
+  const hasProviderApiKey = Boolean(state?.providerCredentialStatus?.[selectedProvider]?.configured);
+  const needsProviderSetup = !hasProviderApiKey && !(selectedProvider === "deepseek" && hasDeepSeekAccount);
   const runtimeInstalled = !!state?.runtime.installed;
-  const officialModelDirty = !!state && draftSettings.runtimeMode === "official" && draftSettings.model !== state.official.defaultModel;
   const currentProviderPresets = (PROVIDER_PRESET_MODELS[state?.settings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
-  const currentSavedModel = isOfficialMode ? state?.official.defaultModel : state?.settings.model;
+  const currentSavedModel = state?.settings.model;
   const savedCustomModels = Array.isArray(state?.settings.customModels) ? state.settings.customModels : [];
   const draftCustomModels = Array.isArray(draftSettings.customModels) ? draftSettings.customModels : [];
   const customModelList = Array.from(
@@ -1759,26 +2197,25 @@ function App() {
     )
   );
 
-  const quickModelOptions = isOfficialMode
-    ? ((state?.official.availableModels.length ?? 0) > 0 ? (state?.official.availableModels ?? []) : [state?.official.defaultModel ?? draftSettings.model])
-    : customModelList;
+  const quickModelOptions = customModelList;
 
-  const currentActiveModel = (isOfficialMode ? state?.official.defaultModel : state?.settings.model) || "";
+  const currentActiveModel = state?.settings.model || "";
   const quickModelDirty = !!state && !!headerModelSelection && headerModelSelection !== currentActiveModel;
   const selectedSkillDisplayName = selectedSkillTag
     ? state?.skills.find((skill) => skill.name === selectedSkillTag)?.displayName || BUILTIN_SKILL_DISPLAY_NAMES[selectedSkillTag] || selectedSkillTag
     : "";
   const isModelSwitching = !!state?.busy && !!state?.status && state.status.includes("切换模型");
-  const isHermesMissing = !state?.runtime.installed || (!!state?.error && (
+  const isDshUnavailable = !state?.runtime.installed || (!!state?.error && (
     state.error.includes("ENOENT") || 
-    state.error.includes("找不到 Hermes") || 
+    state.error.includes("找不到 DSH") ||
     state.error.includes("No module named") ||
-    state.error.includes("Hermes backend exited") ||
-    state.error.includes("Could not connect to Hermes gateway") ||
+    state.error.includes("DSH backend exited") ||
+    state.error.includes("Could not connect to DSH service") ||
     state.error.includes("did not become ready") ||
-    state.error.includes("Bundled Hermes runtime source not found")
+    state.error.includes("DSH runtime source not found")
   ));
   const isInitializing = !!state && !state.error && (
+    state.status.startsWith("正在") ||
     state.status.startsWith("Starting") ||
     state.status.startsWith("Installing") ||
     state.status.startsWith("Preparing") ||
@@ -1786,11 +2223,11 @@ function App() {
     !state.runtime.installed
   );
   const isCurrentThreadBusy = Boolean(state?.busy);
-  const canSend = !needsProviderSetup && !isHermesMissing && !isCurrentThreadBusy && !isThreadLoading && !isInitializing;
+  const canSend = !needsProviderSetup && !isDshUnavailable && !isCurrentThreadBusy && !isThreadLoading && !isInitializing;
 
   const statusDotClass = isInitializing
     ? "warning"
-    : isHermesMissing
+    : isDshUnavailable
     ? "error"
     : needsProviderSetup
       ? "warning"
@@ -1801,11 +2238,11 @@ function App() {
           : "";
 
   const statusLabel = isInitializing
-    ? "加载中..."
-    : isHermesMissing
+    ? (state?.status || "加载中...")
+    : isDshUnavailable
     ? "运行时未就绪"
     : needsProviderSetup
-      ? (isOfficialMode ? "官方账号未登录" : "未配置 API 密钥")
+      ? (state?.settings.apiProvider === "deepseek" && !hasDeepSeekAccount ? "未登录 DeepSeek 账号或未配置 API Key" : "未配置 API 密钥")
       : state?.error
         ? "运行异常"
         : (concurrencyOverview || state?.status || "Ready.");
@@ -1828,16 +2265,18 @@ function App() {
               </div>
             </div>
           </div>
-          <div className="startup-sidebar-status" role="status">
+          <div className={`startup-sidebar-status ${bootstrapError ? "has-error" : ""}`} role="status">
             <span className="startup-sidebar-status-dot" aria-hidden="true" />
             <div>
-              <strong>正在启动</strong>
-              <span>连接 DSH 运行时</span>
+              <strong>{bootstrapError ? "启动遇到问题" : "正在启动"}</strong>
+              <span>
+                {bootstrapError?.includes("主进程版本不一致") ? "桌面主进程需要重启" : bootstrapError ? "等待工作台状态失败" : "等待桌面进程响应"}
+              </span>
             </div>
           </div>
         </aside>
         <main className="chat startup-chat">
-          <div className="startup-boot-panel" role="status" aria-live="polite" aria-busy="true">
+          <div className="startup-boot-panel" role="status" aria-live="polite" aria-busy={!bootstrapError}>
             <div className="startup-boot-mark" aria-hidden="true">
               <span className="startup-boot-glow" />
               <span className="startup-boot-ring startup-boot-ring-outer" />
@@ -1849,15 +2288,36 @@ function App() {
             </div>
             <div className="startup-boot-copy">
               <p className="startup-loading-eyebrow">STATPILOT · DESKTOP WORKSPACE</p>
-              <h2>正在连接 Hermes</h2>
-              <p>正在启动本地智能运行时，准备你的工作台。</p>
+              <h2>{bootstrapError ? "工作台暂不可用" : "正在启动桌面工作台"}</h2>
+              <p className={bootstrapError ? "startup-boot-error" : ""}>
+                {bootstrapError || "正在读取桌面进程状态，随后会连接本地 DSH 运行时。"}
+              </p>
             </div>
-            <div className="startup-boot-loader" aria-hidden="true">
-              <span />
-            </div>
+            {bootstrapError && bootstrapError.includes("主进程版本不一致") ? null : bootstrapError ? (
+              <button
+                className="startup-boot-retry"
+                type="button"
+                onClick={() => {
+                  setBootstrapError(null);
+                  setBootstrapRetryKey((current) => current + 1);
+                }}
+              >
+                重试连接
+              </button>
+            ) : (
+              <div className="startup-boot-loader" aria-hidden="true">
+                <span />
+              </div>
+            )}
             <div className="startup-boot-meta">
               <span className="startup-boot-meta-dot" aria-hidden="true" />
-              <span>首次启动可能需要一点时间</span>
+              <span>
+                {bootstrapError?.includes("主进程版本不一致")
+                  ? "请完全退出应用，再重新打开。"
+                  : bootstrapError
+                    ? "如果问题持续，请重新启动应用。"
+                    : "桌面进程通常会在几秒内响应"}
+              </span>
             </div>
           </div>
         </main>
@@ -1899,7 +2359,7 @@ function App() {
             type="button"
             className={`sidebar-action-item ${activeMainTab === "chat" ? "!bg-blue-50/80 !text-blue-600 font-bold" : ""}`}
             onClick={handleSafeCreateNewChat}
-            disabled={isHermesMissing}
+            disabled={isDshUnavailable}
             title="新建任务"
           >
             <svg className="w-4.5 h-4.5 text-current shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1923,6 +2383,21 @@ function App() {
               <path d="M6.5 14v6m-3-3h6" />
             </svg>
             <span>我的技能</span>
+          </button>
+
+          <button
+            type="button"
+            className={`sidebar-action-item ${activeMainTab === "archive" ? "!bg-blue-50/80 !text-blue-600 font-bold" : ""}`}
+            onClick={() => setActiveMainTab("archive")}
+            title="查看和恢复已归档对话"
+          >
+            <svg className="w-4.5 h-4.5 text-current shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 4h18v4H3z" />
+              <path d="M5 8v12h14V8" />
+              <path d="M10 12h4m-2-2v4" />
+            </svg>
+            <span>已归档</span>
+            <span className="sidebar-action-count">{state?.archivedThreads?.length ?? 0}</span>
           </button>
         </div>
 
@@ -2005,9 +2480,9 @@ function App() {
                             className="thread-item-slim-delete"
                             onClick={(event) => {
                               event.stopPropagation();
-                              void deleteThread(thread.id, title);
+                              void archiveThreadFromSidebar(thread.id, title);
                             }}
-                            title="删除对话"
+                            title="从侧边栏移除对话"
                           >
                             ×
                           </button>
@@ -2035,6 +2510,21 @@ function App() {
           onImportSkill={() => void registerNewSkill()}
           onUnregisterSkill={(path) => void unregisterSkill(path)}
           onUseSkill={handleSkillPageUse}
+        />
+      ) : activeMainTab === "archive" ? (
+        <ArchivedThreadsPage
+          threads={state?.archivedThreads ?? []}
+          isBusy={isThreadLoading}
+          onRestore={(threadId) => {
+            void restoreArchivedThread(threadId)
+              .then(setState)
+              .catch((error) => {
+                const detail = error instanceof Error ? error.message : String(error);
+                window.alert(`恢复对话失败：${detail}`);
+              });
+          }}
+          onDelete={(threadId, title) => void permanentlyDeleteArchivedThread(threadId, title)}
+          onNewChat={handleSafeCreateNewChat}
         />
       ) : (
         <main className="chat">
@@ -2172,20 +2662,16 @@ function App() {
               </div>
             ) : (
               <>
-                {isHermesMissing ? (
+                {isDshUnavailable ? (
                   <div className="onboarding-card">
                     <div className="onboarding-title">
-                      <h3>Hermes 运行时未就绪</h3>
+                      <h3>DSH 运行时未就绪</h3>
                     </div>
-                    <p>桌面客户端目前无法启动内置 Hermes 运行时。现在这套集成已经改成“应用私有运行时”，不会再依赖你手工指定外部 `hermes` 可执行文件。</p>
+                    <p>桌面客户端目前无法启动随应用提供的 DeepSeek Harness 运行时。</p>
                     <div className="guide-steps">
                       <div className="step-item">
-                        <strong>第一步：一键修复内置运行时</strong>
-                        <p>点击下方按钮，应用会把 Hermes runtime 安装/恢复到自己的私有目录，再重新尝试启动本地后台。</p>
-                      </div>
-                      <div className="step-item">
-                        <strong>第二步：如果连种子运行时都不存在</strong>
-                        <p>开发环境下如果项目根目录还没有 `.runtime`，先在终端执行 <code>npm run hermes:bootstrap</code>，之后再点修复按钮即可。</p>
+                        <strong>重新启动 DSH 服务</strong>
+                        <p>尝试重新启动本地 DSH 服务；如果仍失败，请将错误详情提供给维护人员。</p>
                       </div>
                     </div>
                     {state.error ? (
@@ -2195,49 +2681,30 @@ function App() {
                       </div>
                     ) : null}
                     <div className="onboarding-footer">
-                      <button className="primary-button" onClick={() => void repairRuntime()}>修复内置运行时</button>
+                      <button className="primary-button" onClick={() => void repairRuntime()}>重新启动 DSH</button>
                     </div>
                   </div>
                 ) : needsProviderSetup ? (
                   <div className="onboarding-card">
                     <div className="onboarding-title">
-                      <h3>{isOfficialMode ? "先连接 Hermes 官方账号" : "先配置你自己的模型 API"}</h3>
+                    <h3>先配置模型 API</h3>
                     </div>
                     <p>
-                      {isOfficialMode
-                        ? "当前切到了 Hermes 官方模式。这个模式会复用你本机现有的 ~/.hermes 登录态和模型配置。"
-                        : "当前切到了自定义私有模式。先在右上角「设置」里填好 provider、model 和 API key，就可以直接开始对话。"}
+                      {state.settings.apiProvider === "deepseek"
+                        ? "在设置中填写 DeepSeek API Key，或登录 DeepSeek 账号后即可开始对话。"
+                        : "先在右上角「设置」里填好 provider、model 和 API key，就可以开始对话。"}
                     </p>
                     <div className="guide-steps">
-                      {isOfficialMode ? (
-                        <>
-                          <div className="step-item">
-                            <strong>检测结果</strong>
-                            <p>官方配置目录：<code>{state.official.homeDir}</code></p>
-                            <p>登录状态：<b>{state.official.isLoggedIn ? `已登录 (${state.official.subscriptionLabel})` : "未登录"}</b></p>
-                          </div>
-                          <div className="step-item">
-                            <strong>当前官方默认模型</strong>
-                            <p>Provider：<b>{state.official.provider}</b>，默认模型：<b>{state.official.defaultModel}</b></p>
-                          </div>
-                          {!state.official.isLoggedIn && (
-                            <div className="step-item">
-                              <strong>如何进行官方登录</strong>
-                              <p>请在您的系统终端（Terminal）中执行命令：<code>hermes login</code>。登录成功后，打开右上角设置并点击 <b>“刷新状态”</b> 即可同步。</p>
-                            </div>
-                          )}
-                        </>
+                      {state.settings.apiProvider === "deepseek" ? (
+                        <div className="step-item">
+                          <strong>推荐配置</strong>
+                          <p>使用 DeepSeek V4.1 Flash（模型 ID：<b>deepseek-flash</b>），再填入 API Key 或登录 DeepSeek 账号。</p>
+                        </div>
                       ) : (
-                        <>
-                          <div className="step-item">
-                            <strong>推荐配置</strong>
-                            <p>如果你在用 DeepSeek，就把 Provider 设成 <b>deepseek</b>，模型填例如 <b>deepseek-v4-flash</b> 或 <b>deepseek-v4-pro</b>，再填入对应 API key。</p>
-                          </div>
-                          <div className="step-item">
-                            <strong>自定义兼容接口</strong>
-                            <p>如果你是代理服务或自建 OpenAI-compatible 接口，把 Provider 设成 <b>custom</b>，同时补上 Base URL 和 API key。</p>
-                          </div>
-                        </>
+                        <div className="step-item">
+                          <strong>模型 API 配置</strong>
+                          <p>在设置中选择 provider，并配置模型、API Key 与必要的 Base URL。</p>
+                        </div>
                       )}
                     </div>
                     {state.error ? (
@@ -2252,7 +2719,7 @@ function App() {
                   </div>
                 ) : null}
 
-                {!isHermesMissing && !needsProviderSetup && activeMessages.length === 0 && !state.activeDraft && (
+                {!isDshUnavailable && !needsProviderSetup && activeMessages.length === 0 && !state.activeDraft && (
                   <div className="trae-hero-container">
                     <div className="trae-hero-badge">
                       <svg className="w-4 h-4 text-blue-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -2323,7 +2790,7 @@ function App() {
                   </div>
                 )}
 
-                {!isHermesMissing && renderTurnGroups.map((group, groupIdx) => {
+                {!isDshUnavailable && renderTurnGroups.map((group, groupIdx) => {
                   const isLastGroup = groupIdx === renderTurnGroups.length - 1;
                   const isThisGroupStreaming = Boolean(state?.activeDraft) && isLastGroup && group.role === "assistant";
 
@@ -2381,7 +2848,7 @@ function App() {
 
                   // Assistant turn group
                   const historyMsgs = group.messages;
-                  // The official UI keeps the process trail above one final
+                  // The DSH UI keeps the process trail above one final
                   // answer. Reasoning is represented by Think activities, not
                   // rendered again as a second block in the answer body.
                   const answerTexts = (isThisGroupStreaming
@@ -2440,7 +2907,7 @@ function App() {
                   <InterruptedTurnDivider />
                 ) : null}
 
-                {!isHermesMissing && state?.activeDraft && (renderTurnGroups.length === 0 || renderTurnGroups[renderTurnGroups.length - 1].role !== "assistant") ? (
+                {!isDshUnavailable && state?.activeDraft && (renderTurnGroups.length === 0 || renderTurnGroups[renderTurnGroups.length - 1].role !== "assistant") ? (
                   <article className="bubble assistant streaming">
                     <div className="bubble-head">
                       <strong>深小统</strong>
@@ -2460,7 +2927,7 @@ function App() {
                   </article>
                 ) : null}
 
-                {!isHermesMissing && state?.busy && !state?.activeDraft && state?.status?.includes("排队") ? (
+                {!isDshUnavailable && state?.busy && !state?.activeDraft && state?.status?.includes("排队") ? (
                   <article className="bubble assistant queued-bubble">
                     <div className="bubble-head">
                       <strong>深小统</strong>
@@ -2546,10 +3013,10 @@ function App() {
                     onClick={() => {
                       setSettingsOpen(true);
                       setActiveSettingsTab("chat");
-                      void refreshOfficialConfig();
+                      void window.dshDesktop?.getState().then(setState);
                     }}
                   >
-                    🔑 前往账号设置重新登录 →
+                    🔑 前往 DeepSeek 账号设置 →
                   </button>
                 ) : null}
               </div>
@@ -2575,30 +3042,14 @@ function App() {
                   <button
                     type="button"
                     className="composer-approval-btn approve"
-                    onClick={() => void window.hermesDesktop?.respondApproval?.("once")}
+                    onClick={() => void respondApproval(state.pendingApproval!.requestId, "once")}
                   >
                     ✓ 本次允许
                   </button>
                   <button
                     type="button"
-                    className="composer-approval-btn session"
-                    onClick={() => void window.hermesDesktop?.respondApproval?.("session")}
-                  >
-                    ↻ 本会话允许
-                  </button>
-                  {state.pendingApproval.allowPermanent !== false ? (
-                    <button
-                      type="button"
-                      className="composer-approval-btn always"
-                      onClick={() => void window.hermesDesktop?.respondApproval?.("always")}
-                    >
-                      ✓ 始终允许
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
                     className="composer-approval-btn deny"
-                    onClick={() => void window.hermesDesktop?.respondApproval?.("deny")}
+                    onClick={() => void respondApproval(state.pendingApproval!.requestId, "deny")}
                   >
                     ✕ 拒绝
                   </button>
@@ -2610,55 +3061,89 @@ function App() {
               <div className="composer-clarification-banner">
                 <div className="composer-clarification-title">
                   <span aria-hidden="true">💬</span>
-                  <strong>需要补充信息</strong>
+                  <strong>
+                    {state.pendingClarification.questions.some((question) => question.intent?.kind === "plan-review")
+                      ? "计划待审"
+                      : "需要补充信息"}
+                  </strong>
                   <button
                     type="button"
                     className="composer-clarification-close"
-                    onClick={() => void handleStopMessage()}
-                    title="关闭并终止当前等待"
-                    aria-label="关闭并终止当前等待"
+                    onClick={() => void cancelClarification()}
+                    title="关闭提问并返回对话"
+                    aria-label="关闭提问并返回对话"
                   >
                     ×
                   </button>
                 </div>
-                <div className="composer-clarification-question">
-                  {state.pendingClarification.question}
-                </div>
-                {state.pendingClarification.choices?.length ? (
-                  <div className="composer-clarification-choices">
-                    {state.pendingClarification.choices.map((choice) => (
-                      <button
-                        key={choice}
-                        type="button"
-                        className="composer-clarification-choice"
-                        onClick={() => void respondClarification(choice)}
-                      >
-                        {choice}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-                <div className="composer-clarification-input-row">
-                  <input
-                    value={clarificationDraft}
-                    onChange={(event) => setClarificationDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" && !event.shiftKey) {
-                        event.preventDefault();
-                        void respondClarification(clarificationDraft);
-                      }
-                    }}
-                    placeholder="请补充说明..."
-                    aria-label="补充说明"
-                    autoFocus
-                  />
+                {state.pendingClarification.questions.map((question, index) => {
+                  const answer = clarificationDraft[question.id] || { selected: [], custom: "" };
+                  return (
+                    <section className="composer-clarification-question-card" key={question.id}>
+                      {question.header ? <div className="composer-clarification-header">{question.header}</div> : null}
+                      <div className="composer-clarification-question">
+                        {state.pendingClarification.questions.length > 1 ? `${index + 1}. ` : ""}{question.question}
+                      </div>
+                      {question.detail ? <div className="composer-clarification-detail">{question.detail}</div> : null}
+                      {question.options?.length ? (
+                        <div className="composer-clarification-choices">
+                          {question.options.map((option) => {
+                            const selected = answer.selected.includes(option.label);
+                            return (
+                              <button
+                                key={option.label}
+                                type="button"
+                                aria-pressed={selected}
+                                className={`composer-clarification-choice ${selected ? "selected" : ""}`}
+                                onClick={() => {
+                                  const nextSelected = question.multiSelect
+                                    ? selected
+                                      ? answer.selected.filter((label) => label !== option.label)
+                                      : [...answer.selected, option.label]
+                                    : [option.label];
+                                  updateClarificationDraft(question.id, {
+                                    selected: nextSelected,
+                                    ...(question.multiSelect ? {} : { custom: "" }),
+                                  });
+                                }}
+                              >
+                                <span>{option.label}</span>
+                                {option.description ? <small>{option.description}</small> : null}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                      <div className="composer-clarification-input-row">
+                        <input
+                          value={answer.custom}
+                          onChange={(event) => updateClarificationDraft(question.id, {
+                            custom: event.target.value,
+                            ...(question.multiSelect ? {} : { selected: [] }),
+                          })}
+                          placeholder={question.options?.length ? "其他回答（可选）" : "输入回答"}
+                          aria-label={`${question.header || "问题"}的补充回答`}
+                        />
+                        <button
+                          type="button"
+                          className="composer-clarification-skip"
+                          onClick={() => updateClarificationDraft(question.id, { selected: [], custom: "" })}
+                        >
+                          跳过
+                        </button>
+                      </div>
+                    </section>
+                  );
+                })}
+                <div className="composer-clarification-footer">
+                  <span>所选选项与补充内容会一并提交给 DSH。</span>
                   <button
                     type="button"
                     className="composer-clarification-submit"
-                    disabled={!clarificationDraft.trim()}
-                    onClick={() => void respondClarification(clarificationDraft)}
+                    disabled={isThreadLoading}
+                    onClick={() => void respondClarification()}
                   >
-                    发送
+                    提交回答
                   </button>
                 </div>
               </div>
@@ -2714,11 +3199,37 @@ function App() {
                 </span>
               )}
 
+              {pendingVoiceTranscript && (
+                <div className="trae-voice-pending" role="status">
+                  <div className="trae-voice-pending-heading">
+                    <strong>语音已转写，但当前对话已切换</strong>
+                    <span>结果尚未加入任何对话，可检查后手动插入。</span>
+                  </div>
+                  <p>{pendingVoiceTranscript}</p>
+                  <div className="trae-voice-pending-actions">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => {
+                        setDraft((current) => current.trim() ? `${current.trimEnd()}\n${pendingVoiceTranscript}` : pendingVoiceTranscript);
+                        setPendingVoiceTranscript(null);
+                        focusEditor();
+                      }}
+                    >
+                      插入当前草稿
+                    </button>
+                    <button type="button" className="text-action-button" onClick={() => setPendingVoiceTranscript(null)}>
+                      丢弃
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <textarea
                 ref={textareaRef}
                 className="trae-composer-textarea"
                 value={draft}
-                disabled={isHermesMissing || needsProviderSetup}
+                disabled={isDshUnavailable || needsProviderSetup}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
@@ -2731,12 +3242,10 @@ function App() {
                   }
                 }}
                 placeholder={
-                  isHermesMissing
+                  isDshUnavailable
                     ? "运行时未就绪，消息框已禁用"
                     : needsProviderSetup
-                      ? isOfficialMode
-                        ? "请先让本机 Hermes 官方配置完成登录，消息框暂不可用"
-                        : "请先在设置中填写 API key，消息框暂不可用"
+                      ? "请先在设置中配置 API Key 或 DeepSeek 账号，消息框暂不可用"
                       : "输入任务需求，或先添加文件..."
                 }
               />
@@ -2747,7 +3256,7 @@ function App() {
                     type="button"
                     className="trae-attach-button"
                     onClick={() => void handleSelectAttachments()}
-                    disabled={isHermesMissing || Boolean(state.busy) || isThreadLoading}
+                    disabled={isDshUnavailable || Boolean(state.busy) || isThreadLoading}
                     title="添加要提交给智能体的本地文件"
                   >
                     <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -2756,6 +3265,29 @@ function App() {
                     <span>添加文件</span>
                     {selectedAttachments.length > 0 && <span className="trae-attach-count">{selectedAttachments.length}</span>}
                   </button>
+                  <button
+                    type="button"
+                    className={`trae-voice-button ${voiceStatus === "recording" ? "recording" : ""}`}
+                    onClick={() => void handleVoiceInput()}
+                    disabled={isDshUnavailable || isThreadLoading || (Boolean(state?.busy) && voiceStatus === "idle") || voiceStatus === "transcribing"}
+                    title={voicePreparationText || (voiceStatus === "recording" ? "停止录音并转成草稿" : voiceStatus === "preparing" ? "取消语音模型准备" : "本地语音转写；结果放入草稿，不会自动发送")}
+                    aria-label={voiceStatus === "recording" ? "停止录音" : voiceStatus === "preparing" ? "取消语音模型准备" : "语音输入"}
+                  >
+                    <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      {voiceStatus === "recording" ? (
+                        <rect x="6" y="6" width="12" height="12" rx="2" />
+                      ) : (
+                        <>
+                          <rect x="9" y="2" width="6" height="12" rx="3" />
+                          <path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8" />
+                        </>
+                      )}
+                    </svg>
+                    <span>{voiceStatus === "recording" ? "停止" : voiceStatus === "preparing" ? "取消准备" : voiceStatus === "transcribing" ? "转写中" : "语音输入"}</span>
+                  </button>
+                  {voiceStatus === "preparing" && voicePreparationText && (
+                    <span className="trae-voice-status" role="status">{voicePreparationText}</span>
+                  )}
 
                   {!isWorkspaceLocked() && (
                   <div ref={folderMenuRef} className="relative">
@@ -2934,7 +3466,7 @@ function App() {
                           </span>
                           <button
                             className="right-sidebar-item-name"
-                            onClick={() => void window.hermesDesktop.openExternal(`file://${file}`)}
+                            onClick={() => void window.dshDesktop.openExternal(`file://${file}`)}
                           >
                             {basename}
                           </button>
@@ -2946,7 +3478,7 @@ function App() {
                               const parts = file.split(/[/\\]/);
                               parts.pop();
                               const dirPath = parts.join("/");
-                              void window.hermesDesktop.openExternal(`file://${dirPath}`);
+                              void window.dshDesktop.openExternal(`file://${dirPath}`);
                             }}
                             title="打开文件所在目录"
                           >
@@ -2977,7 +3509,7 @@ function App() {
                   parts.pop();
                   resolvedPath = parts.join("/") || defaultOutputDir;
                 }
-                void window.hermesDesktop.openExternal(`file://${resolvedPath}`);
+                void window.dshDesktop.openExternal(`file://${resolvedPath}`);
               }}
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -3014,7 +3546,7 @@ function App() {
                   <li key={file} title={file}>
                     <button
                       className="text-button file-link"
-                      onClick={() => void window.hermesDesktop.openExternal(`file://${file}`)}
+                      onClick={() => void window.dshDesktop.openExternal(`file://${file}`)}
                     >
                       {basename}
                     </button>
@@ -3038,10 +3570,34 @@ function App() {
                 } else if (targetCwd && !defaultOutputDir.startsWith("/") && !defaultOutputDir.includes(":")) {
                   resolvedPath = `${targetCwd}/${defaultOutputDir}`;
                 }
-                void window.hermesDesktop.openExternal(`file://${resolvedPath}`);
+                void window.dshDesktop.openExternal(`file://${resolvedPath}`);
               }}
             >
               打开输出目录
+            </button>
+          </div>
+        </div>
+      )}
+
+      {archivedThread && (
+        <div className="file-alert-toast archive-session-toast" role="status" aria-live="polite">
+          <div className="toast-header">
+            <span className="toast-icon" aria-hidden="true">✓</span>
+            <strong>对话已从侧边栏移除</strong>
+            <button
+              className="toast-close"
+              onClick={() => setArchivedThread(null)}
+              aria-label="关闭提示"
+            >
+              ×
+            </button>
+          </div>
+          <div className="toast-body">
+            <p>{archivedThread.title}已归档，历史记录仍保留在本地。</p>
+          </div>
+          <div className="toast-footer">
+            <button className="toast-open-dir-button" onClick={() => void undoArchiveThread()}>
+              撤销归档
             </button>
           </div>
         </div>
@@ -3093,7 +3649,7 @@ function App() {
                       <circle cx="12" cy="12" r="3" />
                     </svg>
                   </span>
-                  视觉大模型
+                  图片理解
                 </button>
                 <button
                   type="button"
@@ -3115,7 +3671,7 @@ function App() {
               <div className="settings-content-header">
                 {activeSettingsTab === "runtime" && <h3>运行状态与工作区</h3>}
                 {activeSettingsTab === "chat" && <h3>对话模型配置</h3>}
-                {activeSettingsTab === "vision" && <h3>视觉大模型 (Vision Backend)</h3>}
+                {activeSettingsTab === "vision" && <h3>图片理解 (Image Understanding)</h3>}
                 {activeSettingsTab === "tools" && <h3>外部工具 & API 配置</h3>}
               </div>
 
@@ -3128,7 +3684,7 @@ function App() {
                         value={draftSettings.cwd}
                         disabled={isWorkspaceLocked()}
                         onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
+                          setDraftSettings((current: DshAppState["settings"]) => ({
                             ...current,
                             cwd: event.target.value,
                           }))
@@ -3143,7 +3699,7 @@ function App() {
                       <input
                         value={draftSettings.defaultOutputDir || ""}
                         onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
+                          setDraftSettings((current: DshAppState["settings"]) => ({
                             ...current,
                             defaultOutputDir: event.target.value,
                           }))
@@ -3155,11 +3711,6 @@ function App() {
                       </small>
                     </label>
 
-                    <label>
-                      内置 Runtime Binary
-                      <input value={state?.settings.hermesBin || ""} disabled />
-                    </label>
-
                     <div className="skills-section">
                       <div className="skills-section-header">
                         <h4>DSH 运行时</h4>
@@ -3169,7 +3720,7 @@ function App() {
                         <div className="skill-card">
                           <div className="skill-info">
                             <strong className="skill-card-header">DeepSeek DSH 运行时</strong>
-                            <p className="skill-card-desc">DSH 作为内置轻量运行时直接由应用内置提供，跨平台且无需外部 Python 虚拟环境。</p>
+                            <p className="skill-card-desc">应用启动本地 DSH 服务，并使用随安装包提供的 Node.js 运行时。</p>
                             <span className="skill-card-path">{state?.runtime.installDir}</span>
                             <span className="skill-card-path">{state?.runtime.homeDir}</span>
                           </div>
@@ -3177,14 +3728,7 @@ function App() {
                       </div>
                       <div className="modal-actions-inline">
                         <button className="secondary-button" onClick={() => void repairRuntime()}>
-                          安装 / 修复运行时
-                        </button>
-                        <button
-                          className="secondary-button"
-                          onClick={() => void uninstallRuntime()}
-                          disabled={!runtimeInstalled || (state?.runtime.uninstalling ?? false)}
-                        >
-                          {state?.runtime.uninstalling ? "卸载中..." : "一键卸载运行时"}
+                          重新启动 DSH
                         </button>
                       </div>
                     </div>
@@ -3193,23 +3737,7 @@ function App() {
 
                 {activeSettingsTab === "chat" && (
                   <div className="settings-tab-pane">
-                    <label>
-                      接入模式
-                      <select
-                        value={draftSettings.runtimeMode}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            runtimeMode: event.target.value as HermesAppState["settings"]["runtimeMode"],
-                            model: event.target.value === "official" ? (state?.official.defaultModel || "") : current.model,
-                          }))
-                        }
-                        className="settings-select"
-                      >
-                        <option value="private">自定义私有模式</option>
-                        <option value="official">Hermes 官方模式</option>
-                      </select>
-                    </label>
+                    <p className="field-hint">当前使用 DSH 本地服务连接 DeepSeek API。</p>
 
                     <div className={`yolo-setting-card ${draftSettings.yoloMode ? "enabled" : "disabled"}`}>
                       <div className="yolo-setting-copy">
@@ -3224,11 +3752,9 @@ function App() {
                           </span>
                         </div>
                         <p>
-                          {draftSettings.runtimeMode === "official"
-                            ? "应用到新建或恢复的 DSH 会话。"
-                            : "开启自动执行模式，减少普通命令与操作的逐次确认。"}
+                          开启后，新对话使用 DSH Full Access 权限预设，不受工作区沙箱限制且不会弹出普通审批；关闭后，新对话仅允许在工作区内写入，范围外操作需要授权。
                           <br />
-                          即使开启，硬性安全规则仍可能要求授权，授权面板不会被静默跳过。
+                          此设置只影响新对话，已有对话保留创建时的权限。DSH 发出的审批请求仍会显示在授权面板中。
                         </p>
                       </div>
                       <label className="yolo-toggle" title="切换 YOLO 自动执行模式">
@@ -3236,7 +3762,7 @@ function App() {
                           type="checkbox"
                           checked={draftSettings.yoloMode}
                           onChange={(event) =>
-                            setDraftSettings((current: HermesAppState["settings"]) => ({
+                            setDraftSettings((current: DshAppState["settings"]) => ({
                               ...current,
                               yoloMode: event.target.checked,
                             }))
@@ -3250,43 +3776,7 @@ function App() {
 
                     <label>
                       Model (对话模型)
-                      {draftSettings.runtimeMode === "official" ? (
-                        <div className="settings-model-switch">
-                          <div className="settings-model-row">
-                            <select
-                              value={draftSettings.model}
-                              onChange={(event) =>
-                                setDraftSettings((current: HermesAppState["settings"]) => ({
-                                  ...current,
-                                  model: event.target.value,
-                                }))
-                              }
-                              className="settings-select settings-model-select"
-                            >
-                              {((state?.official.availableModels.length ?? 0) > 0 ? (state?.official.availableModels ?? []) : [state?.official.defaultModel ?? draftSettings.model]).map((modelId) => (
-                                <option key={modelId} value={modelId}>
-                                  {modelId}
-                                </option>
-                              ))}
-                            </select>
-                            <button
-                              className="inline-apply-button"
-                              onClick={() => {
-                                if (!officialModelDirty) return;
-                                void applyModelChange(draftSettings.model);
-                              }}
-                              disabled={!officialModelDirty}
-                            >
-                              应用切换
-                            </button>
-                          </div>
-                          <small className="field-hint">
-                            实际运行：<b>{displayModel}</b>
-                            {officialModelDirty ? ` | 点击应用：${state?.official.defaultModel} → ${draftSettings.model}` : ""}
-                          </small>
-                        </div>
-                      ) : (
-                        <div className="provider-models-manager" style={{ marginTop: "4px" }}>
+                      <div className="provider-models-manager" style={{ marginTop: "4px" }}>
                           <div style={{ fontSize: "12.5px", color: "#64748b", marginBottom: "8px", lineHeight: 1.4 }}>
                             模型在下拉框选择或手动输入模型 ID 后，点击右侧 [+] 按钮添加到列表。
                           </div>
@@ -3325,7 +3815,7 @@ function App() {
                                   <option value="">选择模型以添加...</option>
                                   {(PROVIDER_PRESET_MODELS[draftSettings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((preset) => (
                                     <option key={preset.id} value={preset.id}>
-                                      {preset.id}
+                                      {preset.id} — {preset.desc}
                                     </option>
                                   ))}
                                   <option value="__manual__">✍️ 手动输入模型 ID...</option>
@@ -3451,6 +3941,12 @@ function App() {
                               已加入 Provider 的模型：
                             </div>
 
+                            {draftSettings.apiProvider === "deepseek" && (
+                              <div style={{ fontSize: "12px", color: "#64748b", marginBottom: "8px", lineHeight: 1.4 }}>
+                                默认使用 <b>deepseek-flash</b>（V4.1 Flash，支持原生视觉理解）；官方 API 当前也将兼容 ID <b>deepseek-v4-pro</b> 路由到 V4.1 Flash。
+                              </div>
+                            )}
+
                             <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
                               {(() => {
                                 const presets = (PROVIDER_PRESET_MODELS[draftSettings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
@@ -3488,7 +3984,11 @@ function App() {
                                       }}
                                       title={isSelected ? "当前生效的默认模型" : "点击切换为此模型"}
                                     >
-                                      <span>{modelId}</span>
+                                      <span>
+                                        {draftSettings.apiProvider === "deepseek" && modelId === "deepseek-flash"
+                                          ? "deepseek-flash · V4.1 Flash"
+                                          : modelId}
+                                      </span>
                                       <span
                                         onClick={(e) => {
                                           e.stopPropagation();
@@ -3522,56 +4022,69 @@ function App() {
                             蓝色高亮项为当前生效的默认模型，点击其他模型标签可直接切换。
                           </div>
                         </div>
+                    </label>
+
+                    <label>
+                      API Provider (大模型提供商)
+                      <select
+                        value={draftSettings.apiProvider}
+                        onChange={(event) => {
+                          const newProvider = event.target.value as DshAppState["settings"]["apiProvider"];
+                          setDraftSettings((current: DshAppState["settings"]) => ({
+                            ...current,
+                            apiProvider: newProvider,
+                            apiBaseUrl: newProvider === "deepseek" && !current.apiBaseUrl ? "https://api.deepseek.com" : current.apiBaseUrl,
+                          }));
+                        }}
+                        className="settings-select"
+                      >
+                        <option value="openai">OpenAI</option>
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="custom">自定义 OpenAI 兼容接口</option>
+                      </select>
+                    </label>
+
+                        {draftSettings.apiProvider !== "deepseek" && (
+                          <p className="field-hint" role="status">
+                            当前模型将由 DSH 的 {draftSettings.apiProvider === "custom" ? "自定义" : draftSettings.apiProvider} provider 路由处理。
+                          </p>
+                        )}
+
+                    <label>
+                      API Key (密钥)
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={draftSettings.apiKey}
+                        onChange={(event) =>
+                          setDraftSettings((current: DshAppState["settings"]) => ({
+                            ...current,
+                            apiKey: event.target.value,
+                          }))
+                        }
+                        placeholder={state?.providerCredentialStatus?.[draftSettings.apiProvider]?.configured ? "已由 DSH 保存；输入新密钥可替换" : "sk-..."}
+                      />
+                      <small className="field-hint">
+                        密钥仅写入 DSH 凭据库，不会回显或保存在应用设置文件中。{state?.providerCredentialStatus?.[draftSettings.apiProvider]?.configured ? "留空会保留现有密钥。" : ""}
+                      </small>
+                      {state?.providerCredentialStatus?.[draftSettings.apiProvider]?.configured && state?.providerCredentialStatus?.[draftSettings.apiProvider]?.writable && (
+                        <button type="button" className="text-action-button danger" onClick={() => void clearCurrentProviderApiKey()}>
+                          清除 DSH 中保存的密钥
+                        </button>
+                      )}
+                      {state?.providerCredentialStatus?.[draftSettings.apiProvider]?.configured && !state?.providerCredentialStatus?.[draftSettings.apiProvider]?.writable && (
+                        <small className="field-hint">该密钥由只读环境变量提供，请在启动环境中清除。</small>
                       )}
                     </label>
 
-                    {draftSettings.runtimeMode !== "official" && (
-                      <>
-                        <label>
-                          API Provider (大模型提供商)
-                          <select
-                            value={draftSettings.apiProvider}
-                            onChange={(event) => {
-                              const newProvider = event.target.value as HermesAppState["settings"]["apiProvider"];
-                              setDraftSettings((current: HermesAppState["settings"]) => ({
-                                ...current,
-                                apiProvider: newProvider,
-                                apiBaseUrl: newProvider === "deepseek" && !current.apiBaseUrl ? "https://api.deepseek.com" : current.apiBaseUrl,
-                              }));
-                            }}
-                            className="settings-select"
-                          >
-                            <option value="openai">OpenAI</option>
-                            <option value="openrouter">OpenRouter</option>
-                            <option value="deepseek">DeepSeek</option>
-                            <option value="custom">自定义 OpenAI 兼容接口</option>
-                          </select>
-                        </label>
-
-                        <label>
-                          API Key (密钥)
-                          <input
-                            type="password"
-                            value={draftSettings.apiKey}
-                            onChange={(event) =>
-                              setDraftSettings((current: HermesAppState["settings"]) => ({
-                                ...current,
-                                apiKey: event.target.value,
-                              }))
-                            }
-                            placeholder="sk-..."
-                          />
-                        </label>
-                      </>
-                    )}
-
-                    {draftSettings.runtimeMode !== "official" && draftSettings.apiProvider === "custom" && (
+                    {draftSettings.apiProvider === "custom" && (
                       <label>
                         API Base URL
                         <input
                           value={draftSettings.apiBaseUrl}
                           onChange={(event) =>
-                            setDraftSettings((current: HermesAppState["settings"]) => ({
+                            setDraftSettings((current: DshAppState["settings"]) => ({
                               ...current,
                               apiBaseUrl: event.target.value,
                             }))
@@ -3581,314 +4094,76 @@ function App() {
                       </label>
                     )}
 
-                    {draftSettings.runtimeMode === "official" && state && (
-                      <div className="skills-section">
-                        <div className="skills-section-header">
-                          <h4>Hermes 官方模式</h4>
-                          <div className="official-status-group">
-                            <span className="official-status-tag">
-                              {state.official.isLoggedIn ? `已登录 / ${state.official.subscriptionLabel}` : "未登录"}
-                            </span>
-                            {state.official.isLoggedIn && (
-                              <button 
-                                type="button"
-                                className="text-action-button danger"
-                                onClick={() => void logoutOfficialConfig()}
-                                title="从本机 ~/.hermes 清除官方登录态"
-                              >
-                                退出登录
-                              </button>
-                            )}
-                            <button 
-                              type="button"
-                              className="text-action-button"
-                              onClick={() => void refreshOfficialConfig()}
-                              title="从 ~/.hermes 重新读取最新的配置和登录状态"
-                            >
-                              刷新状态
-                            </button>
+                    {draftSettings.apiProvider === "deepseek" && state && (
+                      <section className="dsh-account-settings-card">
+                        <div className="dsh-account-settings-heading">
+                          <div>
+                            <h4>DeepSeek 账号</h4>
+                            <p>账号授权由 DSH 保存和管理。未配置 DeepSeek API Key 时，新对话会使用此账号。</p>
                           </div>
+                          <span className={`dsh-account-status ${state.account?.status === "credential-stored" ? "connected" : "disconnected"}`}>
+                            {state.account?.status === "credential-stored" ? "已登录" : "未登录"}
+                          </span>
                         </div>
-                        <div className="skills-list-container official-mode-container">
-                          <div className="skill-card">
-                            <div className="skill-info">
-                              <strong className="skill-card-header">复用本机 ~/.hermes</strong>
-                              <p className="skill-card-desc">这个模式会直接复用你正常安装 Hermes 后的官方配置、登录态和默认模型。</p>
-                              
-                              {!state.official.isLoggedIn && (
-                                isLoggingIn ? (
-                                  <div className="official-login-progress">
-                                    <span className="hint-title">正在进行官方账号登录：</span>
-                                    {state.official.userCode ? (
-                                      <div className="user-code-display-box">
-                                        <p className="hint-desc">请在弹出的浏览器页面中核对以下授权码：</p>
-                                        <div className="user-code-value">{state.official.userCode}</div>
-                                        <p className="hint-desc" style={{ fontSize: "11px", opacity: 0.7, marginTop: "6px" }}>
-                                          网页端登录成功后，App 会自动重新读取状态并同步。
-                                        </p>
-                                      </div>
-                                    ) : (
-                                      <p className="hint-desc">正在请求官方授权码并唤起浏览器，请稍候...</p>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <div className="official-login-hint">
-                                    <span className="hint-title">如何登录官方账号：</span>
-                                    <p className="hint-desc">
-                                      点击下方“点击登录官方账号”按钮，即可自动唤起浏览器登录。也可以在终端手动执行以下命令：
-                                    </p>
-                                    <code className="hint-code">hermes auth add nous --type oauth</code>
-                                    <p className="hint-desc" style={{ marginTop: "4px" }}>
-                                      登录成功后，界面会自动刷新呈现已登录态。
-                                    </p>
-                                  </div>
-                                )
-                              )}
-                              
-                              {state.official.isLoggedIn && (
-                                <div className="official-account-info">
-                                  <span className="account-info-title">已同步官方账号：</span>
-                                  <span className="account-info-value" title={`用户 ID: ${state.official.rateLimitSource}`}>
-                                    {state.official.subscriptionLabel === "Paid" ? "★ Paid 会员账号" : "Free 免费账号"}
-                                  </span>
-                                </div>
-                              )}
 
-                              <span className="skill-card-path">{state.official.configPath}</span>
-                              <span className="skill-card-path">{state.official.authPath}</span>
-                              <span className="skill-card-path">当前配置默认模型：{state.official.defaultModel}</span>
-                              {state.official.subscriptionLabel === "Free" && state.official.freeRecommendedModels.length > 0 ? (
-                                <span className="skill-card-path">Free 可选：{state.official.freeRecommendedModels.join(" / ")}</span>
-                              ) : null}
-                              {state.official.subscriptionLabel === "Free" &&
-                              state.official.freeRecommendedModels.length > 0 &&
-                              !state.official.freeRecommendedModels.includes(state.official.defaultModel) ? (
-                                <p className="skill-card-desc">注意：你当前 config 默认模型不在 free 推荐列表里，建议改成上面的 free 模型之一。</p>
-                              ) : null}
-                            </div>
-                          </div>
-                          
-                          <div className="official-actions-row">
-                            {state.official.isLoggedIn ? (
-                              <button
-                                type="button"
-                                className="official-btn"
-                                onClick={() => void window.hermesDesktop.openExternal("https://portal.nousresearch.com/")}
-                                title="打开 Nous Portal 网页进行登录、退出或切换账号"
-                              >
-                                管理官方登录
+                        {state.account?.attempt && ["initializing", "waiting-browser", "exchanging", "committing"].includes(state.account.attempt.phase) && (
+                          <p className="dsh-account-progress" role="status">
+                            {state.account.attempt.phase === "waiting-browser" ? "已打开浏览器，请完成 DeepSeek 授权。" : "正在准备账号授权…"}
+                          </p>
+                        )}
+                        {state.account?.attempt && ["failed", "expired"].includes(state.account.attempt.phase) && (
+                          <p className="dsh-account-error" role="alert">
+                            登录{state.account.attempt.phase === "expired" ? "已过期" : "失败"}（{state.account.attempt.errorCode || "未知错误"}），可以重新登录。
+                          </p>
+                        )}
+
+                        <div className="dsh-account-actions">
+                          {state.account?.status === "credential-stored" ? (
+                            <>
+                              <button type="button" className="secondary-button" onClick={() => void window.dshDesktop.openExternal(state.account!.links.usageUrl)}>
+                                账号用量
                               </button>
-                            ) : (
-                              <button
-                                type="button"
-                                className="official-btn primary-style"
-                                onClick={() => void loginOfficialConfig()}
-                                disabled={state.busy || isLoggingIn}
-                                title="启动本地授权并打开浏览器完成登录"
-                              >
-                                {isLoggingIn ? "正在等待浏览器登录..." : "点击登录官方账号"}
+                              <button type="button" className="secondary-button" onClick={() => void window.dshDesktop.openExternal(state.account!.links.topUpUrl)}>
+                                充值
                               </button>
-                            )}
-                          </div>
+                              <button type="button" className="text-action-button danger" onClick={() => void signOutDshAccount()}>
+                                退出账号
+                              </button>
+                            </>
+                          ) : ["initializing", "waiting-browser", "exchanging", "committing"].includes(state.account?.attempt?.phase || "") ? (
+                            <button type="button" className="secondary-button" onClick={() => void window.dshDesktop.cancelAccountSignIn().then(setState)}>
+                              取消登录
+                            </button>
+                          ) : (
+                            <button type="button" className="primary-button" onClick={() => void startDshAccountSignIn()} disabled={state.busy || isLoggingIn}>
+                              {isLoggingIn ? "正在打开浏览器…" : "登录 DeepSeek 账号"}
+                            </button>
+                          )}
                         </div>
-                      </div>
+                      </section>
                     )}
                   </div>
                 )}
 
                 {activeSettingsTab === "vision" && (
                   <div className="settings-tab-pane">
-                    <p className="tab-pane-desc">
-                      配置专门的视觉后端，使纯文本基座模型在执行需要图表分析或自动网页浏览的工具（如 <code>browser_vision</code> / <code>vision_analyze</code>）时能够自动调用该模型。
+                    <p className="tab-pane-desc" role="note">
+                      图片通过 DSH 原生附件接口提交给当前对话模型。DeepSeek 默认模型 deepseek-flash（V4.1 Flash）支持视觉理解；无需单独配置视觉模型。
                     </p>
-
-                    <label>
-                      Model (视觉大模型)
-                      <input
-                        value={draftSettings.visionModel}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            visionModel: event.target.value,
-                          }))
-                        }
-                        placeholder="openai/gpt-4o-mini 或 ollama:llava"
-                      />
-                      <small className="field-hint">
-                        例如：<code>openai/gpt-4o-mini</code> (云端高性价比) 或 <code>llava</code> / <code>qwen2.5-vl</code> (本地 Ollama 免费)
-                      </small>
-                    </label>
-
-                    <label>
-                      API Provider (大模型提供商)
-                      <select
-                        value={draftSettings.visionProvider}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            visionProvider: event.target.value as HermesAppState["settings"]["visionProvider"],
-                          }))
-                        }
-                        className="settings-select"
-                      >
-                        <option value="openai">OpenAI</option>
-                        <option value="openrouter">OpenRouter</option>
-                        <option value="ollama">Ollama (本地私有)</option>
-                        <option value="custom">自定义 OpenAI 兼容接口</option>
-                      </select>
-                    </label>
-
-                    {draftSettings.visionProvider !== "ollama" && (
-                      <label>
-                        API Key (密钥)
-                        <input
-                          type="password"
-                          value={draftSettings.visionApiKey}
-                          onChange={(event) =>
-                            setDraftSettings((current: HermesAppState["settings"]) => ({
-                              ...current,
-                              visionApiKey: event.target.value,
-                            }))
-                          }
-                          placeholder="sk-..."
-                        />
-                      </label>
-                    )}
-
-                    {(draftSettings.visionProvider === "custom" || draftSettings.visionProvider === "ollama" || draftSettings.visionProvider === "openrouter") && (
-                      <label>
-                        API Base URL
-                        <input
-                          value={draftSettings.visionBaseUrl}
-                          onChange={(event) =>
-                            setDraftSettings((current: HermesAppState["settings"]) => ({
-                              ...current,
-                              visionBaseUrl: event.target.value,
-                            }))
-                          }
-                          placeholder={
-                            draftSettings.visionProvider === "ollama"
-                              ? "http://localhost:11434/v1"
-                              : "https://api.example.com/v1"
-                          }
-                        />
-                      </label>
-                    )}
                   </div>
                 )}
 
                 {activeSettingsTab === "tools" && (
                   <div className="settings-tab-pane">
-                    <p className="tab-pane-desc">
-                      配置外部辅助工具的 API Key。这些密钥会被自动传递给底层的 Hermes Agent 服务，用以支持网页深度检索、图像生成和语音转文字等核心增强功能。
+                    <p className="tab-pane-desc" role="note">
+                      DSH 基础 profile 已提供 DeepSeek 原生 web_search，并复用上方由 DSH 管理的 DeepSeek API Key。语音输入接入 DSH 本地 SenseVoice，转写结果只写入草稿；首次使用需确认下载模型。
                     </p>
 
-                    <h4 className="settings-section-title">网络检索与抓取 (Web Search & Crawl)</h4>
-                    <label>
-                      Firecrawl API Key
-                      <input
-                        type="password"
-                        value={draftSettings.firecrawlApiKey || ""}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            firecrawlApiKey: event.target.value,
-                          }))
-                        }
-                        placeholder="fc-..."
-                      />
-                      <small className="field-hint">
-                        用于网络深度检索、长网页内容抓取和爬虫。可以在 <a href="https://firecrawl.dev/" target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline">firecrawl.dev</a> 申请。
-                      </small>
-                    </label>
+                    <h4 className="settings-section-title">当前已接入的工具</h4>
+                    <p className="field-hint">网页检索由 DSH 的 DeepSeek 原生 web_search 提供。语音输入由本地 SenseVoice 转写，不会自动发送录音或识别结果。</p>
 
-                    <label>
-                      Exa API Key
-                      <input
-                        type="password"
-                        value={draftSettings.exaApiKey || ""}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            exaApiKey: event.target.value,
-                          }))
-                        }
-                        placeholder="exa-..."
-                      />
-                      <small className="field-hint">
-                        AI 原生检索和链接提取 Key。可以在 <a href="https://exa.ai/" target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline">exa.ai</a> 申请。
-                      </small>
-                    </label>
-
-                    <h4 className="settings-section-title" style={{ marginTop: "12px" }}>多媒体与语音 (Multimedia & Voice)</h4>
-                    <label>
-                      FAL.ai API Key
-                      <input
-                        type="password"
-                        value={draftSettings.falApiKey || ""}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            falApiKey: event.target.value,
-                          }))
-                        }
-                        placeholder="fal_key-..."
-                      />
-                      <small className="field-hint">
-                        用于文本生成图像等工具（如 <code>image_generate</code>）。可以在 <a href="https://fal.ai/" target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline">fal.ai</a> 申请。
-                      </small>
-                    </label>
-
-                    <label>
-                      OpenAI Voice API Key
-                      <input
-                        type="password"
-                        value={draftSettings.voiceToolsOpenaiKey || ""}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            voiceToolsOpenaiKey: event.target.value,
-                          }))
-                        }
-                        placeholder="sk-..."
-                      />
-                      <small className="field-hint">
-                        专门用于语音消息识别（Whisper）与文本生成语音（TTS）。不影响主对话模型。
-                      </small>
-                    </label>
-
-                    <h4 className="settings-section-title" style={{ marginTop: "12px" }}>云端自动化浏览器 (Cloud Headless Browser)</h4>
-                    <label>
-                      Browserbase API Key
-                      <input
-                        type="password"
-                        value={draftSettings.browserbaseApiKey || ""}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            browserbaseApiKey: event.target.value,
-                          }))
-                        }
-                        placeholder="bb-..."
-                      />
-                      <small className="field-hint">
-                        云端无头浏览器执行。可以在 <a href="https://browserbase.com/" target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline">browserbase.com</a> 申请。
-                      </small>
-                    </label>
-
-                    <label>
-                      Browserbase Project ID
-                      <input
-                        value={draftSettings.browserbaseProjectId || ""}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            browserbaseProjectId: event.target.value,
-                          }))
-                        }
-                        placeholder="Project ID"
-                      />
-                    </label>
+                    <h4 className="settings-section-title" style={{ marginTop: "12px" }}>未迁移的旧配置</h4>
+                    <p className="field-hint">迁移前的 Firecrawl、Exa、FAL、Browserbase 和 OpenAI Voice 项只有密钥输入框，没有连接到任何后端调用。应用成功启动后会清除这些未使用的旧设置，不会迁移到 DSH。</p>
                   </div>
                 )}
               </div>
@@ -3896,14 +4171,14 @@ function App() {
               {/* Shared Footer Actions */}
               <div className="settings-content-footer">
                 <p className="modal-copy">
-                  配置完成后将自动重新启动后台 DSH 运行时服务。私有模式使用你自己填写的 provider/API key；官方模式复用本机 `~/.dsh` 的登录态和配置。
+                  主对话、图片附件、DeepSeek 原生网页检索和本地语音转写通过 DSH 工作；独立视觉后端及旧版 Firecrawl/Exa、FAL、Browserbase 配置没有接入后端。
                 </p>
                 <div className="modal-actions">
                   <button className="secondary-button" onClick={() => void closeSettingsModal()}>
                     {isLoggingIn ? "取消登录并关闭" : "取消"}
                   </button>
                   <button className="primary-button" onClick={() => void saveSettings()}>
-                    {officialModelDirty ? "保存并切换模型" : "保存并应用"}
+                    保存并应用
                   </button>
                 </div>
               </div>
@@ -3944,7 +4219,7 @@ function App() {
                 <div className="error-modal-icon">⚠️</div>
                 <div>
                   <h3>登录凭证失效 / Refresh Token Expired</h3>
-                  <p style={{ margin: 0, fontSize: "11.5px", color: "#64748b" }}>Hermes Agent 身份验证未通过</p>
+                  <p style={{ margin: 0, fontSize: "11.5px", color: "#64748b" }}>DSH 身份验证未通过</p>
                 </div>
               </div>
               <button
@@ -3966,22 +4241,18 @@ function App() {
               </div>
 
               <p style={{ margin: 0, color: "#475569" }}>
-                后台 Hermes Agent 在准备发起对话时，检测到存储在 <code>~/.hermes/auth.json</code> 中的 Refresh Token 已失效或过期，导致对话无法正常发起。
+                DSH 认证信息可能已失效。检查当前 provider 的 API Key，或在 DeepSeek 账号卡片中重新授权。
               </p>
 
               <div className="error-step-card">
                 <div className="error-step-card-title">
-                  <span>🔑 方法一：在应用界面重新登录（推荐）</span>
+                  <span>🔑 检查 DSH provider 凭据</span>
                 </div>
                 <ol className="error-step-list">
                   <li>打开应用内的 <b>设置 / 模型与账号登录</b> 界面。</li>
-                  <li>点击 <b>重新登录 (Login)</b> 或 <b>退出登录后重新登录</b>。</li>
-                  <li>按照提示在浏览器中完成账号授权，刷新本地凭证。</li>
+                  <li>核对所选 provider 的 API Key 是否有效。</li>
+                  <li>如果使用 DeepSeek 账号，退出后重新登录并在浏览器中完成授权。</li>
                 </ol>
-              </div>
-
-              <div style={{ fontSize: "11px", color: "#64748b", background: "#f8fafc", padding: "8px 12px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
-                💡 <b>终端备选方案：</b> 也可以在系统 Terminal 执行 <code>hermes login</code> 命令手动完成刷新。
               </div>
             </div>
 
@@ -4000,11 +4271,11 @@ function App() {
                   setDismissedError(state?.error || null);
                   setSettingsOpen(true);
                   setActiveSettingsTab("chat");
-                  void refreshOfficialConfig();
+                  void window.dshDesktop?.getState().then(setState);
                 }}
                 style={{ background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)", borderColor: "#1d4ed8" }}
               >
-                前往重新登录（设置 → 账号管理）
+                前往账号设置（设置 → 模型与账号登录）
               </button>
             </div>
           </div>
@@ -4141,6 +4412,100 @@ function ReportStylePicker({
   );
 }
 
+function ArchivedThreadsPage({
+  threads,
+  isBusy,
+  onRestore,
+  onDelete,
+  onNewChat,
+}: {
+  threads: DshThreadSummary[];
+  isBusy: boolean;
+  onRestore: (threadId: string) => void;
+  onDelete: (threadId: string, title: string) => void;
+  onNewChat: () => void;
+}) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const orderedThreads = useMemo(
+    () => [...threads].sort((a, b) => b.updatedAt - a.updatedAt),
+    [threads]
+  );
+  const filteredThreads = useMemo(() => {
+    const query = searchQuery.trim().toLocaleLowerCase();
+    if (!query) return orderedThreads;
+    return orderedThreads.filter((thread) =>
+      `${thread.name || thread.preview || ""} ${thread.cwd || ""}`.toLocaleLowerCase().includes(query)
+    );
+  }, [orderedThreads, searchQuery]);
+
+  return (
+    <main className="archive-page-view">
+      <header className="archive-page-header">
+        <div>
+          <p className="eyebrow">对话管理</p>
+          <h2>已归档对话</h2>
+          <p className="archive-page-subtitle">归档会把对话从任务列表隐藏；恢复后会重新出现在任务列表中。</p>
+        </div>
+        <button type="button" className="primary-button" onClick={onNewChat}>新建任务</button>
+      </header>
+
+      <label className="archive-search-label">
+        <span className="sr-only">搜索已归档对话</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-4-4" />
+        </svg>
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          placeholder="按对话标题或工作区搜索"
+        />
+      </label>
+
+      <p className="archive-page-note">
+        归档可随时恢复。彻底删除会移除会话日志和工作区关联且无法恢复；DSH 全局附件库中的共享数据或缓存可能仍会保留。
+      </p>
+
+      {filteredThreads.length === 0 ? (
+        <div className="archive-page-empty">
+          <span aria-hidden="true">▱</span>
+          <h3>{threads.length === 0 ? "暂无已归档对话" : "没有匹配的对话"}</h3>
+          <p>{threads.length === 0 ? "从任务列表移除的对话会保留在这里，可随时恢复。" : "试试其他标题或工作区名称。"}</p>
+        </div>
+      ) : (
+        <div className="archive-thread-list">
+          {filteredThreads.map((thread) => {
+            const title = formatCleanTaskTitle(thread.name || thread.preview || "未命名对话");
+            return (
+              <article className="archive-thread-card" key={thread.id}>
+                <div className="archive-thread-copy">
+                  <h3 title={title}>{title}</h3>
+                  <p>{thread.cwd || "默认工作区"}</p>
+                </div>
+                <div className="archive-thread-actions">
+                  <button type="button" className="secondary-button" onClick={() => onRestore(thread.id)} disabled={isBusy}>
+                    恢复到任务列表
+                  </button>
+                  <button
+                    type="button"
+                    className="archive-delete-button"
+                    onClick={() => onDelete(thread.id, title)}
+                    disabled={isBusy}
+                    title="永久删除此对话及本地记录"
+                  >
+                    彻底删除
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </main>
+  );
+}
+
 function SkillsPageView({
   skills,
   searchQuery,
@@ -4149,7 +4514,7 @@ function SkillsPageView({
   onUnregisterSkill,
   onUseSkill,
 }: {
-  skills: HermesAppState["skills"];
+  skills: DshAppState["skills"];
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   onImportSkill: () => void;

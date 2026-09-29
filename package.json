@@ -1,7 +1,7 @@
 {
   "name": "stat-pilot",
   "private": true,
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "面向深圳市统计政务工作的本地智能工作台，支持统计信息采集、数据分析、来源核验与公文起草。",
   "author": {
     "name": "深小统",
@@ -12,33 +12,39 @@
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
-    "dev": "concurrently -k --success first \"vite --host 127.0.0.1 --strictPort\" \"cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "dev": "concurrently -k --success first \"vite --host 127.0.0.1 --strictPort\" \"cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 node scripts/watch-electron.mjs\"",
     "dev:web": "vite --host 127.0.0.1",
-    "dev:electron": "electron .",
+    "dev:electron": "node scripts/watch-electron.mjs",
     "build": "tsc -b && vite build",
-    "dist:mac": "npm run verify:runtime && npm run build && electron-builder --mac dmg",
-    "dist:win": "npm run verify:runtime && npm run build && electron-builder --win nsis",
-    "dist:linux": "npm run verify:runtime && npm run build && electron-builder --linux deb",
-    "dist:linux:arm64": "npm run verify:runtime && npm run build && electron-builder --linux deb --arm64",
+    "dist:mac": "npm run stage:dsh-node && npm run verify:runtime && npm run build && electron-builder --mac dmg",
+    "dist:win": "npm run stage:dsh-node && npm run verify:runtime && npm run build && electron-builder --win nsis",
+    "dist:linux": "npm run stage:dsh-node && npm run verify:runtime && npm run build && electron-builder --linux deb",
+    "dist:linux:arm64": "npm run stage:dsh-node && npm run verify:runtime && npm run build && electron-builder --linux deb --arm64",
     "verify:runtime": "node scripts/verify-dsh-runtime.mjs",
+    "stage:dsh-node": "node scripts/stage-dsh-node.mjs",
     "dsh:verify": "node scripts/verify-dsh-runtime.mjs",
+    "verify:packaged-runtime": "node scripts/verify-packaged-dsh.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "start": "electron ."
   },
   "dependencies": {
     "@deepseek-ai/dsh": "^0.1.7-rc.2",
-    "cheerio": "^1.1.2",
-    "express": "^5.1.0",
+    "@deepseek-ai/dsh-experimental-voice-input-bundle": "0.1.7-rc.2",
+    "dsh-archived-chats": "1.4.5",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1"
   },
+  "overrides": {
+    "dsh-archived-chats": {
+      "react": "$react"
+    }
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "^4.3.1",
-    "@types/express": "^5.0.5",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -52,7 +58,6 @@
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
     "tailwindcss": "^4.3.1",
-    "tsx": "^4.20.6",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12"
@@ -67,7 +72,6 @@
     "files": [
       "dist/**",
       "electron/**",
-      "server/**",
       "rules/**",
       "skills/**",
       "src/electron.d.ts",
@@ -77,7 +81,7 @@
       "!**/.DS_Store/**"
     ],
     "asarUnpack": [
-      "node_modules/@deepseek-ai/**"
+      "node_modules/**"
     ],
     "extraResources": [
       {
@@ -107,6 +111,10 @@
           "!**/.DS_Store",
           "!**/.DS_Store/**"
         ]
+      },
+      {
+        "from": ".runtime/dsh-node.exe",
+        "to": "dsh-node.exe"
       }
     ],
     "mac": {
@@ -117,7 +125,10 @@
       "artifactName": "stat-pilot-${version}-macOS-${arch}.${ext}",
       "category": "public.app-category.productivity",
       "identity": "-",
-      "hardenedRuntime": false
+      "hardenedRuntime": false,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "深小统使用麦克风将语音转换为聊天草稿。"
+      }
     },
     "win": {
       "target": [
