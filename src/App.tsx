@@ -2262,7 +2262,7 @@ function App() {
     setSettingsBusyText("正在保存配置并应用...");
     const workspaceChanged = draftSettings.cwd !== state?.settings.cwd;
     const provider = draftSettings.apiProvider;
-    const authMode = draftSettings.authMode === "account" ? "account" : "api";
+    const authMode: "api" | "account" = draftSettings.authMode === "account" ? "account" : "api";
     const model = authMode === "account" ? draftSettings.accountModel : (draftSettings.model || draftSettings.apiModel);
     const customList = authMode === "api"
       ? Array.from(new Set([...getConfiguredProviderModels(draftSettings, provider), model].filter(Boolean)))
@@ -3421,13 +3421,13 @@ function App() {
                     ×
                   </button>
                 </div>
-                {state.pendingClarification.questions.map((question, index) => {
+                {state.pendingClarification.questions.map((question, index, questions) => {
                   const answer = clarificationDraft[question.id] || { selected: [], custom: "" };
                   return (
                     <section className="composer-clarification-question-card" key={question.id}>
                       {question.header ? <div className="composer-clarification-header">{question.header}</div> : null}
                       <div className="composer-clarification-question">
-                        {state.pendingClarification.questions.length > 1 ? `${index + 1}. ` : ""}{question.question}
+                        {questions.length > 1 ? `${index + 1}. ` : ""}{question.question}
                       </div>
                       {question.detail ? <div className="composer-clarification-detail">{question.detail}</div> : null}
                       {question.options?.length ? (
