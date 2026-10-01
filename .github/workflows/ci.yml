@@ -17,14 +17,30 @@ concurrency:
 
 jobs:
   checks:
-    name: Typecheck, build, and runtime verification
-    runs-on: ubuntu-22.04
+    name: Typecheck, build, and DSH verification (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Check for disallowed platform metadata files
+      - name: Check for disallowed platform metadata files (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $metadataFiles = git ls-files | Where-Object { $_ -match '(^|/)(\._[^/]*|\.DS_Store)(/|$)' }
+          if ($metadataFiles) {
+            Write-Error "Found disallowed macOS AppleDouble metadata files: $($metadataFiles -join ', ')"
+            exit 1
+          }
+
+      - name: Check for disallowed platform metadata files (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
         run: |
           if git ls-files | grep -E '(^|/)(\._|\.DS_Store)'; then
             echo "Found disallowed macOS AppleDouble metadata files!" >&2
@@ -41,7 +57,7 @@ jobs:
         run: npm ci
 
       - name: TypeScript typecheck
-        run: npx tsc --noEmit --pretty false
+        run: npx tsc -b --pretty false
 
       - name: Check Electron and runtime entrypoints
         run: |
@@ -49,10 +65,13 @@ jobs:
           node --check electron/preload.cjs
           node --check electron/dsh-runtime.mjs
           node --check electron/dsh-client.mjs
+          node --check scripts/stage-dsh-node.mjs
           node --check scripts/verify-dsh-runtime.mjs
+          node --check scripts/verify-packaged-dsh.mjs
+          node --check scripts/watch-electron.mjs
 
       - name: Verify DSH runtime boot and lifecycle
         run: npm run verify:runtime
 
-      - name: Build renderer and server bundles
+      - name: Build renderer
         run: npm run build

@@ -3,6 +3,88 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import szLogo from "./assets/sz-logo.png";
 
+const VOICE_PROVIDER_ID = "sensevoice-local";
+const VOICE_SAMPLE_RATE = 16_000;
+const MAX_VOICE_SECONDS = 120;
+
+function readMigratedLocalValue(key: string, previousKey: string): string | null {
+  let current: string | null;
+  try {
+    current = localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+
+  if (current !== null) {
+    try { localStorage.removeItem(previousKey); } catch { /* keep the current value usable */ }
+    return current;
+  }
+
+  let previous: string | null;
+  try {
+    previous = localStorage.getItem(previousKey);
+  } catch {
+    return null;
+  }
+  if (previous === null) return null;
+
+  try {
+    localStorage.setItem(key, previous);
+    localStorage.removeItem(previousKey);
+  } catch {
+    // Return the legacy value even when quota or storage policy blocks migration.
+  }
+  return previous;
+}
+
+async function encodeSpeechWavBase64(recording: Blob): Promise<string> {
+  const audioContext = new AudioContext();
+  try {
+    const decoded = await audioContext.decodeAudioData(await recording.arrayBuffer());
+    const frameCount = Math.max(1, Math.floor(Math.min(decoded.duration, MAX_VOICE_SECONDS) * VOICE_SAMPLE_RATE));
+    const offlineContext = new OfflineAudioContext(1, frameCount, VOICE_SAMPLE_RATE);
+    const source = offlineContext.createBufferSource();
+    source.buffer = decoded;
+    source.connect(offlineContext.destination);
+    source.start(0);
+    const resampled = await offlineContext.startRendering();
+    const samples = resampled.getChannelData(0);
+    const wav = new Uint8Array(44 + samples.length * 2);
+    const header = new DataView(wav.buffer);
+    const writeAscii = (offset: number, value: string) => {
+      for (let index = 0; index < value.length; index += 1) wav[offset + index] = value.charCodeAt(index);
+    };
+
+    writeAscii(0, "RIFF");
+    header.setUint32(4, wav.length - 8, true);
+    writeAscii(8, "WAVE");
+    writeAscii(12, "fmt ");
+    header.setUint32(16, 16, true);
+    header.setUint16(20, 1, true);
+    header.setUint16(22, 1, true);
+    header.setUint32(24, VOICE_SAMPLE_RATE, true);
+    header.setUint32(28, VOICE_SAMPLE_RATE * 2, true);
+    header.setUint16(32, 2, true);
+    header.setUint16(34, 16, true);
+    writeAscii(36, "data");
+    header.setUint32(40, samples.length * 2, true);
+
+    for (let index = 0; index < samples.length; index += 1) {
+      const sample = Math.max(-1, Math.min(1, samples[index]));
+      header.setInt16(44 + index * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    }
+
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let offset = 0; offset < wav.length; offset += chunkSize) {
+      binary += String.fromCharCode(...wav.subarray(offset, Math.min(offset + chunkSize, wav.length)));
+    }
+    return btoa(binary);
+  } finally {
+    await audioContext.close().catch(() => {});
+  }
+}
+
 function formatRelativeTime(value: number): string {
   const date = new Date(value * 1000);
   return new Intl.DateTimeFormat("zh-CN", {
@@ -13,22 +95,47 @@ function formatRelativeTime(value: number): string {
   }).format(date);
 }
 
-function withDisplayModel(appState: HermesAppState): HermesAppState["settings"] {
+function withDisplayModel(appState: DshAppState): DshAppState["settings"] {
   return {
     defaultOutputDir: "output",
     customModels: [],
     ...appState.settings,
-    model: appState.settings.runtimeMode === "official" ? appState.official.defaultModel : appState.settings.model,
+    model: appState.settings.model,
   };
 }
 
-const EMPTY_MESSAGES: HermesChatMessage[] = [];
+function resolveAuthMode(settings: DshAppState["settings"], appState: DshAppState | null): "api" | "account" {
+  if (settings.authMode === "api" || settings.authMode === "account") return settings.authMode;
+  const provider = settings.apiProvider || "deepseek";
+  if (provider !== "deepseek") return "api";
+  if (appState?.providerCredentialStatus?.deepseek?.configured) return "api";
+  return appState?.account?.status === "credential-stored" ? "account" : "api";
+}
+
+const EMPTY_MESSAGES: DshChatMessage[] = [];
+
+const PERMISSION_PRESET_LABELS: Record<string, string> = {
+  "read-only": "仅可查看",
+  "workspace-write": "工作区内修改",
+  "danger-full-access": "完全权限",
+};
+
+const PERMISSION_PRESET_DESCRIPTIONS: Record<string, string> = {
+  "read-only": "可以读取和分析，不会创建、编辑或删除文件。",
+  "workspace-write": "可以在当前工作区内读写；访问工作区外的位置仍受 DSH 授权策略控制。",
+  "danger-full-access": "不受工作区沙箱限制，并且不会弹出一般操作审批。仅在确有需要时启用。",
+};
+
+const PERMISSION_PRESET_ORDER = ["read-only", "workspace-write", "danger-full-access"];
+
+function permissionPresetLabel(value: string | null | undefined): string {
+  return value ? (PERMISSION_PRESET_LABELS[value] || "自定义权限") : "加载权限…";
+}
 
 const PROVIDER_PRESET_MODELS: Record<string, Array<{ id: string; label: string; desc: string }>> = {
   deepseek: [
-    { id: "deepseek-v4-flash", label: "deepseek-v4-flash", desc: "DeepSeek-V4 Flash 快速" },
-    { id: "deepseek-v4-pro", label: "deepseek-v4-pro", desc: "DeepSeek-V4 Pro 旗舰" },
-    { id: "deepseek-v4-flash-vision-exp", label: "deepseek-v4-flash-vision-exp", desc: "DeepSeek-V4 Flash Vision 视觉实验版" },
+    { id: "deepseek-flash", label: "deepseek-flash", desc: "DSH 默认模型，支持文本与图片" },
+    { id: "deepseek-v4-pro", label: "deepseek-v4-pro", desc: "DeepSeek V4 Pro 文本模型 ID" },
   ],
   openai: [
     { id: "gpt-5.5", label: "gpt-5.5", desc: "GPT-5.5 最新旗舰" },
@@ -51,7 +158,102 @@ const PROVIDER_PRESET_MODELS: Record<string, Array<{ id: string; label: string; 
   ],
 };
 
-function MessageBody({ role, text }: { role: HermesChatMessage["role"]; text: string }) {
+function getProviderPresetModels(provider: DshAppState["settings"]["apiProvider"]): string[] {
+  return (PROVIDER_PRESET_MODELS[provider] || PROVIDER_PRESET_MODELS.deepseek).map((model) => model.id);
+}
+
+function getConfiguredProviderModels(
+  settings: DshAppState["settings"],
+  provider: DshAppState["settings"]["apiProvider"] = settings.apiProvider,
+): string[] {
+  const saved = settings.customModelsByProvider?.[provider];
+  if (Array.isArray(saved) && saved.length > 0) return saved;
+  if (provider === settings.apiProvider && Array.isArray(settings.customModels) && settings.customModels.length > 0) {
+    return settings.customModels;
+  }
+  return getProviderPresetModels(provider);
+}
+
+function makeSettingsDraft(appState: DshAppState): DshAppState["settings"] {
+  const settings = withDisplayModel(appState);
+  const authMode = resolveAuthMode(settings, appState);
+  const accountPresets = getProviderPresetModels("deepseek");
+  const accountModel = authMode === "account" && settings.authMode === "auto" && accountPresets.includes(settings.model)
+    ? settings.model
+    : settings.accountModel || (accountPresets.includes(settings.model) ? settings.model : accountPresets[0]);
+  const apiModel = settings.apiModel || settings.apiModelsByProvider?.[settings.apiProvider] || settings.model;
+  const customModelsByProvider = {
+    ...settings.customModelsByProvider,
+    [settings.apiProvider]: getConfiguredProviderModels(settings),
+  };
+
+  return {
+    ...settings,
+    authMode,
+    accountModel,
+    apiModel,
+    model: authMode === "account" ? accountModel : apiModel,
+    customModels: customModelsByProvider[settings.apiProvider] || [],
+    customModelsByProvider,
+  };
+}
+
+function reactNodeText(node: React.ReactNode): string {
+  return React.Children.toArray(node).map((child) => {
+    if (typeof child === "string" || typeof child === "number") return String(child);
+    if (React.isValidElement<{ children?: React.ReactNode }>(child)) return reactNodeText(child.props.children);
+    return "";
+  }).join("");
+}
+
+function requestOpenOutputDirectory() {
+  if (!window.dshDesktop?.openOutputDirectory) {
+    window.alert("请在桌面版深小统中打开输出目录。");
+    return;
+  }
+  void window.dshDesktop.openOutputDirectory().catch((error: unknown) => {
+    console.error("Failed to open the output directory:", error);
+    window.alert(error instanceof Error ? error.message : "无法打开输出目录。");
+  });
+}
+
+function isOutputDirectoryActionLabel(node: React.ReactNode): boolean {
+  return /^打开输出目录[：:]?$/.test(reactNodeText(node).trim());
+}
+
+function isLocalOutputArtifactLink(href?: string): boolean {
+  if (!href) return false;
+  try {
+    const url = new URL(href, window.location.origin);
+    const pathName = decodeURIComponent(url.pathname);
+    const isLoopbackHost = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname.toLowerCase());
+    return (url.origin === window.location.origin || isLoopbackHost) && /^\/output(?:\/|$)/i.test(pathName);
+  } catch {
+    return false;
+  }
+}
+
+function OutputDirectoryButton({ className = "message-output-dir-action" }: { className?: string }) {
+  return (
+    <button type="button" className={className} onClick={requestOpenOutputDirectory} title="打开当前对话的输出目录">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+        <path d="M3 10h18" />
+      </svg>
+      打开输出目录
+    </button>
+  );
+}
+
+function OutputDirectoryAction() {
+  return (
+    <div className="message-output-dir-action-wrap">
+      <OutputDirectoryButton />
+    </div>
+  );
+}
+
+function MessageBody({ role, text }: { role: DshChatMessage["role"]; text: string }) {
   const safeText = text ?? "";
   if (role === "user") {
     return <pre className="message-plain">{safeText}</pre>;
@@ -62,7 +264,10 @@ function MessageBody({ role, text }: { role: HermesChatMessage["role"]; text: st
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          p: ({ children }) => <p>{children}</p>,
+          p: ({ children }) => {
+            if (isOutputDirectoryActionLabel(children)) return <OutputDirectoryAction />;
+            return <p>{children}</p>;
+          },
           ul: ({ children }) => <ul>{children}</ul>,
           ol: ({ children }) => <ol>{children}</ol>,
           li: ({ children }) => <li>{children}</li>,
@@ -84,25 +289,55 @@ function MessageBody({ role, text }: { role: HermesChatMessage["role"]; text: st
           },
           pre: ({ children }) => <pre className="code-block">{children}</pre>,
           blockquote: ({ children }) => <blockquote>{children}</blockquote>,
-          h1: ({ children }) => <h1>{children}</h1>,
-          h2: ({ children }) => <h2>{children}</h2>,
-          h3: ({ children }) => <h3>{children}</h3>,
+          h1: ({ children }) => isOutputDirectoryActionLabel(children) ? <OutputDirectoryAction /> : <h1>{children}</h1>,
+          h2: ({ children }) => isOutputDirectoryActionLabel(children) ? <OutputDirectoryAction /> : <h2>{children}</h2>,
+          h3: ({ children }) => isOutputDirectoryActionLabel(children) ? <OutputDirectoryAction /> : <h3>{children}</h3>,
           hr: () => <hr />,
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-              onClick={(e) => {
-                if (href && window.hermesDesktop?.openExternal) {
-                  e.preventDefault();
-                  void window.hermesDesktop.openExternal(href);
-                }
-              }}
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) => {
+            if (isLocalOutputArtifactLink(href)) {
+              return (
+                <span className="message-output-file-link">
+                  <a
+                    className="message-output-file-name"
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => {
+                      if (href && window.dshDesktop?.openExternal) {
+                        e.preventDefault();
+                        void window.dshDesktop.openExternal(href);
+                      }
+                    }}
+                  >
+                    {children}
+                  </a>
+                  <OutputDirectoryButton className="message-output-dir-action message-output-dir-inline-action" />
+                </span>
+              );
+            }
+
+            return (
+              <a
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => {
+                  const linkText = reactNodeText(children).trim();
+                  if (linkText.includes("打开输出目录")) {
+                    e.preventDefault();
+                    requestOpenOutputDirectory();
+                    return;
+                  }
+                  if (href && window.dshDesktop?.openExternal) {
+                    e.preventDefault();
+                    void window.dshDesktop.openExternal(href);
+                  }
+                }}
+              >
+                {children}
+              </a>
+            );
+          },
           table: ({ children }) => (
             <div className="table-wrap">
               <table>{children}</table>
@@ -251,6 +486,7 @@ const BUILTIN_SKILL_START_PROMPTS: Record<string, string> = {
 
 function extractDigestItems(text: string): DigestItem[] {
   if (!text) return [];
+  const isPlaceholderTitle = (title: string) => /^(?:文章完整标题|完整标题|文章标题|标题|示例标题|新闻标题|待补(?:充)?)(?:[：:]?\.{3}|…)?$/u.test(title.trim());
 
   // 1. Try JSON block parsing
   const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/\[\s*\{[\s\S]*\}\s*\]/);
@@ -258,11 +494,21 @@ function extractDigestItems(text: string): DigestItem[] {
     try {
       const jsonStr = jsonMatch[1] || jsonMatch[0];
       const parsed = JSON.parse(jsonStr);
-      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].title) {
-        return parsed.map((item: any, idx: number) => ({
+      const validItems = Array.isArray(parsed)
+        ? parsed.filter((item: any) => {
+          const title = String(item?.title || "").trim();
+          const organization = item?.organization || item?.unit || item?.source || item?.site;
+          const publishTime = item?.publish_time || item?.date || item?.time;
+          const summary = item?.summary || item?.desc || item?.content;
+          const link = item?.link || item?.url;
+          return title && !isPlaceholderTitle(title) && organization && publishTime && summary && link;
+        })
+        : [];
+      if (validItems.length > 0) {
+        return validItems.map((item: any, idx: number) => ({
           id: item.link || item.url || `${item.title}_${idx}`,
           title: item.title || item.name || "未命名动态",
-          organization: item.organization || item.unit || item.source || item.site || "统计局",
+          organization: item.organization || item.unit || item.source || item.site || "未注明发布单位",
           publish_time: item.publish_time || item.date || item.time || "",
           summary: item.summary || item.desc || item.content || "",
           link: item.link || item.url || "",
@@ -274,88 +520,38 @@ function extractDigestItems(text: string): DigestItem[] {
     }
   }
 
-  // 2. Try parsing Markdown articles with book titles 《...》
+  // 2. Parse only complete, explicitly labeled article records. A report may
+  // cite titles in prose or tables; those citations are not selectable items.
   const items: DigestItem[] = [];
-  const bookTitleRegex = /《([^》]+)》\s*(?:[（(]([^）)]+)[）)])?/g;
-  let match: RegExpExecArray | null;
+  const plainText = text.replace(/```[\s\S]*?```/g, "");
+  const titleRegex = /^\s*(?:[-*]\s*)?(?:\*\*)?(?:标题|Title)(?:\*\*)?\s*[:：]\s*(.+?)\s*(?:\*\*)?\s*$/gim;
+  const titleMatches = [...plainText.matchAll(titleRegex)];
 
-  while ((match = bookTitleRegex.exec(text)) !== null) {
-    const rawTitle = match[1].trim();
-    if (rawTitle.includes("info_digest_html") || rawTitle.includes("weekly_report")) {
-      continue;
-    }
-    const pubTime = match[2]?.trim() || "";
+  for (const [index, titleMatch] of titleMatches.entries()) {
+    const rawTitle = titleMatch[1].trim().replace(/^["'《]|["'》]$/g, "").replace(/\*+$/g, "").trim();
+    if (!rawTitle || isPlaceholderTitle(rawTitle) || rawTitle.includes("info_digest_html") || rawTitle.includes("weekly_report")) continue;
 
-    const restText = text.slice(match.index + match[0].length);
-    const nextMatch = restText.search(/《[^》]+》|###|\n---\n/);
-    const block = nextMatch !== -1 ? restText.slice(0, nextMatch) : restText;
+    const blockStart = (titleMatch.index || 0) + titleMatch[0].length;
+    const nextTitleStart = titleMatches[index + 1]?.index ?? plainText.length;
+    const recordText = plainText.slice(blockStart, nextTitleStart);
+    const separatorIndex = recordText.search(/^\s*---+\s*$/m);
+    const block = separatorIndex >= 0 ? recordText.slice(0, separatorIndex) : recordText;
 
-    let summary = "";
-    const summaryMatch = block.match(/(?:核心内容|主要内容|摘要|简介|内容)[:：]\s*([^\n]+)/);
-    if (summaryMatch) {
-      summary = summaryMatch[1].trim();
-    } else {
-      const firstLine = block.split("\n").map(l => l.trim()).find(l => l.length > 5 && !l.startsWith("关联度") && !l.startsWith("来源") && !l.startsWith("附注"));
-      summary = firstLine || "";
-    }
+    const organization = block.match(/^\s*(?:单位|发布单位|来源)[:：]\s*([^\n]+)$/im)?.[1]?.trim() || "";
+    const publishTime = block.match(/^\s*(?:时间|发布日期|发布时间|日期)[:：]\s*([^\n]+)$/im)?.[1]?.trim() || "";
+    const summary = block.match(/^\s*(?:总结|摘要|简介|核心内容|主要内容)[:：]\s*([^\n]+)$/im)?.[1]?.trim() || "";
+    const linkMatch = block.match(/^\s*(?:链接|原文链接|文章链接)[:：]\s*(?:\[[^\]]*\]\()?((?:https?:\/\/)[^\s)\]<>]+)/im);
+    const link = linkMatch?.[1]?.replace(/[.,，。；;]+$/u, "") || "";
 
-    const linkMatch = block.match(/(https?:\/\/[^\s)\\]]+)/);
-    const link = linkMatch ? linkMatch[1] : "";
-
-    const orgMatch = block.match(/(?:来源|单位|发布方)[:：]\s*([^\n]+)/);
-    const organization = orgMatch ? orgMatch[1].trim() : "国家统计局";
+    // These fields must belong to the same record; nearby citations elsewhere
+    // in the answer must not promote an unrelated title into a selectable item.
+    if (!organization || !publishTime || !summary || !link) continue;
 
     items.push({
-      id: link || `${rawTitle}_${items.length}`,
+      id: link,
       title: rawTitle,
       organization,
-      publish_time: pubTime,
-      summary,
-      link,
-      category: "工作动态",
-    });
-  }
-
-  // 3. Try parsing text structured with "标题[:：]"
-  const titleRegex = /(?:标题|Title)[:：]\s*([^\n]+)/g;
-  let tMatch: RegExpExecArray | null;
-
-  while ((tMatch = titleRegex.exec(text)) !== null) {
-    const rawTitle = tMatch[1].trim().replace(/^["'《]|["'》]$/g, "");
-    if (!rawTitle || rawTitle.includes("info_digest_html") || rawTitle.includes("weekly_report")) {
-      continue;
-    }
-
-    const restText = text.slice(tMatch.index + tMatch[0].length);
-    const nextMatch = restText.search(/(?:标题|Title)[:：]|###|\n---\n/);
-    const block = nextMatch !== -1 ? restText.slice(0, nextMatch) : restText;
-
-    let time = "";
-    const timeMatch = block.match(/(?:时间|发布时间|日期)[:：]\s*([^\n]+)/);
-    if (timeMatch) time = timeMatch[1].trim();
-
-    let summary = "";
-    const summaryMatch = block.match(/(?:核心内容|主要内容|摘要|简介|内容|关键词)[:：]\s*([^\n]+)/);
-    if (summaryMatch) {
-      summary = summaryMatch[1].trim();
-    } else {
-      const firstLine = block.split("\n").map(l => l.trim()).find(l => l.length > 5 && !l.startsWith("链接") && !l.startsWith("来源"));
-      summary = firstLine || "";
-    }
-
-    let link = "";
-    const linkMatch = block.match(/(https?:\/\/[^\s)\\]]+)/);
-    if (linkMatch) link = linkMatch[1];
-
-    let organization = "国家统计局";
-    const orgMatch = block.match(/(?:来源|单位|发布方)[:：]\s*([^\n]+)/);
-    if (orgMatch) organization = orgMatch[1].trim();
-
-    items.push({
-      id: link || `${rawTitle}_${items.length}`,
-      title: rawTitle,
-      organization,
-      publish_time: time,
+      publish_time: publishTime,
       summary,
       link,
       category: "工作动态",
@@ -363,56 +559,27 @@ function extractDigestItems(text: string): DigestItem[] {
   }
 
   if (items.length > 0) {
-    return items;
+    return [...new Map(items.map((item) => [item.id, item])).values()];
   }
 
   return [];
 }
 
-function CheckableItemSection({
-  items,
-  selectedMap,
-  onToggleItem,
-  onToggleAll,
-}: {
-  items: DigestItem[];
-  selectedMap: Record<string, DigestItem>;
-  onToggleItem: (item: DigestItem) => void;
-  onToggleAll: (items: DigestItem[]) => void;
-}) {
+function DigestItemSection({ items }: { items: DigestItem[] }) {
   if (!items || items.length === 0) return null;
-  const allSelected = items.every((it) => Boolean(selectedMap[it.id]));
 
   return (
     <div className="digest-items-container">
       <div className="digest-items-header">
         <h4>
-          <span>📌</span> 检索提取条目 ({items.length} 条动态可选)
+          <span>📌</span> 检索提取条目 ({items.length} 条)
         </h4>
-        <button
-          type="button"
-          className="digest-items-select-all"
-          onClick={() => onToggleAll(items)}
-        >
-          {allSelected ? "取消全选" : "全选本组"}
-        </button>
       </div>
 
       <div className="digest-items-grid">
         {items.map((item) => {
-          const isChecked = Boolean(selectedMap[item.id]);
           return (
-            <div
-              key={item.id}
-              className={`digest-item-row ${isChecked ? "selected" : ""}`}
-              onClick={() => onToggleItem(item)}
-            >
-              <input
-                type="checkbox"
-                className="digest-checkbox"
-                checked={isChecked}
-                onChange={() => {}}
-              />
+            <div key={item.id} className="digest-item-row">
               <div className="digest-item-content">
                 <div className="digest-item-title-row">
                   <span className="digest-item-title">{item.title}</span>
@@ -438,34 +605,39 @@ function formatFileSize(size?: number): string {
   return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-function StreamActivityGlyph({ activity }: { activity: HermesStreamActivity }) {
-  const isBash = activity.label === "Bash";
-  const isRead = activity.label === "Read";
-  const isBrowse = activity.label === "Browse";
+function StreamActivityGlyph({ activity }: { activity: DshStreamActivity }) {
+  const toolName = (activity.toolName || activity.label).toLowerCase();
+  const isBash = ["bash", "pwsh"].includes(toolName);
+  const isRead = ["read", "read_image", "web_fetch", "read_file"].includes(toolName);
+  const isSearch = ["grep", "glob", "web_search", "search"].includes(toolName);
+  const isFileEdit = ["edit", "write"].includes(toolName);
+  const isCode = ["code", "run_code"].includes(toolName) || toolName.startsWith("terminal_");
   const isSkillView = activity.label === "Skill View" || activity.label === "技能视图";
   const isPlan = activity.label === "Plan" || activity.label === "计划";
   const isThink = activity.kind === "thinking" || activity.label === "Think";
 
   return (
     <span className="stream-activity-glyph" aria-hidden="true">
-      <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1">
         {isThink ? (
           <>
-            <path d="M6.1 8.3a3.2 3.2 0 1 1 5.8 0c-.6.7-.9 1.4-1 2.5H7.1c-.1-1.1-.4-1.8-1-2.5Z" />
-            <path d="M7.3 12.2h3.4M7.7 14.2h2.6" />
+            <path d="M10.7554 5.24466C13.9891 8.4783 15.3769 12.3333 13.8552 13.8551C12.3335 15.3768 8.4785 13.989 5.24478 10.7553C2.01111 7.52165 0.623307 3.66664 2.14504 2.14491C3.66676 0.623189 7.52178 2.01099 10.7554 5.24466Z" />
+            <path d="M10.7554 10.7553C7.52178 13.989 3.66676 15.3768 2.14504 13.8551C0.623307 12.3333 2.01111 8.4783 5.24478 5.24466C8.4785 2.01099 12.3335 0.623189 13.8552 2.14491C15.3769 3.66664 13.9891 7.52165 10.7554 10.7553Z" />
+            <circle cx="8.0024" cy="8.00025" r="0.95626" fill="currentColor" stroke="none" />
           </>
         ) : isSkillView ? (
           <>
-            <path d="m10.8 2.4.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" />
-            <path d="m5.2 8.6.55 1.45 1.45.55-1.45.55-.55 1.45-.55-1.45-1.45-.55 1.45-.55.55-1.45Z" />
-            <path d="m8.5 13 2.6-2.6" />
+            <path d="M5.875 3C5.875 6.33333 7.54167 8 10.875 8C7.54167 8 5.875 9.66667 5.875 13C5.875 9.66667 4.20833 8 0.875 8C4.20833 8 5.875 6.33333 5.875 3Z" />
+            <path d="M12.375 1.55823C12.375 3.39156 13.2917 4.30823 15.125 4.30823C13.2917 4.30823 12.375 5.22489 12.375 7.05823C12.375 5.22489 11.4583 4.30823 9.625 4.30823C11.4583 4.30823 12.375 3.39156 12.375 1.55823Z" />
+            <path d="M12.375 10.4418C12.375 11.7751 13.0417 12.4418 14.375 12.4418C13.0417 12.4418 12.375 13.1084 12.375 14.4418C12.375 13.1084 11.7083 12.4418 10.375 12.4418C11.7083 12.4418 12.375 11.7751 12.375 10.4418Z" />
           </>
         ) : isPlan ? (
           <>
-            <rect x="4" y="3.5" width="10" height="12" rx="1.5" />
-            <path d="M7 3.5v-1h4v1" />
-            <path d="m6.2 7.5.9.9 1.5-1.7M10 7.5h2.2" />
-            <path d="m6.2 11 .9.9 1.5-1.7M10 11h2.2" />
+            <path d="M4.9375 5.90295H11.0625" />
+            <path d="M4.9375 9.02991H8.27841" />
+            <path d="M12.5 1.32617C13.3039 1.32617 14 1.95171 14 2.77637V7.61328L13 8.68164V2.77637C13 2.55186 12.8007 2.32617 12.5 2.32617H3.5C3.1993 2.32617 3 2.55186 3 2.77637V13.2246C3.00044 13.4489 3.19963 13.6738 3.5 13.6738H8.32812L7.39258 14.6738H3.5C2.69637 14.6738 2.00042 14.0489 2 13.2246V2.77637C2 1.95171 2.69613 1.32617 3.5 1.32617H12.5Z" fill="currentColor" stroke="none" />
+            <path d="M8.97212 14.3693C9.17511 14.5723 9.37811 14.7753 9.5811 14.9783C9.67012 14.8953 9.75914 14.8123 9.84815 14.7293C11.4505 13.2352 13.0528 11.7411 14.6551 10.247C14.7441 10.164 14.8331 10.081 14.9221 9.99803C14.5989 9.6748 14.2756 9.35157 13.9524 9.02834C13.8694 9.11736 13.7864 9.20637 13.7034 9.29539C12.2093 10.8977 10.7152 12.5 9.22113 14.1023C9.13813 14.1913 9.05513 14.2803 8.97212 14.3693Z" fill="currentColor" stroke="none" />
+            <path d="M11.6323 13.7841C11.6323 14.0395 11.6323 14.295 11.6323 14.5504C11.6812 14.5523 11.7301 14.5543 11.779 14.5562C12.659 14.5913 13.539 14.6263 14.419 14.6614C14.4679 14.6633 14.5168 14.6653 14.5657 14.6672C14.5657 14.3339 14.5657 14.0006 14.5657 13.6672C14.5168 13.6692 14.4679 13.6711 14.419 13.6731C13.539 13.7081 12.659 13.7432 11.779 13.7783C11.7301 13.7802 11.6812 13.7821 11.6323 13.7841Z" fill="currentColor" stroke="none" />
           </>
         ) : activity.kind === "narrative" ? (
           <>
@@ -479,23 +651,36 @@ function StreamActivityGlyph({ activity }: { activity: HermesStreamActivity }) {
           </>
         ) : activity.kind === "error" ? (
           <>
-            <circle cx="9" cy="9" r="6.4" />
-            <path d="M9 5.6v4.2M9 12.6v.1" />
+            <circle cx="8" cy="8" r="6.4" />
+            <path d="M8 4.6v4.2M8 11.6v.1" />
           </>
         ) : isBash ? (
           <>
-            <path d="m4.5 4.4 4.3 4.6-4.3 4.6M10.8 13.6h2.8" />
+            <path d="M3 4L7 8L3 12" />
+            <path d="M9 12H13" />
           </>
         ) : isRead ? (
           <>
-            <rect x="3" y="3" width="12" height="12" rx="1.2" />
-            <path d="m4.2 7.2 6.6 6.6M4.2 4.5l9.3 9.3M7.4 3.8l6.8 6.8" />
+            <path d="M4.9375 5.90295H11.0625" />
+            <path d="M4.9375 9.02991H8.27841" />
+            <path d="M12.5 1.32617C13.3039 1.32617 14 1.95171 14 2.77637V13.2246C13.9996 14.0489 13.3036 14.6738 12.5 14.6738H3.5C2.69637 14.6738 2.00042 14.0489 2 13.2246V2.77637C2 1.95171 2.69613 1.32617 3.5 1.32617H12.5ZM3.5 2.32617C3.1993 2.32617 3 2.55186 3 2.77637V13.2246C3.00044 13.4489 3.19963 13.6738 3.5 13.6738H12.5C12.8004 13.6738 12.9996 13.4489 13 13.2246V2.77637C13 2.55186 12.8007 2.32617 12.5 2.32617H3.5Z" fill="currentColor" stroke="none" />
           </>
-        ) : isBrowse ? (
+        ) : isSearch ? (
           <>
-            <circle cx="9" cy="9" r="6.4" />
-            <circle cx="9" cy="9" r="2" />
-            <path d="M9 1.7v2M9 14.3v2M1.7 9h2M14.3 9h2" />
+            <path d="M6.58727 11.8586C9.55061 11.8586 11.9529 9.45637 11.9529 6.49304C11.9529 3.5297 9.55061 1.12744 6.58727 1.12744C3.62394 1.12744 1.22168 3.5297 1.22168 6.49304C1.22168 9.45637 3.62394 11.8586 6.58727 11.8586Z" />
+            <path d="M10.2991 10.3933L14.7783 14.8725" />
+          </>
+        ) : isFileEdit ? (
+          <>
+            <path d="M8.85596 2.69971H4.19971C3.37141 2.69971 2.69992 3.37146 2.69971 4.19971V11.8003C2.69992 12.6285 3.37141 13.3003 4.19971 13.3003H11.8003C12.6283 13.2999 13.3001 12.6283 13.3003 11.8003V7.89893H14.3003V11.8003C14.3001 13.1806 13.1806 14.2999 11.8003 14.3003H4.19971C2.81913 14.3003 1.69992 13.1808 1.69971 11.8003V4.19971C1.69992 2.81918 2.81913 1.69971 4.19971 1.69971H8.85596V2.69971Z" fill="currentColor" stroke="none" />
+            <path d="M7.7849 8.23878L13.888 2.13574" />
+          </>
+        ) : isCode ? (
+          <>
+            <path d="M6.27612 1.5L4.52612 14.5" />
+            <path d="M11.4739 1.5L9.72388 14.5" />
+            <path d="M2.39868 5.5H14.0681" />
+            <path d="M1.93188 10.5H13.6013" />
           </>
         ) : activity.kind === "subagent" ? (
           <>
@@ -505,26 +690,45 @@ function StreamActivityGlyph({ activity }: { activity: HermesStreamActivity }) {
             <path d="m6.5 8.2 4.8-2.4M6.5 9.8l4.8 2.4" />
           </>
         ) : (
-          <rect x="3" y="3" width="12" height="12" rx="1.5" />
+          <path d="M5.875 3C5.875 6.33333 7.54167 8 10.875 8C7.54167 8 5.875 9.66667 5.875 13C5.875 9.66667 4.20833 8 0.875 8C4.20833 8 5.875 6.33333 5.875 3Z" />
         )}
       </svg>
     </span>
   );
 }
 
-function ThinkingActivityRow({ activity, detail }: { activity: HermesStreamActivity; detail: string }) {
-  const isComplete = activity.status === "complete";
-  const [expanded, setExpanded] = useState(() => !isComplete);
-  const canToggle = isComplete && Boolean(detail.trim());
+function reasoningPreview(text: string, running: boolean): string {
+  const paragraphs = text.split(/\r?\n(?:[\t ]*\r?\n)+/);
+  if (!running) {
+    return (paragraphs[0]?.split(/\r?\n/, 1)[0] || "").replaceAll("**", "").trim();
+  }
+
+  let latestCompletedLine = "";
+  for (const paragraph of paragraphs) {
+    const firstLine = paragraph.split(/\r?\n/, 1)[0] || "";
+    if (paragraph.includes("\n") && firstLine.trim()) latestCompletedLine = firstLine;
+  }
+  return latestCompletedLine.replaceAll("**", "").trim();
+}
+
+function ThinkingActivityRow({ activity, detail }: { activity: DshStreamActivity; detail: string }) {
+  const isRunning = activity.status === "running";
+  const [expanded, setExpanded] = useState(false);
+  const preview = reasoningPreview(detail, isRunning);
+  const canToggle = Boolean(detail.trim());
 
   return (
-    <div className={`stream-activity-row ${activity.status} thinking${expanded ? " expanded" : " collapsed"}`}>
+    <div
+      className={`stream-activity-row ${activity.status} thinking${expanded ? " expanded" : " collapsed"}`}
+      role="listitem"
+      aria-label={`思考过程${preview ? ` · ${preview}` : ""}`}
+    >
       <button
         type="button"
         className="stream-activity-thinking-toggle"
         disabled={!canToggle}
         aria-expanded={canToggle ? expanded : undefined}
-        aria-label={`${activity.label} · ${detail}`}
+        aria-label={`${activity.label}${preview ? ` · ${preview}` : ""}`}
         onClick={() => {
           if (canToggle) {
             setExpanded((current) => !current);
@@ -532,97 +736,320 @@ function ThinkingActivityRow({ activity, detail }: { activity: HermesStreamActiv
         }}
       >
         <StreamActivityGlyph activity={activity} />
-        <span className="stream-activity-label">{activity.label}</span>
-        <span className="stream-activity-separator" aria-hidden="true">·</span>
-        {!isComplete ? (
-          <span className="stream-activity-thinking-detail">{detail}</span>
-        ) : (
-          expanded ? null : <span className="stream-activity-thinking-collapsed">已完成</span>
-        )}
-        {activity.status === "running" ? (
+        <span className="stream-activity-label">思考</span>
+        {preview && !expanded ? (
+          <>
+            <span className="stream-activity-separator" aria-hidden="true">·</span>
+            <span className="stream-activity-thinking-preview" data-streaming={isRunning || undefined}>{preview}</span>
+          </>
+        ) : null}
+        {isRunning ? (
           <span className="stream-activity-state" aria-label="进行中">
             <span className="stream-activity-spinner" aria-hidden="true" />
           </span>
         ) : canToggle ? (
           <span className="stream-activity-thinking-chevron" aria-hidden="true">
             <svg viewBox="0 0 16 16" focusable="false">
-              <path d={expanded ? "m3.5 9.5 4.5-4 4.5 4" : "m3.5 6.5 4.5 4 4.5-4"} />
+              <path d="M4 6L7.29289 9.29289C7.68342 9.68342 8.31658 9.68342 8.70711 9.29289L12 6" />
             </svg>
           </span>
         ) : null}
       </button>
-      {isComplete && expanded ? (
-        <div className="stream-activity-thinking-body">{detail}</div>
+      {expanded ? (
+        <div className="stream-activity-thinking-body">
+          <MessageBody role="assistant" text={detail} />
+        </div>
       ) : null}
     </div>
   );
+}
+
+function toolPresentation(activity: DshStreamActivity, rawInput: string) {
+  const toolName = (activity.toolName || activity.label || "Tool").toLowerCase();
+  const variants: Record<string, "search" | "read" | "bash" | "write" | "edit" | "code" | "others"> = {
+    bash: "bash",
+    pwsh: "bash",
+    read: "read",
+    read_image: "read",
+    web_fetch: "read",
+    web_search: "search",
+    grep: "search",
+    glob: "search",
+    write: "write",
+    edit: "edit",
+    run_code: "code",
+  };
+  const variant = variants[toolName] || "others";
+  const titles: Record<string, string> = {
+    search: "搜索",
+    read: "读取",
+    bash: "运行命令",
+    write: "写入",
+    edit: "编辑",
+    code: "代码",
+    others: "工具调用",
+    grep: "搜索文件内容",
+    glob: "查找文件",
+    web_search: "网页搜索",
+    read_image: "读取图片",
+    ask_user_question: "提问",
+  };
+  let parsed: Record<string, unknown> | null = null;
+  try {
+    const value: unknown = JSON.parse(rawInput);
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      parsed = value as Record<string, unknown>;
+    }
+  } catch {
+    // DSH can retain malformed model arguments as raw text; show its first line.
+  }
+
+  const firstLine = (value: unknown) => typeof value === "string" ? value.split(/\r?\n/, 1)[0].trim() : "";
+  const summaryKeys: Record<string, string[]> = {
+    bash: ["description", "command"],
+    read: ["path", "file_path", "url"],
+    search: ["query", "pattern", "url"],
+    write: ["path", "file_path"],
+    edit: ["path", "file_path"],
+    code: ["description"],
+    others: [],
+  };
+  let summary = "";
+  if (variant === "search" && Array.isArray(parsed?.queries)) {
+    summary = parsed.queries.map(firstLine).filter(Boolean).join(", ");
+  }
+  for (const key of summaryKeys[variant]) {
+    if (!summary && parsed) summary = firstLine(parsed[key]);
+  }
+  if (!summary && parsed) {
+    summary = Object.values(parsed).map(firstLine).find(Boolean) || "";
+  }
+  if (!summary) summary = firstLine(rawInput);
+  if (variant === "others" && toolName !== "tool") {
+    summary = summary ? `${toolName} · ${summary}` : toolName;
+  }
+
+  let input = rawInput;
+  if (parsed) {
+    if ((variant === "bash" || variant === "code") && typeof parsed.command === "string") {
+      input = parsed.command;
+    } else if (variant === "code" && typeof parsed.code === "string") {
+      input = parsed.code;
+    } else {
+      input = JSON.stringify(parsed, null, 2);
+    }
+  }
+
+  return {
+    title: titles[toolName] || titles[variant],
+    summary,
+    input: input.trim() ? input : "",
+    output: activity.output || "",
+  };
+}
+
+function ToolActivityRow({ activity, detail, duration }: {
+  activity: DshStreamActivity;
+  detail: string;
+  duration: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const presentation = toolPresentation(activity, detail);
+  const isRunning = activity.status === "running";
+  const isError = activity.status === "error";
+  const expandable = Boolean(presentation.input || presentation.output);
+
+  return (
+    <div
+      className={`stream-activity-row tool ${activity.status}${expanded ? " expanded" : " collapsed"}`}
+      role="listitem"
+      aria-label={`${presentation.title}${presentation.summary ? ` · ${presentation.summary}` : ""}${duration}`}
+    >
+      <button
+        type="button"
+        className="stream-activity-tool-toggle"
+        disabled={!expandable}
+        aria-expanded={expandable ? expanded : undefined}
+        aria-label={`${presentation.title}${presentation.summary ? ` · ${presentation.summary}` : ""}${expandable ? (expanded ? " · 收起详情" : " · 展开详情") : ""}`}
+        onClick={() => expandable && setExpanded((current) => !current)}
+      >
+        <StreamActivityGlyph activity={activity} />
+        <span className="stream-activity-label">{presentation.title}</span>
+        {presentation.summary ? <span className="stream-activity-separator" aria-hidden="true">·</span> : null}
+        <span className="stream-activity-tool-summary">{presentation.summary}</span>
+        {isRunning ? (
+          <span className="stream-activity-state" aria-label="运行中">
+            <span className="stream-activity-spinner" aria-hidden="true" />
+          </span>
+        ) : isError ? (
+          <span className="stream-activity-tool-error">失败</span>
+        ) : duration ? (
+          <span className="stream-activity-duration">{duration}</span>
+        ) : null}
+        {expandable ? (
+          <span className="stream-activity-thinking-chevron" aria-hidden="true">
+            <svg viewBox="0 0 16 16" focusable="false">
+              <path d="M4 6L7.29289 9.29289C7.68342 9.68342 8.31658 9.68342 8.70711 9.29289L12 6" />
+            </svg>
+          </span>
+        ) : null}
+      </button>
+      {expanded ? (
+        <div className="stream-activity-tool-body">
+          {presentation.input ? (
+            <div className="stream-activity-tool-io">
+              <span className="stream-activity-tool-io-label">输入</span>
+              <pre>{presentation.input}</pre>
+            </div>
+          ) : null}
+          {presentation.output ? (
+            <div className="stream-activity-tool-io">
+              <span className="stream-activity-tool-io-label">输出</span>
+              <pre>{presentation.output}</pre>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function streamActivityProcessTitle(activities: DshStreamActivity[]): string {
+  const categoryFor = (activity: DshStreamActivity): string => {
+    if (activity.kind === "thinking") return "已完成分析";
+    if (activity.kind === "subagent") return "已协调子智能体";
+    if (activity.label === "Plan" || activity.label === "计划") return "更新了计划";
+    if (activity.kind !== "tool") return "";
+
+    const toolName = (activity.toolName || activity.label || "").toLowerCase();
+    if (["read_image", "image", "readimage"].includes(toolName)) return "已读取图片";
+    if (["read", "read_file"].includes(toolName)) return "已读取文件";
+    if (["web_fetch", "browse"].includes(toolName)) return "已访问网页";
+    if (["write", "write_file"].includes(toolName)) return "已写入文件";
+    if (["edit", "patch"].includes(toolName)) return "修改了文件";
+    if (["grep", "glob", "search"].includes(toolName)) return "已搜索代码";
+    if (toolName === "web_search") return "已搜索网页";
+    if (["bash", "pwsh", "shell", "terminal"].includes(toolName)) return "执行了命令";
+    if (["code", "run_code"].includes(toolName)) return "运行了代码";
+    if (toolName === "ask_user_question") return "向用户提出了问题";
+    return "已调用工具";
+  };
+
+  const categories = [...new Set(activities.map(categoryFor).filter(Boolean))].slice(0, 3);
+  if (categories.length === 0) return "已完成工作";
+  if (categories.length === 1) return categories[0];
+
+  const [first = "", ...rest] = categories;
+  const samePrefix = first.startsWith("已");
+  if (categories.length === 2) {
+    const second = rest[0] || "";
+    return `${first}并${samePrefix && second.startsWith("已") ? second.slice(1) : second.charAt(0).toLowerCase() + second.slice(1)}`;
+  }
+
+  const restLabels = rest.map((label) => samePrefix && label.startsWith("已") ? label.slice(1) : label);
+  return `${[first, ...restLabels].join("、")}等`;
 }
 
 function StreamActivityTimeline({
   activities,
   live = false,
 }: {
-  activities: HermesStreamActivity[];
+  activities: DshStreamActivity[];
   live?: boolean;
 }) {
+  const [expanded, setExpanded] = useState(live);
+  useEffect(() => {
+    setExpanded(live);
+  }, [live]);
+
   const visibleActivities = activities.slice(-80);
   if (visibleActivities.length === 0) return null;
+  const processTitle = live ? "深度求索中" : streamActivityProcessTitle(visibleActivities);
 
   return (
-    <div className={`stream-activity-feed ${live ? "live" : ""}`} role="list" aria-label="智能体活动流" aria-live={live ? "polite" : undefined}>
-      {visibleActivities.map((activity) => {
-        const detail = activity.detail || (
-          activity.status === "running"
-            ? "处理中…"
-            : activity.status === "error"
-              ? "执行失败"
-              : "已完成"
-        );
-        const duration = typeof activity.durationMs === "number"
-          ? ` · ${(activity.durationMs / 1000).toFixed(activity.durationMs < 10_000 ? 1 : 0)}s`
-          : "";
-        const isNarrative = activity.kind === "narrative";
-        const isThinking = activity.kind === "thinking";
+    <section className={`stream-activity-process${expanded ? " expanded" : ""}${live ? " live" : ""}`}>
+      <button
+        type="button"
+        className="stream-activity-process-toggle"
+        aria-expanded={expanded}
+        aria-label={`${processTitle} · ${expanded ? "收起" : "展开"}思考与工具调用`}
+        onClick={() => setExpanded((current) => !current)}
+      >
+        <span className="stream-activity-process-title">{processTitle}</span>
+        <svg className="stream-activity-process-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M4 6L7.29289 9.29289C7.68342 9.68342 8.31658 9.68342 8.70711 9.29289L12 6" />
+        </svg>
+      </button>
+      {expanded ? (
+        <div className={`stream-activity-feed ${live ? "live" : ""}`} role="list" aria-label="智能体活动流" aria-live={live ? "polite" : undefined}>
+          {visibleActivities.map((activity) => {
+            const detail = activity.detail || (
+              activity.kind === "tool" || activity.kind === "thinking"
+                ? ""
+                : activity.status === "running"
+                  ? "处理中…"
+                  : activity.status === "error"
+                    ? "执行失败"
+                    : "已完成"
+            );
+            const duration = typeof activity.durationMs === "number"
+              ? ` · ${(activity.durationMs / 1000).toFixed(activity.durationMs < 10_000 ? 1 : 0)}s`
+              : "";
+            const isNarrative = activity.kind === "narrative";
+            const isThinking = activity.kind === "thinking";
 
-        if (isThinking) {
-          return (
-            <ThinkingActivityRow
-              key={`${activity.id}:${activity.status}`}
-              activity={activity}
-              detail={detail}
-            />
-          );
-        }
+            if (isThinking) {
+              return (
+                <ThinkingActivityRow
+                  key={activity.id}
+                  activity={activity}
+                  detail={detail}
+                />
+              );
+            }
 
-        return (
-          <div
-            key={activity.id}
-            className={`stream-activity-row ${activity.status}${isThinking ? " thinking" : ""}${isNarrative ? " narrative" : ""}`}
-            role="listitem"
-            aria-label={`${activity.label} · ${detail}${duration}`}
-          >
-            <StreamActivityGlyph activity={activity} />
-            {isNarrative ? (
-              <div className="stream-activity-narrative">
-                <MessageBody role="assistant" text={detail} />
+            if (activity.kind === "tool") {
+              return (
+                <ToolActivityRow
+                  key={activity.id}
+                  activity={activity}
+                  detail={detail}
+                  duration={duration}
+                />
+              );
+            }
+
+            return (
+              <div
+                key={activity.id}
+                className={`stream-activity-row ${activity.status}${isNarrative ? " narrative" : ""}`}
+                role="listitem"
+                aria-label={`${activity.label} · ${detail}${duration}`}
+              >
+                <StreamActivityGlyph activity={activity} />
+                {isNarrative ? (
+                  <div className="stream-activity-narrative">
+                    <MessageBody role="assistant" text={detail} />
+                  </div>
+                ) : (
+                  <>
+                    <span className="stream-activity-label">{activity.label}</span>
+                    <span className="stream-activity-separator" aria-hidden="true">·</span>
+                    <span className="stream-activity-detail">{detail}</span>
+                    {duration ? <span className="stream-activity-duration">{duration}</span> : null}
+                    {activity.status === "running" || activity.status === "error" ? (
+                      <span className="stream-activity-state" aria-label={activity.status === "running" ? "进行中" : "失败"}>
+                        {activity.status === "running" ? <span className="stream-activity-spinner" aria-hidden="true" /> : "×"}
+                      </span>
+                    ) : null}
+                  </>
+                )}
               </div>
-            ) : (
-              <>
-                <span className="stream-activity-label">{activity.label}</span>
-                <span className="stream-activity-separator" aria-hidden="true">·</span>
-                <span className="stream-activity-detail">{detail}</span>
-                {duration ? <span className="stream-activity-duration">{duration}</span> : null}
-                {activity.status === "running" || activity.status === "error" ? (
-                  <span className="stream-activity-state" aria-label={activity.status === "running" ? "进行中" : "失败"}>
-                    {activity.status === "running" ? <span className="stream-activity-spinner" aria-hidden="true" /> : "×"}
-                  </span>
-                ) : null}
-              </>
-            )}
-          </div>
-        );
-      })}
-    </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -639,15 +1066,32 @@ function InterruptedTurnDivider() {
 }
 
 function App() {
-  const [state, setState] = useState<HermesAppState | null>(null);
+  const [state, setState] = useState<DshAppState | null>(null);
+  const permissionSelection = state?.activeThreadId
+    ? state.currentPermissionPreset
+    : state?.permissionDefaultPreset || state?.settings.permissionDefaultPreset || "workspace-write";
+  const availablePermissionPresets = state?.permissionPresets || [];
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const [bootstrapRetryKey, setBootstrapRetryKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [activeSettingsTab, setActiveSettingsTab] = useState<"runtime" | "chat" | "vision" | "tools">("runtime");
+  const [activeSettingsTab, setActiveSettingsTab] = useState<"runtime" | "chat">("runtime");
   const [draft, setDraft] = useState("");
-  const [selectedAttachments, setSelectedAttachments] = useState<HermesSelectedFile[]>([]);
-  const [clarificationDraft, setClarificationDraft] = useState("");
+  const [pendingVoiceTranscript, setPendingVoiceTranscript] = useState<string | null>(null);
+  const [voiceStatus, setVoiceStatus] = useState<"idle" | "preparing" | "recording" | "transcribing">("idle");
+  const [voicePreparationText, setVoicePreparationText] = useState("");
+  const [selectedAttachments, setSelectedAttachments] = useState<DshSelectedFile[]>([]);
+  const [clarificationDraftState, setClarificationDraftState] = useState<{
+    requestId: string;
+    answers: Record<string, DshQuestionDraft>;
+  } | null>(null);
+  const clarificationRequestId = state?.pendingClarification?.requestId;
+  const clarificationDraft = clarificationRequestId && clarificationDraftState?.requestId === clarificationRequestId
+    ? clarificationDraftState.answers
+    : {};
   const [isThreadLoading, setIsThreadLoading] = useState(false);
   const [dismissedFiles, setDismissedFiles] = useState<string[] | null>(null);
   const [dismissedError, setDismissedError] = useState<string | null>(null);
+  const [archivedThread, setArchivedThread] = useState<{ id: string; title: string } | null>(null);
 
   const isTokenError = (err?: string | null) => {
     if (!err) return false;
@@ -662,15 +1106,26 @@ function App() {
 
   const [recentFolders, setRecentFolders] = useState<Array<{ path: string; name: string }>>(() => {
     try {
-      const saved = localStorage.getItem("hermes_recent_folders");
+      const saved = readMigratedLocalValue("statpilot_recent_folders", "hermes_recent_folders");
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
     }
   });
   const [isFolderMenuOpen, setIsFolderMenuOpen] = useState(false);
+  const [isPermissionMenuOpen, setIsPermissionMenuOpen] = useState(false);
+  const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
+  const [permissionBusy, setPermissionBusy] = useState(false);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [modelSelectionBusy, setModelSelectionBusy] = useState(false);
+  const [modelCatalogLoading, setModelCatalogLoading] = useState(false);
+  const [modelSelectionError, setModelSelectionError] = useState<string | null>(null);
+  const [permissionConfirmationOpen, setPermissionConfirmationOpen] = useState(false);
+  const [permissionConfirmationAcknowledged, setPermissionConfirmationAcknowledged] = useState(false);
   const [workspaceSelectionLocked, setWorkspaceSelectionLocked] = useState(false);
   const folderMenuRef = useRef<HTMLDivElement>(null);
+  const permissionMenuRef = useRef<HTMLDivElement>(null);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isFolderMenuOpen) return;
@@ -687,39 +1142,45 @@ function App() {
     };
   }, [isFolderMenuOpen]);
 
+  useEffect(() => {
+    if (!isPermissionMenuOpen) return;
+
+    function handleClickOutside(event: MouseEvent) {
+      if (permissionMenuRef.current && !permissionMenuRef.current.contains(event.target as Node)) {
+        setIsPermissionMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isPermissionMenuOpen]);
+
+  useEffect(() => {
+    if (!isModelMenuOpen) return;
+
+    function handleClickOutside(event: MouseEvent) {
+      if (modelMenuRef.current && !modelMenuRef.current.contains(event.target as Node)) {
+        setIsModelMenuOpen(false);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setIsModelMenuOpen(false);
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [isModelMenuOpen]);
+
   const [activeBranch, setActiveBranch] = useState<string | null>(null);
-  const [activeMainTab, setActiveMainTab] = useState<"chat" | "skills">("chat");
+  const [activeMainTab, setActiveMainTab] = useState<"chat" | "skills" | "archive">("chat");
   const [skillsSearchQuery, setSkillsSearchQuery] = useState("");
   const [selectedSkillTag, setSelectedSkillTag] = useState<string | null>(null);
   const [stylePickerSkillName, setStylePickerSkillName] = useState<string | null>(null);
-  const [selectedDigestItems, setSelectedDigestItems] = useState<Record<string, DigestItem>>({});
-
-  function handleToggleDigestItem(item: DigestItem) {
-    setSelectedDigestItems((prev) => {
-      const next = { ...prev };
-      if (next[item.id]) {
-        delete next[item.id];
-      } else {
-        next[item.id] = item;
-      }
-      return next;
-    });
-  }
-
-  function handleToggleAllDigestItems(items: DigestItem[]) {
-    setSelectedDigestItems((prev) => {
-      const next = { ...prev };
-      const allSelected = items.every((it) => Boolean(next[it.id]));
-      if (allSelected) {
-        items.forEach((it) => delete next[it.id]);
-      } else {
-        items.forEach((it) => {
-          next[it.id] = it;
-        });
-      }
-      return next;
-    });
-  }
 
   function isWorkspaceLocked() {
     // 只有在当前会话已经产生真实交互消息或正在生成中时，才锁定工作区选择
@@ -731,55 +1192,201 @@ function App() {
     );
   }
 
-  function handleClearSelectedDigestItems() {
-    setSelectedDigestItems({});
-  }
-
-  const selectedDigestList = useMemo(() => Object.values(selectedDigestItems), [selectedDigestItems]);
-
-  function formatSelectedItemsForPrompt(items: DigestItem[]): string {
-    return items
-      .map((item, idx) => {
-        let line = `${idx + 1}. 《${item.title}》`;
-        if (item.organization) line += `（${item.organization}）`;
-        if (item.publish_time) line += ` [${item.publish_time}]`;
-        if (item.summary) line += `\n   摘要：${item.summary}`;
-        return line;
-      })
-      .join("\n\n");
-  }
-
-  function handleDigestActionBriefing() {
-    if (selectedDigestList.length === 0) return;
-    const itemsText = formatSelectedItemsForPrompt(selectedDigestList);
-    const prompt = `请针对我勾选的这 ${selectedDigestList.length} 条统计/政务动态进行深度分析与核心要点提炼：\n\n${itemsText}`;
-    setDraft(prompt);
-    focusEditor();
-  }
-
-  function handleDigestActionCompare() {
-    if (selectedDigestList.length < 2) return;
-    const itemsText = formatSelectedItemsForPrompt(selectedDigestList);
-    const prompt = `请对我勾选的这 ${selectedDigestList.length} 条统计/政务动态进行交叉对比，梳理出各单位在工作重点、技术路径、建设进度上的异同与值得借鉴的亮点：\n\n${itemsText}`;
-    setDraft(prompt);
-    focusEditor();
-  }
-
-  function handleDigestActionGenerateHtml() {
-    if (selectedDigestList.length === 0) return;
-    handleUseSkillInChat("info_digest_html");
-    const itemsText = formatSelectedItemsForPrompt(selectedDigestList);
-    const prompt = `请根据我勾选的这 ${selectedDigestList.length} 条动态生成 HTML 参阅报表，默认使用极客卡片风：\n\n${itemsText}`;
-    setDraft(prompt);
-    focusEditor();
-  }
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const voiceCaptureRef = useRef<{ recorder: MediaRecorder; stream: MediaStream; chunks: Blob[] } | null>(null);
+  const voiceSetupOperationRef = useRef(0);
+  const voiceRecordingTimeoutRef = useRef<number | null>(null);
+  const currentVoiceThreadId = state?.activeThreadId ?? null;
+  const activeVoiceThreadIdRef = useRef<string | null>(currentVoiceThreadId);
+  activeVoiceThreadIdRef.current = currentVoiceThreadId;
+  const voiceObservedThreadIdRef = useRef<string | null>(currentVoiceThreadId);
 
   function focusEditor() {
     window.setTimeout(() => {
       textareaRef.current?.focus();
     }, 0);
   }
+
+  async function waitForVoiceProviderReady(operation: number): Promise<boolean> {
+    if (!window.dshDesktop) throw new Error("DSH 语音接口尚未连接");
+    let catalog = await window.dshDesktop.getSpeechCatalog();
+    let provider = catalog.providers.find((item) => item.id === VOICE_PROVIDER_ID);
+    if (!provider) throw new Error("当前 DSH profile 没有启用本地语音识别 Bundle，请重启应用后重试");
+
+    let phase = provider.preparation?.phase || "unprepared";
+    if (phase !== "ready") {
+      if (["unprepared", "standby", "cancelled", "failed"].includes(phase)) {
+        const shouldPrepare = window.confirm("首次使用需要下载或加载本地 SenseVoice 语音模型。录音只会发送到本机 DSH，并在转写后放入草稿，不会自动发送。现在准备吗？");
+        if (!shouldPrepare) return false;
+        await window.dshDesktop.prepareSpeechProvider(VOICE_PROVIDER_ID);
+      }
+
+      setVoiceStatus("preparing");
+      const deadline = Date.now() + 30 * 60 * 1000;
+      while (Date.now() < deadline) {
+        if (operation !== voiceSetupOperationRef.current) return false;
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        catalog = await window.dshDesktop.getSpeechCatalog();
+        provider = catalog.providers.find((item) => item.id === VOICE_PROVIDER_ID);
+        if (!provider) throw new Error("DSH 本地语音识别 Provider 已不可用");
+        phase = provider.preparation?.phase || "unprepared";
+        const preparation = provider.preparation;
+        const progress = preparation?.totalBytes && preparation.completedBytes !== undefined
+          ? ` ${Math.round((preparation.completedBytes / preparation.totalBytes) * 100)}%`
+          : "";
+        setVoicePreparationText(`${preparation?.message || "正在准备本地语音模型"}${progress}`);
+        if (phase === "ready") break;
+        if (phase === "failed") throw new Error(preparation?.message || "本地语音模型准备失败");
+        if (phase === "cancelled") return false;
+      }
+      if (phase !== "ready") throw new Error("准备本地语音模型超时，请稍后重试");
+    }
+    setVoicePreparationText("");
+    return true;
+  }
+
+  function stopVoiceRecording() {
+    const capture = voiceCaptureRef.current;
+    if (capture && capture.recorder.state !== "inactive") capture.recorder.stop();
+  }
+
+  async function transcribeVoiceRecording(recording: Blob, operation: number, targetThreadId: string | null) {
+    if (!window.dshDesktop) return;
+    setVoiceStatus("transcribing");
+    try {
+      const catalog = await window.dshDesktop.getSpeechCatalog();
+      const audioBase64 = await encodeSpeechWavBase64(recording);
+      const result = await window.dshDesktop.transcribeSpeech({
+        audioBase64,
+        providerId: VOICE_PROVIDER_ID,
+        language: catalog.selection.language || "auto",
+      });
+      const transcript = result.text.trim();
+      if (!transcript) throw new Error("没有识别到语音文字");
+      if (operation !== voiceSetupOperationRef.current || activeVoiceThreadIdRef.current !== targetThreadId) {
+        setPendingVoiceTranscript(transcript);
+        return;
+      }
+      setDraft((current) => current.trim() ? `${current.trimEnd()}\n${transcript}` : transcript);
+      focusEditor();
+    } catch (error) {
+      if (operation === voiceSetupOperationRef.current) {
+        const detail = error instanceof Error ? error.message : String(error);
+        window.alert(`语音转写失败：${detail}`);
+      }
+    } finally {
+      if (operation === voiceSetupOperationRef.current) {
+        setVoiceStatus("idle");
+        setVoicePreparationText("");
+      }
+    }
+  }
+
+  async function handleVoiceInput() {
+    if (voiceStatus === "recording") {
+      stopVoiceRecording();
+      return;
+    }
+    if (voiceStatus === "preparing") {
+      voiceSetupOperationRef.current += 1;
+      await window.dshDesktop.cancelSpeechPreparation(VOICE_PROVIDER_ID).catch(() => {});
+      setVoiceStatus("idle");
+      setVoicePreparationText("");
+      return;
+    }
+    if (voiceStatus !== "idle" || !window.dshDesktop) return;
+
+    const operation = ++voiceSetupOperationRef.current;
+    const targetThreadId = activeVoiceThreadIdRef.current;
+    let pendingStream: MediaStream | null = null;
+    setVoiceStatus("preparing");
+    try {
+      const ready = await waitForVoiceProviderReady(operation);
+      if (!ready || operation !== voiceSetupOperationRef.current) {
+        setVoiceStatus("idle");
+        return;
+      }
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+        throw new Error("当前系统暂不支持浏览器录音");
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true },
+        video: false,
+      });
+      pendingStream = stream;
+      if (operation !== voiceSetupOperationRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        pendingStream = null;
+        return;
+      }
+
+      const recorder = new MediaRecorder(stream);
+      const capture = { recorder, stream, chunks: [] as Blob[] };
+      voiceCaptureRef.current = capture;
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) capture.chunks.push(event.data);
+      };
+      recorder.onstop = () => {
+        if (voiceRecordingTimeoutRef.current !== null) {
+          window.clearTimeout(voiceRecordingTimeoutRef.current);
+          voiceRecordingTimeoutRef.current = null;
+        }
+        stream.getTracks().forEach((track) => track.stop());
+        if (voiceCaptureRef.current !== capture) return;
+        voiceCaptureRef.current = null;
+        const recording = new Blob(capture.chunks, { type: recorder.mimeType || "audio/webm" });
+        if (recording.size === 0) {
+          setVoiceStatus("idle");
+          window.alert("没有录到音频，请检查麦克风权限后重试。");
+          return;
+        }
+        void transcribeVoiceRecording(recording, operation, targetThreadId);
+      };
+      recorder.start();
+      pendingStream = null;
+      setVoiceStatus("recording");
+      voiceRecordingTimeoutRef.current = window.setTimeout(stopVoiceRecording, MAX_VOICE_SECONDS * 1000);
+    } catch (error) {
+      pendingStream?.getTracks().forEach((track) => track.stop());
+      if (operation === voiceSetupOperationRef.current) {
+        const detail = error instanceof Error ? error.message : String(error);
+        setVoiceStatus("idle");
+        setVoicePreparationText("");
+        window.alert(`无法开始语音输入：${detail}`);
+      }
+    }
+  }
+
+  useEffect(() => () => {
+    voiceSetupOperationRef.current += 1;
+    if (voiceRecordingTimeoutRef.current !== null) window.clearTimeout(voiceRecordingTimeoutRef.current);
+    const capture = voiceCaptureRef.current;
+    voiceCaptureRef.current = null;
+    if (capture) {
+      if (capture.recorder.state !== "inactive") capture.recorder.stop();
+      capture.stream.getTracks().forEach((track) => track.stop());
+    }
+  }, []);
+
+  useEffect(() => {
+    const threadChanged = voiceObservedThreadIdRef.current !== currentVoiceThreadId;
+    voiceObservedThreadIdRef.current = currentVoiceThreadId;
+    if (activeMainTab === "chat" && !settingsOpen && !threadChanged) return;
+
+    voiceSetupOperationRef.current += 1;
+    if (voiceRecordingTimeoutRef.current !== null) {
+      window.clearTimeout(voiceRecordingTimeoutRef.current);
+      voiceRecordingTimeoutRef.current = null;
+    }
+    const capture = voiceCaptureRef.current;
+    voiceCaptureRef.current = null;
+    if (capture) {
+      if (capture.recorder.state !== "inactive") capture.recorder.stop();
+      capture.stream.getTracks().forEach((track) => track.stop());
+    }
+    setVoiceStatus("idle");
+    setVoicePreparationText("");
+  }, [activeMainTab, currentVoiceThreadId, settingsOpen]);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -847,17 +1454,17 @@ function App() {
     const normalizedSkill = skillName.replace(/_/g, "-");
     let prompt = "";
     if (normalizedSkill === "info-digest-html") {
-      prompt = `请生成动态信息汇总 HTML 报表，使用内置“${style.label}”风格模版（template_style: ${style.id}）。采集或整理统计、政务和信息化动态，直接在工作区 output/ 目录下生成完整的独立 HTML 文件；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接，并在对话末尾给出 [打开输出目录] 链接。`;
+      prompt = `请生成动态信息汇总 HTML 报表，使用内置“${style.label}”风格模版（template_style: ${style.id}）。采集或整理统计、政务和信息化动态，直接在工作区 output/ 目录下生成完整的独立 HTML 文件；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接。写入后检查文件存在且非空；若未写入或检查失败，明确说明未生成。回复只写核验过的文件名和 output/ 相对路径，不要生成“打开输出目录”超链接；用户可使用工作台的原生目录按钮打开。`;
     } else if (normalizedSkill === "weekly-report") {
-      prompt = `请采集最近 7 天统计信息化、数字化、人工智能和大数据相关动态，使用内置“${style.label}”风格模版（template_style: ${style.id}），生成统计信息化动态周报独立的 HTML 文件并写入工作区 output/ 目录；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接，并在对话末尾给出 [打开输出目录] 链接。`;
+      prompt = `请采集最近 7 天统计信息化、数字化、人工智能和大数据相关动态，使用内置“${style.label}”风格模版（template_style: ${style.id}），生成统计信息化动态周报独立的 HTML 文件并写入工作区 output/ 目录；每条信息必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接。写入后检查文件存在且非空；若未写入或检查失败，明确说明未生成。回复只写核验过的文件名和 output/ 相对路径，不要生成“打开输出目录”超链接；用户可使用工作台的原生目录按钮打开。`;
     } else if (normalizedSkill === "price-index-gdp-impact") {
-      prompt = `请默认以深圳市为分析对象，分析 CPI、PPI、GDP 平减指数等价格指数对 GDP 各项（消费、投资、净出口及名义/实际 GDP）的影响；优先使用深圳市统计局及深圳市政府官方统计数据，国家和广东省数据只作口径或对照，区分相关性与因果性，并为每个事实附发布单位或网站全称、完整标题和具体原文链接。\n\n【输出要求】：请直接使用内置“${style.label}”风格模版（template_style: ${style.id}），生成完整的可视化独立 HTML 报告文件并写入工作区 output/ 目录（如 output/价格指数×深圳GDP影响速查卡.html）。页面必须包含顶部 KPI 芯片、吸顶章节导航、高密度映射表格、证据分级标签及可点击原文超链接；严格遵守表格自然流排版，严禁使用导致内容遮挡的样式；并在对话最后提供 [打开输出目录] 链接。`;
+      prompt = `请默认以深圳市为分析对象，分析 CPI、PPI、GDP 平减指数等价格指数对 GDP 各项（消费、投资、净出口及名义/实际 GDP）的影响；优先使用深圳市统计局及深圳市政府官方统计数据，国家和广东省数据只作口径或对照，区分相关性与因果性，并为每个事实附发布单位或网站全称、完整标题和具体原文链接。\n\n【输出要求】：请直接使用内置“${style.label}”风格模版（template_style: ${style.id}），生成完整的可视化独立 HTML 报告文件并写入工作区 output/ 目录（如 output/价格指数×深圳GDP影响速查卡.html）。页面必须包含顶部 KPI 芯片、吸顶章节导航、高密度映射表格、证据分级标签及可点击原文超链接；严格遵守表格自然流排版，严禁使用导致内容遮挡的样式。回复中只写明实际生成的文件名和 output/ 相对路径，不要生成“打开输出目录”超链接；用户可使用工作台的原生目录按钮打开。`;
     } else if (normalizedSkill === "source-verification") {
-      prompt = `请核验我接下来提交的文件或链接：确认是否为官方来源、发布日期、发布机构、具体原文链接是否有效，并识别重复、转载和二次改写关系；输出逐项证据和发布单位或网站全称、完整标题、具体原文链接。\n\n【输出要求】：请同时使用内置“${style.label}”风格模版（template_style: ${style.id}），直接在工作区 output/ 目录生成独立的 HTML 证据核验报告文件，包含核验结论 KPI、核验结果明细表、重复转载对照表和完整可点击来源链，并在对话末尾给出 [打开输出目录] 链接。`;
+      prompt = `请核验我接下来提交的文件或链接：确认是否为官方来源、发布日期、发布机构、具体原文链接是否有效，并识别重复、转载和二次改写关系；输出逐项证据和发布单位或网站全称、完整标题、具体原文链接。\n\n【输出要求】：请同时使用内置“${style.label}”风格模版（template_style: ${style.id}），直接在工作区 output/ 目录生成独立的 HTML 证据核验报告文件，包含核验结论 KPI、核验结果明细表、重复转载对照表和完整可点击来源链。回复中只写明实际生成的文件名和 output/ 相对路径，不要生成“打开输出目录”超链接；用户可使用工作台的原生目录按钮打开。`;
     } else if (normalizedSkill === "gov-official-document-drafting") {
-      prompt = `请按深圳市统计局官方网站公开页面的政务文风起草公文：先根据我的任务判断合适的文种，保留文号、落款、联系人等待补字段，不虚构正式发布信息，并为事实、政策依据和数据附发布单位或网站全称、完整标题和具体原文链接。\n\n【输出要求】：除了在对话中提供可直接审阅的 Markdown 公文草案外，请同时使用内置“${style.label}”风格模版（template_style: ${style.id}），在工作区 output/ 目录生成一份排版规范、打印友好且来源标注完整的独立 HTML 参阅公文文件，并在对话末尾给出 [打开输出目录] 链接。`;
+      prompt = `请按深圳市统计局官方网站公开页面的政务文风起草公文：先根据我的任务判断合适的文种，保留文号、落款、联系人等待补字段，不虚构正式发布信息，并为事实、政策依据和数据附发布单位或网站全称、完整标题和具体原文链接。\n\n【输出要求】：除了在对话中提供可直接审阅的 Markdown 公文草案外，请同时使用内置“${style.label}”风格模版（template_style: ${style.id}），在工作区 output/ 目录生成一份排版规范、打印友好且来源标注完整的独立 HTML 参阅公文文件。回复中只写明实际生成的文件名和 output/ 相对路径，不要生成“打开输出目录”超链接；用户可使用工作台的原生目录按钮打开。`;
     } else {
-      prompt = `${BUILTIN_SKILL_START_PROMPTS[normalizedSkill] || BUILTIN_SKILL_START_PROMPTS[skillName] || "请使用当前技能完成我的任务，并为所有事实性内容附发布单位或网站全称、文章来源/页面完整标题和具体原文链接。"}\n\n【输出要求】：请按“${style.label}”风格（template_style: ${style.id}）生成独立可打开的 HTML 成果文件并保存到工作区 output/ 目录，并在末尾给出可点击链接：${style.description}`;
+      prompt = `${BUILTIN_SKILL_START_PROMPTS[normalizedSkill] || BUILTIN_SKILL_START_PROMPTS[skillName] || "请使用当前技能完成我的任务，并为所有事实性内容附发布单位或网站全称、文章来源/页面完整标题和具体原文链接。"}\n\n【输出要求】：请按“${style.label}”风格（template_style: ${style.id}）生成独立可打开的 HTML 成果文件并保存到工作区 output/ 目录。回复只写明实际生成的文件名和 output/ 相对路径，不要自行生成输出目录链接；用户可用工作台的原生“打开输出目录”按钮打开。`;
     }
 
     setStylePickerSkillName(null);
@@ -865,9 +1472,9 @@ function App() {
   }
 
   async function handleSelectAttachments() {
-    if (!window.hermesDesktop) return;
+    if (!window.dshDesktop) return;
     try {
-      const files = await window.hermesDesktop.selectFiles();
+      const files = await window.dshDesktop.selectFiles();
       if (files.length === 0) return;
       setSelectedAttachments((previous) => {
         const existingPaths = new Set(previous.map((file) => file.path));
@@ -885,20 +1492,31 @@ function App() {
   }
 
   async function handleStopMessage() {
-    if (!window.hermesDesktop) return;
+    if (!window.dshDesktop) return;
     try {
-      const nextState = await window.hermesDesktop.stopMessage();
+      const nextState = await window.dshDesktop.stopMessage();
       setState(nextState);
     } finally {
       setIsThreadLoading(false);
-      setClarificationDraft("");
+      setClarificationDraftState(null);
+    }
+  }
+
+  async function respondApproval(requestId: string, choice: "once" | "deny") {
+    if (!window.dshDesktop) return;
+    try {
+      const nextState = await window.dshDesktop.respondApproval(requestId, choice);
+      setState(nextState);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      window.alert(`权限审批提交失败：${detail}`);
     }
   }
 
   async function handleSelectWorkspaceFolder() {
-    if (!window.hermesDesktop || isWorkspaceLocked()) return;
+    if (!window.dshDesktop || isWorkspaceLocked()) return;
     setIsFolderMenuOpen(false);
-    const result = await window.hermesDesktop.selectWorkspaceFolder();
+    const result = await window.dshDesktop.selectWorkspaceFolder();
     if (result) {
       setWorkspaceSelectionLocked(true);
       setActiveBranch(result.branch);
@@ -906,19 +1524,19 @@ function App() {
       setRecentFolders((prev) => {
         const filtered = prev.filter((item) => item.path !== result.cwd);
         const updated = [newEntry, ...filtered].slice(0, 5);
-        localStorage.setItem("hermes_recent_folders", JSON.stringify(updated));
+        localStorage.setItem("statpilot_recent_folders", JSON.stringify(updated));
         return updated;
       });
-      const nextState = await window.hermesDesktop.getState();
+      const nextState = await window.dshDesktop.getState();
       setState(nextState);
     }
   }
 
   async function handleSwitchWorkspaceFolder(folderPath: string) {
-    if (!window.hermesDesktop || isWorkspaceLocked()) return;
+    if (!window.dshDesktop || isWorkspaceLocked()) return;
     setIsFolderMenuOpen(false);
     setActiveBranch(null);
-    const nextState = await window.hermesDesktop.updateSettings({ cwd: folderPath });
+    const nextState = await window.dshDesktop.updateSettings({ cwd: folderPath });
     // 选完文件夹不立即锁定，保留在输入框左下方展示当前选中的文件夹名称，等用户发消息后再锁定
     setState(nextState);
   }
@@ -926,7 +1544,7 @@ function App() {
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [threadFiles, setThreadFiles] = useState<string[]>([]);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const saved = localStorage.getItem("hermes_sidebar_width");
+    const saved = readMigratedLocalValue("statpilot_sidebar_width", "hermes_sidebar_width");
     if (saved) {
       const parsed = parseInt(saved, 10);
       if (!isNaN(parsed) && parsed >= 220 && parsed <= 500) {
@@ -951,7 +1569,7 @@ function App() {
       const newWidth = mouseMoveEvent.clientX;
       if (newWidth >= 220 && newWidth <= 500) {
         setSidebarWidth(newWidth);
-        localStorage.setItem("hermes_sidebar_width", String(newWidth));
+        localStorage.setItem("statpilot_sidebar_width", String(newWidth));
       }
     };
 
@@ -968,36 +1586,27 @@ function App() {
     document.addEventListener("mouseup", handleMouseUp);
   };
 
-  const [headerModelSelection, setHeaderModelSelection] = useState("");
   const [busyElapsedSeconds, setBusyElapsedSeconds] = useState(0);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [settingsBusyText, setSettingsBusyText] = useState<string | null>(null);
-  const headerModelDirtyRef = useRef(false);
   const [customModelInput, setCustomModelInput] = useState("");
   const [selectedModelToAdd, setSelectedModelToAdd] = useState("");
   const [isManualInputMode, setIsManualInputMode] = useState(false);
-  const [draftSettings, setDraftSettings] = useState<HermesAppState["settings"]>({
-    hermesBin: "hermes",
-    runtimeMode: "private",
-    yoloMode: true,
+  const [draftSettings, setDraftSettings] = useState<DshAppState["settings"]>({
+    dshBin: "",
+    permissionDefaultPreset: "workspace-write",
     model: "",
+    authMode: "api",
+    apiModel: "deepseek-flash",
+    accountModel: "deepseek-flash",
     cwd: "",
     defaultOutputDir: "output",
     customModels: [],
+    customModelsByProvider: { deepseek: ["deepseek-flash", "deepseek-v4-pro"] },
+    apiModelsByProvider: { deepseek: "deepseek-flash" },
     apiProvider: "deepseek",
     apiKey: "",
     apiBaseUrl: "",
-    visionModel: "",
-    visionProvider: "openai",
-    visionApiKey: "",
-    visionBaseUrl: "",
-    registeredSkills: [],
-    firecrawlApiKey: "",
-    exaApiKey: "",
-    falApiKey: "",
-    voiceToolsOpenaiKey: "",
-    browserbaseApiKey: "",
-    browserbaseProjectId: "",
   });
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLElement | null>(null);
@@ -1009,37 +1618,89 @@ function App() {
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
+    let disposed = false;
+    let receivedUpdate = false;
+    let hasState = false;
 
-    async function bootstrap() {
-      if (!window.hermesDesktop) {
-        return;
-      }
-
-      const initial = await window.hermesDesktop.getState();
-      setState(initial);
-      const initialModel = initial.settings.runtimeMode === "official"
-        ? initial.official.defaultModel
-        : initial.settings.model;
-      setHeaderModelSelection(initialModel || "");
-      headerModelDirtyRef.current = false;
-      setDraftSettings(withDisplayModel(initial));
-
-      unsubscribe = window.hermesDesktop.onState((nextState) => {
-        setState(nextState);
-        if (!headerModelDirtyRef.current) {
-          const nextModel = nextState.settings.runtimeMode === "official"
-            ? nextState.official.defaultModel
-            : nextState.settings.model;
-          setHeaderModelSelection(nextModel || "");
-        }
-        setDraftSettings(withDisplayModel(nextState));
-      });
+    function isUsableState(value: unknown): value is DshAppState {
+      if (typeof value !== "object" || value === null) return false;
+      const candidate = value as Record<string, unknown>;
+      return typeof candidate.status === "string"
+        && typeof candidate.settings === "object"
+        && candidate.settings !== null
+        && typeof candidate.runtime === "object"
+        && candidate.runtime !== null;
     }
 
-    void bootstrap();
+    function applyState(nextState: DshAppState) {
+      if (disposed || !isUsableState(nextState)) return;
+      hasState = true;
+      setState(nextState);
+      setBootstrapError(null);
+    }
 
-    return () => unsubscribe?.();
-  }, []);
+    const bridge = window.dshDesktop;
+    if (!bridge) {
+      queueMicrotask(() => {
+        if (!disposed) setBootstrapError("桌面运行时连接不可用，请重启应用后重试。");
+      });
+      return () => {
+        disposed = true;
+      };
+    }
+
+    // Subscribe before reading the initial snapshot so startup broadcasts cannot
+    // be lost while the renderer is waiting for the IPC round trip.
+    try {
+      unsubscribe = bridge.onState((nextState) => {
+        if (!isUsableState(nextState)) return;
+        receivedUpdate = true;
+        applyState(nextState);
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      queueMicrotask(() => {
+        if (!disposed) setBootstrapError(`订阅工作台状态失败：${detail}`);
+      });
+      return () => {
+        disposed = true;
+      };
+    }
+
+    const timeout = window.setTimeout(() => {
+      if (!disposed && !hasState) {
+        setBootstrapError("等待桌面主进程状态超过 5 秒。可以重试连接；如果仍失败，请完全退出后重新启动应用。");
+      }
+    }, 5000);
+
+    void Promise.resolve().then(() => bridge.getState()).then((initial) => {
+      if (receivedUpdate) {
+        window.clearTimeout(timeout);
+        return;
+      }
+      if (!isUsableState(initial)) {
+        window.clearTimeout(timeout);
+        setBootstrapError("桌面主进程没有返回有效的工作台状态。可以重试连接；如果仍失败，请完全退出后重新启动应用。");
+        return;
+      }
+      window.clearTimeout(timeout);
+      applyState(initial);
+    }).catch((error: unknown) => {
+      window.clearTimeout(timeout);
+      if (disposed) return;
+      const detail = error instanceof Error ? error.message : String(error);
+      const missingHandler = /No handler registered for ['"]dsh:getState['"]/.test(detail);
+      setBootstrapError(missingHandler
+        ? "当前界面与桌面主进程版本不一致。请完全退出并重新启动应用。"
+        : `读取工作台状态失败：${detail}`);
+    });
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(timeout);
+      unsubscribe?.();
+    };
+  }, [bootstrapRetryKey]);
 
   // Load and auto-extract files when active thread or messages change
   useEffect(() => {
@@ -1049,9 +1710,9 @@ function App() {
       return;
     }
 
-    const key = `hermes_files_${threadId}`;
+    const key = `statpilot_files_${threadId}`;
     let filesFromStorage: string[] = [];
-    const existingStr = localStorage.getItem(key);
+    const existingStr = readMigratedLocalValue(key, `hermes_files_${threadId}`);
     if (existingStr) {
       try {
         const parsed = JSON.parse(existingStr);
@@ -1137,6 +1798,7 @@ function App() {
       }
     });
 
+    const generated = state?.generatedFiles || [];
     const lastGen = state?.lastGeneratedFiles || [];
     const normalizeFileIdentity = (filePath: string) => {
       let normalized = filePath.trim().replace(/^file:\/\//i, "");
@@ -1148,7 +1810,7 @@ function App() {
     };
     const allFiles = Array.from(
       new Map(
-        [...filesFromStorage, ...lastGen, ...filesFromMessages]
+        [...filesFromStorage, ...generated, ...lastGen, ...filesFromMessages]
           .filter(Boolean)
           .map((file) => [normalizeFileIdentity(file), file] as const)
       ).values()
@@ -1158,7 +1820,7 @@ function App() {
       localStorage.setItem(key, JSON.stringify(allFiles));
     }
     setThreadFiles(allFiles);
-  }, [state?.activeThreadId, state?.messages, state?.lastGeneratedFiles]);
+  }, [state?.activeThreadId, state?.messages, state?.generatedFiles, state?.lastGeneratedFiles]);
 
   useEffect(() => {
     // 如果用户手动向上滚动解锁了自动跟随，则保持在用户浏览位置，不强行将页面拽回底部
@@ -1241,9 +1903,7 @@ function App() {
   }
 
   useEffect(() => {
-    const isModelSwitching = !!state?.busy && !!state?.status && state.status.includes("切换模型");
-    const isBusy = isModelSwitching || !!settingsBusyText;
-    if (!isBusy) {
+    if (!settingsBusyText) {
       setBusyElapsedSeconds(0);
       return;
     }
@@ -1255,18 +1915,18 @@ function App() {
     }, 250);
 
     return () => window.clearInterval(timer);
-  }, [state?.busy, state?.status, settingsBusyText]);
+  }, [settingsBusyText]);
 
   // Reset draft settings to current actual saved settings whenever settings modal is opened
   useEffect(() => {
     if (settingsOpen && state) {
-      setDraftSettings(withDisplayModel(state));
+      setDraftSettings(makeSettingsDraft(state));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsOpen]);
 
   async function createNewChat() {
-    if (!window.hermesDesktop) {
+    if (!window.dshDesktop) {
       return;
     }
 
@@ -1279,7 +1939,7 @@ function App() {
     isAutoScrollUnlockedRef.current = false;
     setShowScrollBottomBtn(false);
     try {
-      const nextState = await window.hermesDesktop.newThread();
+      const nextState = await window.dshDesktop.newThread();
       setState(nextState);
     } finally {
       setIsThreadLoading(false);
@@ -1287,7 +1947,7 @@ function App() {
   }
 
   async function selectThread(threadId: string) {
-    if (!window.hermesDesktop) {
+    if (!window.dshDesktop) {
       return;
     }
 
@@ -1298,10 +1958,10 @@ function App() {
     setShowScrollBottomBtn(false);
     setIsThreadLoading(true);
     try {
-      const nextState = await window.hermesDesktop.selectThread(threadId);
+      const nextState = await window.dshDesktop.selectThread(threadId);
       setState(nextState);
-      if (window.hermesDesktop.ackThreadCompleted) {
-        void window.hermesDesktop.ackThreadCompleted(threadId);
+      if (window.dshDesktop.ackThreadCompleted) {
+        void window.dshDesktop.ackThreadCompleted(threadId);
       }
     } finally {
       setIsThreadLoading(false);
@@ -1337,9 +1997,9 @@ function App() {
   async function handleConfirmNavInterrupt() {
     const { targetType, targetThreadId } = navInterruptConfirm;
     setNavInterruptConfirm({ open: false, targetType: "newChat" });
-    if (window.hermesDesktop && state?.busy) {
+    if (window.dshDesktop && state?.busy) {
       try {
-        const nextState = await window.hermesDesktop.stopMessage();
+        const nextState = await window.dshDesktop.stopMessage();
         setState(nextState);
       } catch (e) {
         console.error("Failed to stop message on nav interrupt:", e);
@@ -1357,21 +2017,98 @@ function App() {
     setNavInterruptConfirm({ open: false, targetType: "newChat" });
   }
 
-  async function deleteThread(threadId: string, threadName?: string | null) {
-    if (!window.hermesDesktop) {
+  async function archiveThreadFromSidebar(threadId: string, threadName?: string | null) {
+    if (!window.dshDesktop) {
       return;
     }
 
-    const confirmed = window.confirm(`确认删除这条历史对话吗？${threadName ? `\n\n${threadName}` : ""}`);
+    const confirmed = window.confirm(
+      `确认从侧边栏移除这条对话吗？\n\nDSH 会将对话归档，历史记录仍会保留在本地。${threadName ? `\n\n${threadName}` : ""}`
+    );
     if (!confirmed) {
       return;
     }
 
+    const wasActive = state?.activeThreadId === threadId;
     setIsThreadLoading(true);
     try {
-      const nextState = await window.hermesDesktop.archiveThread(threadId);
+      const nextState = await window.dshDesktop.archiveThread(threadId);
       setState(nextState);
-      localStorage.removeItem(`hermes_files_${threadId}`);
+      setArchivedThread({ id: threadId, title: threadName || "这条对话" });
+      if (wasActive) {
+        setActiveMainTab("chat");
+        setDraft("");
+        setSelectedAttachments([]);
+        setSelectedSkillTag(null);
+        setActiveBranch(null);
+        setWorkspaceSelectionLocked(false);
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      window.alert(`未能移除对话：${detail}`);
+    } finally {
+      setIsThreadLoading(false);
+    }
+  }
+
+  async function undoArchiveThread() {
+    if (!archivedThread || !window.dshDesktop) return;
+
+    try {
+      const nextState = await restoreArchivedThread(archivedThread.id);
+      setState(nextState);
+      setArchivedThread(null);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      window.alert(`恢复对话失败：${detail}`);
+    }
+  }
+
+  async function restoreArchivedThread(threadId: string) {
+    if (!window.dshDesktop) {
+      throw new Error("桌面端接口尚未就绪");
+    }
+
+    setIsThreadLoading(true);
+    try {
+      const nextState = await window.dshDesktop.unarchiveThread(threadId);
+      if (archivedThread?.id === threadId) {
+        setArchivedThread(null);
+      }
+      return nextState;
+    } finally {
+      setIsThreadLoading(false);
+    }
+  }
+
+  async function permanentlyDeleteArchivedThread(threadId: string, title: string) {
+    if (!window.dshDesktop) return;
+
+    const confirmed = window.confirm(
+      `确定彻底删除“${title}”吗？\n\n会话日志和工作区关联会删除，且无法恢复。DSH 全局附件库中的共享数据或缓存可能仍会保留。`
+    );
+    if (!confirmed) return;
+
+    const wasActive = state?.activeThreadId === threadId;
+    setIsThreadLoading(true);
+    try {
+      const result = await window.dshDesktop.deleteArchivedThread(threadId);
+      setState(result.state);
+      if (archivedThread?.id === threadId) setArchivedThread(null);
+      if (wasActive) {
+        setActiveMainTab("chat");
+        setDraft("");
+        setSelectedAttachments([]);
+        setSelectedSkillTag(null);
+        setActiveBranch(null);
+        setWorkspaceSelectionLocked(false);
+      }
+      if (result.pendingDeletion) {
+        window.alert("删除请求已保存；DSH 会继续重试，若本次未完成，下次启动会接着清理。");
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      window.alert(`彻底删除失败：${detail}`);
     } finally {
       setIsThreadLoading(false);
     }
@@ -1381,13 +2118,12 @@ function App() {
     const rawText = draft.trim();
     const attachmentText = selectedAttachments.length > 0
       ? [
-          "用户已提交以下本地文件，请先读取这些文件，再完成本次任务：",
-          ...selectedAttachments.map((file, index) => `${index + 1}. 文件名：${file.name}；绝对路径：${file.path}`),
-          "如果文件无法读取，请明确指出具体文件和原因；不要把文件路径本身当作来源证据。",
+          "我已附上以下文件，请直接阅读附件内容后完成本次任务：",
+          ...selectedAttachments.map((file, index) => `${index + 1}. ${file.name}`),
         ].join("\n")
       : "";
     const taskText = rawText || (selectedAttachments.length > 0 ? "请先概述这些文件的内容、来源和可用字段。" : "");
-    if ((!taskText && !selectedSkillTag) || !window.hermesDesktop) {
+    if ((!taskText && !selectedSkillTag) || !window.dshDesktop) {
       return;
     }
 
@@ -1407,7 +2143,10 @@ function App() {
     isAutoScrollUnlockedRef.current = false;
     setShowScrollBottomBtn(false);
     try {
-      const nextState = await window.hermesDesktop.sendMessage({ text });
+      const nextState = await window.dshDesktop.sendMessage({
+        text,
+        attachments: previousAttachments.map(({ path, name }) => ({ path, name })),
+      });
       setState(nextState);
       if (nextState.error) {
         setDraft(previousDraft);
@@ -1420,43 +2159,127 @@ function App() {
       setSelectedSkillTag(previousSkillTag);
       setSelectedAttachments(previousAttachments);
       try {
-        const currentState = await window.hermesDesktop.getState();
+        const currentState = await window.dshDesktop.getState();
         setState(currentState);
       } catch {}
     }
   }
 
-  async function respondClarification(answer: string) {
-    const text = answer.trim();
-    if (!text || !window.hermesDesktop?.respondClarification) return;
-    setClarificationDraft("");
+  async function applyPermissionPreset(preset: "read-only" | "workspace-write" | "danger-full-access"): Promise<boolean> {
+    if (!window.dshDesktop || permissionBusy) return false;
+    setPermissionBusy(true);
+    setPermissionError(null);
     try {
-      const nextState = await window.hermesDesktop.respondClarification(text);
+      const nextState = await window.dshDesktop.setPermissionPreset(preset);
       setState(nextState);
-    } catch (e) {
-      console.error("Failed to respond to clarification:", e);
+      return true;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setPermissionError(detail);
+      return false;
+    } finally {
+      setPermissionBusy(false);
     }
   }
 
+  function choosePermissionPreset(preset: "read-only" | "workspace-write" | "danger-full-access") {
+    setIsPermissionMenuOpen(false);
+    setPermissionError(null);
+    if (permissionSelection === preset) return;
+    if (preset === "danger-full-access") {
+      setPermissionConfirmationAcknowledged(false);
+      setPermissionConfirmationOpen(true);
+      return;
+    }
+    void applyPermissionPreset(preset).then((applied) => {
+      if (!applied) setIsPermissionMenuOpen(true);
+    });
+  }
+
+  async function confirmFullAccessPermission() {
+    if (!permissionConfirmationAcknowledged || permissionBusy) return;
+    const applied = await applyPermissionPreset("danger-full-access");
+    if (applied) setPermissionConfirmationOpen(false);
+  }
+
+  async function respondClarification() {
+    const pending = state?.pendingClarification;
+    if (!pending || !window.dshDesktop?.respondClarification) return;
+    const answers = pending.questions.map((question) => {
+      const draftAnswer = clarificationDraft[question.id] || { selected: [], custom: "" };
+      const custom = draftAnswer.custom.trim();
+      return {
+        id: question.id,
+        selected: question.multiSelect === true || !custom ? draftAnswer.selected : [],
+        ...(custom ? { custom } : {}),
+      };
+    });
+    try {
+      const nextState = await window.dshDesktop.respondClarification(pending.requestId, answers);
+      setState(nextState);
+    } catch (e) {
+      console.error("Failed to respond to clarification:", e);
+      const detail = e instanceof Error ? e.message : String(e);
+      window.alert(`提交回答失败：${detail}`);
+    }
+  }
+
+  async function cancelClarification() {
+    const pending = state?.pendingClarification;
+    if (!pending || !window.dshDesktop?.cancelClarification) return;
+    try {
+      const nextState = await window.dshDesktop.cancelClarification(pending.requestId);
+      setState(nextState);
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      window.alert(`关闭提问失败：${detail}`);
+    }
+  }
+
+  function updateClarificationDraft(questionId: string, patch: Partial<DshQuestionDraft>) {
+    const requestId = state?.pendingClarification?.requestId;
+    if (!requestId) return;
+    setClarificationDraftState((current) => {
+      const answers = current?.requestId === requestId ? current.answers : {};
+      return {
+        requestId,
+        answers: {
+          ...answers,
+          [questionId]: {
+            ...(answers[questionId] || { selected: [], custom: "" }),
+            ...patch,
+          },
+        },
+      };
+    });
+  }
+
   async function saveSettings() {
-    if (!window.hermesDesktop) {
+    if (!window.dshDesktop) {
       return;
     }
 
     setSettingsBusyText("正在保存配置并应用...");
     const workspaceChanged = draftSettings.cwd !== state?.settings.cwd;
-
-    const customList = Array.isArray(draftSettings.customModels) ? [...draftSettings.customModels] : [];
-    if (draftSettings.model && draftSettings.runtimeMode !== "official" && !customList.includes(draftSettings.model)) {
-      customList.push(draftSettings.model);
-    }
+    const provider = draftSettings.apiProvider;
+    const authMode: "api" | "account" = draftSettings.authMode === "account" ? "account" : "api";
+    const model = authMode === "account" ? draftSettings.accountModel : (draftSettings.model || draftSettings.apiModel);
+    const customList = authMode === "api"
+      ? Array.from(new Set([...getConfiguredProviderModels(draftSettings, provider), model].filter(Boolean)))
+      : getConfiguredProviderModels(draftSettings, provider);
+    const apiModel = authMode === "api" ? model : draftSettings.apiModel;
     const finalSettings = {
       ...draftSettings,
-      customModels: Array.from(new Set(customList.map(String).map((s) => s.trim()).filter(Boolean))),
+      authMode,
+      model,
+      apiModel,
+      apiModelsByProvider: { ...draftSettings.apiModelsByProvider, [provider]: apiModel },
+      customModels: customList,
+      customModelsByProvider: { ...draftSettings.customModelsByProvider, [provider]: customList },
     };
 
     try {
-      const nextState = await window.hermesDesktop.updateSettings(finalSettings);
+      const nextState = await window.dshDesktop.updateSettings(finalSettings);
       if (workspaceChanged) {
         setWorkspaceSelectionLocked(true);
       }
@@ -1469,20 +2292,37 @@ function App() {
     }
   }
 
+  async function clearCurrentProviderApiKey() {
+    if (!window.dshDesktop || !state) return;
+    const provider = draftSettings.apiProvider;
+    if (!state.providerCredentialStatus?.[provider]?.writable) return;
+    if (!window.confirm(`清除 DSH 中保存的 ${provider} API Key？`)) return;
+
+    setSettingsBusyText("正在清除 DSH 凭据...");
+    try {
+      const nextState = await window.dshDesktop.clearProviderApiKey(provider);
+      setState(nextState);
+      setDraftSettings((current) => ({ ...current, apiKey: "" }));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      window.alert(`清除 API Key 失败：${detail}`);
+    } finally {
+      setSettingsBusyText(null);
+    }
+  }
+
   async function closeSettingsModal() {
-    if (!window.hermesDesktop) {
+    if (!window.dshDesktop) {
       setSettingsOpen(false);
       return;
     }
 
-    setSettingsBusyText(isLoggingIn ? "正在取消官方登录..." : "正在关闭...");
+    const loginPending = ["initializing", "waiting-browser", "exchanging", "committing"].includes(state?.account?.attempt?.phase || "");
+    setSettingsBusyText(loginPending ? "正在取消 DeepSeek 账号登录..." : "正在关闭...");
     try {
-      if (isLoggingIn) {
-        const nextState = await window.hermesDesktop.cancelOfficialLogin();
+      if (loginPending) {
+        const nextState = await window.dshDesktop.cancelAccountSignIn();
         setState(nextState);
-        if (!headerModelDirtyRef.current) {
-          setHeaderModelSelection(nextState.official.defaultModel);
-        }
         setIsLoggingIn(false);
       }
       setSettingsOpen(false);
@@ -1493,43 +2333,30 @@ function App() {
     }
   }
 
-  async function refreshOfficialConfig() {
-    if (!window.hermesDesktop || !state) {
-      return;
-    }
-    const nextState = await window.hermesDesktop.updateSettings({});
-    setState(nextState);
-    if (!headerModelDirtyRef.current) {
-      setHeaderModelSelection(nextState.official.defaultModel);
-    }
-  }
-
-  async function logoutOfficialConfig() {
-    if (!window.hermesDesktop || !state) {
-      return;
-    }
-    const nextState = await window.hermesDesktop.updateSettings({ logoutOfficial: true });
-    setState(nextState);
-    if (!headerModelDirtyRef.current) {
-      setHeaderModelSelection(nextState.official.defaultModel);
-    }
-  }
-
-  async function loginOfficialConfig() {
-    if (!window.hermesDesktop || !state) {
+  async function startDshAccountSignIn() {
+    if (!window.dshDesktop || !state) {
       return;
     }
     setIsLoggingIn(true);
     try {
-      const nextState = await window.hermesDesktop.updateSettings({ loginOfficial: true });
+      const nextState = await window.dshDesktop.startAccountSignIn();
       setState(nextState);
-      if (!headerModelDirtyRef.current) {
-        setHeaderModelSelection(nextState.official.defaultModel);
-      }
     } catch (e) {
-      console.error("Login failed:", e);
+      const detail = e instanceof Error ? e.message : String(e);
+      window.alert(`DeepSeek 账号登录失败：${detail}`);
     } finally {
       setIsLoggingIn(false);
+    }
+  }
+
+  async function signOutDshAccount() {
+    if (!window.dshDesktop) return;
+    try {
+      const nextState = await window.dshDesktop.signOutAccount();
+      setState(nextState);
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      window.alert(`退出 DeepSeek 账号失败：${detail}`);
     }
   }
 
@@ -1537,16 +2364,14 @@ function App() {
     const modelName = (modelToAdd || (isManualInputMode ? customModelInput : selectedModelToAdd) || customModelInput).trim();
     if (!modelName) return;
 
-    setDraftSettings((current: HermesAppState["settings"]) => {
-      const presets = (PROVIDER_PRESET_MODELS[current.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
-      const existingList = Array.isArray(current.customModels) && current.customModels.length > 0
-        ? current.customModels
-        : presets;
+    setDraftSettings((current: DshAppState["settings"]) => {
+      const provider = current.apiProvider || "deepseek";
+      const existingList = getConfiguredProviderModels(current, provider);
       const nextCustomModels = Array.from(new Set([...existingList, modelName]));
       return {
         ...current,
-        model: modelName,
         customModels: nextCustomModels,
+        customModelsByProvider: { ...current.customModelsByProvider, [provider]: nextCustomModels },
       };
     });
     setCustomModelInput("");
@@ -1555,81 +2380,122 @@ function App() {
   }
 
   function handleRemoveCustomModel(modelToRemove: string) {
-    setDraftSettings((current: HermesAppState["settings"]) => {
-      const presets = (PROVIDER_PRESET_MODELS[current.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
-      const existingList = Array.isArray(current.customModels) && current.customModels.length > 0
-        ? current.customModels
-        : presets;
+    setDraftSettings((current: DshAppState["settings"]) => {
+      const provider = current.apiProvider || "deepseek";
+      const existingList = getConfiguredProviderModels(current, provider);
+      if (existingList.length <= 1) return current;
       const nextCustomModels = existingList.filter((m) => m !== modelToRemove);
+      const nextModel = current.model === modelToRemove ? (nextCustomModels[0] || "") : current.model;
       return {
         ...current,
+        model: nextModel,
+        apiModel: nextModel,
+        apiModelsByProvider: { ...current.apiModelsByProvider, [provider]: nextModel },
         customModels: nextCustomModels,
-        model: current.model === modelToRemove ? (nextCustomModels[0] || "") : current.model,
+        customModelsByProvider: { ...current.customModelsByProvider, [provider]: nextCustomModels },
       };
     });
   }
 
-  async function applyModelChange(selectedModel: string) {
-    if (!window.hermesDesktop) {
-      return;
-    }
-    setHeaderModelSelection(selectedModel);
-    headerModelDirtyRef.current = true;
-    if (state?.settings.runtimeMode === "official") {
-      const nextState = await window.hermesDesktop.switchSessionModel(selectedModel);
-      setState(nextState);
-    } else {
-      const customList = Array.isArray(state?.settings.customModels) ? [...state.settings.customModels] : [];
-      if (selectedModel && !customList.includes(selectedModel)) {
-        customList.push(selectedModel);
+  function selectDraftAuthMode(authMode: "api" | "account") {
+    setCustomModelInput("");
+    setSelectedModelToAdd("");
+    setIsManualInputMode(false);
+    setDraftSettings((current) => {
+      const provider = current.apiProvider || "deepseek";
+      const apiModelsByProvider = { ...current.apiModelsByProvider };
+      const customModelsByProvider = { ...current.customModelsByProvider };
+
+      if (authMode === "account") {
+        const apiModel = current.authMode === "api" ? current.model : current.apiModel || current.apiModelsByProvider?.[provider] || "deepseek-flash";
+        apiModelsByProvider[provider] = apiModel;
+        const accountModel = provider === "deepseek" && getProviderPresetModels("deepseek").includes(current.model)
+          ? current.model
+          : (getProviderPresetModels("deepseek").includes(current.accountModel) ? current.accountModel : "deepseek-flash");
+        return {
+          ...current,
+          authMode,
+          apiModel,
+          apiModelsByProvider,
+          customModelsByProvider,
+          accountModel,
+          model: accountModel,
+        };
       }
-      const nextState = await window.hermesDesktop.updateSettings({
-        ...state?.settings,
-        model: selectedModel,
-        customModels: customList,
-      });
+
+      const apiModel = current.authMode === "account"
+        ? current.apiModelsByProvider?.[provider] || current.apiModel || getProviderPresetModels(provider)[0]
+        : current.apiModel || current.model || getProviderPresetModels(provider)[0];
+      const customModels = getConfiguredProviderModels(current, provider);
+      apiModelsByProvider[provider] = apiModel;
+      customModelsByProvider[provider] = customModels;
+      return {
+        ...current,
+        authMode,
+        apiModel,
+        apiModelsByProvider,
+        customModelsByProvider,
+        customModels,
+        model: apiModel,
+      };
+    });
+  }
+
+  async function selectComposerModel(selection: { provider: string; model: string; reasoningEffort?: string }) {
+    if (!window.dshDesktop || modelSelectionBusy) return;
+    setModelSelectionBusy(true);
+    setModelSelectionError(null);
+    try {
+      const nextState = await window.dshDesktop.selectSessionModel(selection);
       setState(nextState);
-      await window.hermesDesktop.switchSessionModel(selectedModel);
+    } catch (error) {
+      setModelSelectionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setModelSelectionBusy(false);
     }
   }
 
+  async function reloadModelCatalog() {
+    if (!window.dshDesktop || modelCatalogLoading) return;
+    setModelCatalogLoading(true);
+    setModelSelectionError(null);
+    try {
+      setState(await window.dshDesktop.refreshModelCatalog());
+    } catch (error) {
+      setModelSelectionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setModelCatalogLoading(false);
+    }
+  }
+
+  function toggleModelMenu() {
+    const opening = !isModelMenuOpen;
+    setModelSelectionError(null);
+    setIsModelMenuOpen(opening);
+    if (opening && !state?.modelCatalog) void reloadModelCatalog();
+  }
+
   async function registerNewSkill() {
-    if (!window.hermesDesktop) {
+    if (!window.dshDesktop) {
       return;
     }
-    const nextState = await window.hermesDesktop.registerSkillFile();
+    const nextState = await window.dshDesktop.registerSkillFile();
     setState(nextState);
   }
 
   async function unregisterSkill(path: string) {
-    if (!window.hermesDesktop) {
+    if (!window.dshDesktop) {
       return;
     }
-    const nextState = await window.hermesDesktop.unregisterSkill(path);
+    const nextState = await window.dshDesktop.unregisterSkill(path);
     setState(nextState);
   }
 
   async function repairRuntime() {
-    if (!window.hermesDesktop) {
+    if (!window.dshDesktop) {
       return;
     }
-    const nextState = await window.hermesDesktop.repairRuntime();
-    setState(nextState);
-  }
-
-  async function uninstallRuntime() {
-    if (!window.hermesDesktop) {
-      return;
-    }
-
-    const confirmed = window.confirm(
-      "这会停止当前 Hermes 后台，并删除这个 Electron 应用私有目录里的 Hermes 运行时与会话数据。API 配置会保留。继续吗？"
-    );
-    if (!confirmed) {
-      return;
-    }
-
-    const nextState = await window.hermesDesktop.uninstallRuntime();
+    const nextState = await window.dshDesktop.repairRuntime();
     setState(nextState);
   }
 
@@ -1668,8 +2534,8 @@ function App() {
     : null;
 
   const groupedThreads = useMemo(() => {
-    const groups: Array<{ folderName: string; threads: HermesThreadSummary[] }> = [];
-    const map = new Map<string, HermesThreadSummary[]>();
+    const groups: Array<{ folderName: string; threads: DshThreadSummary[] }> = [];
+    const map = new Map<string, DshThreadSummary[]>();
 
     for (const thread of orderedThreads) {
       const rawCwd = (thread.cwd || "").trim();
@@ -1713,7 +2579,7 @@ function App() {
     interface RenderTurnGroup {
       id: string;
       role: "user" | "assistant";
-      messages: HermesChatMessage[];
+      messages: DshChatMessage[];
     }
     const groups: RenderTurnGroup[] = [];
     for (const message of activeMessages) {
@@ -1738,47 +2604,56 @@ function App() {
     }
     return groups;
   }, [activeMessages]);
-  const isOfficialMode = state?.settings.runtimeMode === "official";
-  const resolvedUsageModel = state?.lastUsageModel?.trim() || state?.currentRuntimeModel?.trim() || null;
-  const displayModel = resolvedUsageModel || (isOfficialMode ? state?.official.defaultModel : state?.settings.model) || "未设置";
-  const needsProviderSetup = isOfficialMode ? !state?.official.isLoggedIn : !state?.settings.apiKey.trim();
+  const hasDeepSeekAccount = state?.account?.status === "credential-stored";
+  const selectedProvider = state?.settings.apiProvider || "deepseek";
+  const hasProviderApiKey = Boolean(state?.providerCredentialStatus?.[selectedProvider]?.configured);
+  const activeAuthMode = state ? resolveAuthMode(state.settings, state) : "api";
+  const needsProviderSetup = activeAuthMode === "account" ? !hasDeepSeekAccount : !hasProviderApiKey;
   const runtimeInstalled = !!state?.runtime.installed;
-  const officialModelDirty = !!state && draftSettings.runtimeMode === "official" && draftSettings.model !== state.official.defaultModel;
-  const currentProviderPresets = (PROVIDER_PRESET_MODELS[state?.settings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
-  const currentSavedModel = isOfficialMode ? state?.official.defaultModel : state?.settings.model;
-  const savedCustomModels = Array.isArray(state?.settings.customModels) ? state.settings.customModels : [];
-  const draftCustomModels = Array.isArray(draftSettings.customModels) ? draftSettings.customModels : [];
-  const customModelList = Array.from(
-    new Set(
-      [
-        currentSavedModel,
-        ...savedCustomModels,
-        ...draftCustomModels,
-        ...currentProviderPresets,
-      ].filter(Boolean) as string[]
-    )
-  );
-
-  const quickModelOptions = isOfficialMode
-    ? ((state?.official.availableModels.length ?? 0) > 0 ? (state?.official.availableModels ?? []) : [state?.official.defaultModel ?? draftSettings.model])
-    : customModelList;
-
-  const currentActiveModel = (isOfficialMode ? state?.official.defaultModel : state?.settings.model) || "";
-  const quickModelDirty = !!state && !!headerModelSelection && headerModelSelection !== currentActiveModel;
+  const customModelList = state
+    ? activeAuthMode === "account"
+      ? getProviderPresetModels("deepseek")
+      : getConfiguredProviderModels(state.settings)
+    : [];
+  const configuredComposerProvider = activeAuthMode === "account"
+    ? "deepseek-account"
+    : selectedProvider === "custom"
+      ? "stat-pilot-custom"
+      : selectedProvider === "deepseek"
+        ? "deepseek-official"
+        : selectedProvider;
+  const composerModelSelection = state?.currentModelSelection || (state ? {
+    provider: configuredComposerProvider,
+    model: state.settings.model,
+    ...(state.settings.reasoningEffort ? { reasoningEffort: state.settings.reasoningEffort } : {}),
+  } : null);
+  const composerModelGroup = state?.modelCatalog?.groups.find((group) => group.id === composerModelSelection?.provider);
+  const listedComposerModels = composerModelGroup?.models?.length
+    ? composerModelGroup.models
+    : customModelList.map((id) => ({ id, name: id, reasoning: undefined }));
+  const composerModelOptions = composerModelSelection?.model && !listedComposerModels.some((model) => model.id === composerModelSelection.model)
+    ? [{ id: composerModelSelection.model, name: `${composerModelSelection.model}（当前选择）`, reasoning: undefined }, ...listedComposerModels]
+    : listedComposerModels;
+  const selectedComposerModel = composerModelOptions.find((model) => model.id === composerModelSelection?.model);
+  const composerModelEfforts = selectedComposerModel?.reasoning?.efforts || [];
+  const currentEffortId = composerModelSelection?.reasoningEffort || selectedComposerModel?.reasoning?.defaultEffort || "";
+  const currentEffortName = composerModelEfforts.find((effort) => effort.id === currentEffortId)?.name || currentEffortId;
+  const composerModelName = selectedComposerModel?.name || composerModelSelection?.model || "选择模型";
+  const composerModelButtonLabel = currentEffortName ? `${composerModelName} ${currentEffortName}` : composerModelName;
   const selectedSkillDisplayName = selectedSkillTag
     ? state?.skills.find((skill) => skill.name === selectedSkillTag)?.displayName || BUILTIN_SKILL_DISPLAY_NAMES[selectedSkillTag] || selectedSkillTag
     : "";
-  const isModelSwitching = !!state?.busy && !!state?.status && state.status.includes("切换模型");
-  const isHermesMissing = !state?.runtime.installed || (!!state?.error && (
+  const isDshUnavailable = !state?.runtime.installed || (!!state?.error && (
     state.error.includes("ENOENT") || 
-    state.error.includes("找不到 Hermes") || 
+    state.error.includes("找不到 DSH") ||
     state.error.includes("No module named") ||
-    state.error.includes("Hermes backend exited") ||
-    state.error.includes("Could not connect to Hermes gateway") ||
+    state.error.includes("DSH backend exited") ||
+    state.error.includes("Could not connect to DSH service") ||
     state.error.includes("did not become ready") ||
-    state.error.includes("Bundled Hermes runtime source not found")
+    state.error.includes("DSH runtime source not found")
   ));
   const isInitializing = !!state && !state.error && (
+    state.status.startsWith("正在") ||
     state.status.startsWith("Starting") ||
     state.status.startsWith("Installing") ||
     state.status.startsWith("Preparing") ||
@@ -1786,11 +2661,11 @@ function App() {
     !state.runtime.installed
   );
   const isCurrentThreadBusy = Boolean(state?.busy);
-  const canSend = !needsProviderSetup && !isHermesMissing && !isCurrentThreadBusy && !isThreadLoading && !isInitializing;
+  const canSend = !needsProviderSetup && !isDshUnavailable && !isCurrentThreadBusy && !isThreadLoading && !isInitializing;
 
   const statusDotClass = isInitializing
     ? "warning"
-    : isHermesMissing
+    : isDshUnavailable
     ? "error"
     : needsProviderSetup
       ? "warning"
@@ -1801,11 +2676,11 @@ function App() {
           : "";
 
   const statusLabel = isInitializing
-    ? "加载中..."
-    : isHermesMissing
+    ? (state?.status || "加载中...")
+    : isDshUnavailable
     ? "运行时未就绪"
     : needsProviderSetup
-      ? (isOfficialMode ? "官方账号未登录" : "未配置 API 密钥")
+      ? (activeAuthMode === "account" ? "未登录 DeepSeek 账号" : "未配置 API 密钥")
       : state?.error
         ? "运行异常"
         : (concurrencyOverview || state?.status || "Ready.");
@@ -1828,16 +2703,18 @@ function App() {
               </div>
             </div>
           </div>
-          <div className="startup-sidebar-status" role="status">
+          <div className={`startup-sidebar-status ${bootstrapError ? "has-error" : ""}`} role="status">
             <span className="startup-sidebar-status-dot" aria-hidden="true" />
             <div>
-              <strong>正在启动</strong>
-              <span>连接 DSH 运行时</span>
+              <strong>{bootstrapError ? "启动遇到问题" : "正在启动"}</strong>
+              <span>
+                {bootstrapError?.includes("主进程版本不一致") ? "桌面主进程需要重启" : bootstrapError ? "等待工作台状态失败" : "等待桌面进程响应"}
+              </span>
             </div>
           </div>
         </aside>
         <main className="chat startup-chat">
-          <div className="startup-boot-panel" role="status" aria-live="polite" aria-busy="true">
+          <div className="startup-boot-panel" role="status" aria-live="polite" aria-busy={!bootstrapError}>
             <div className="startup-boot-mark" aria-hidden="true">
               <span className="startup-boot-glow" />
               <span className="startup-boot-ring startup-boot-ring-outer" />
@@ -1849,15 +2726,36 @@ function App() {
             </div>
             <div className="startup-boot-copy">
               <p className="startup-loading-eyebrow">STATPILOT · DESKTOP WORKSPACE</p>
-              <h2>正在连接 Hermes</h2>
-              <p>正在启动本地智能运行时，准备你的工作台。</p>
+              <h2>{bootstrapError ? "工作台暂不可用" : "正在启动桌面工作台"}</h2>
+              <p className={bootstrapError ? "startup-boot-error" : ""}>
+                {bootstrapError || "正在读取桌面进程状态，随后会连接本地 DSH 运行时。"}
+              </p>
             </div>
-            <div className="startup-boot-loader" aria-hidden="true">
-              <span />
-            </div>
+            {bootstrapError && bootstrapError.includes("主进程版本不一致") ? null : bootstrapError ? (
+              <button
+                className="startup-boot-retry"
+                type="button"
+                onClick={() => {
+                  setBootstrapError(null);
+                  setBootstrapRetryKey((current) => current + 1);
+                }}
+              >
+                重试连接
+              </button>
+            ) : (
+              <div className="startup-boot-loader" aria-hidden="true">
+                <span />
+              </div>
+            )}
             <div className="startup-boot-meta">
               <span className="startup-boot-meta-dot" aria-hidden="true" />
-              <span>首次启动可能需要一点时间</span>
+              <span>
+                {bootstrapError?.includes("主进程版本不一致")
+                  ? "请完全退出应用，再重新打开。"
+                  : bootstrapError
+                    ? "如果问题持续，请重新启动应用。"
+                    : "桌面进程通常会在几秒内响应"}
+              </span>
             </div>
           </div>
         </main>
@@ -1899,7 +2797,7 @@ function App() {
             type="button"
             className={`sidebar-action-item ${activeMainTab === "chat" ? "!bg-blue-50/80 !text-blue-600 font-bold" : ""}`}
             onClick={handleSafeCreateNewChat}
-            disabled={isHermesMissing}
+            disabled={isDshUnavailable}
             title="新建任务"
           >
             <svg className="w-4.5 h-4.5 text-current shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1923,6 +2821,21 @@ function App() {
               <path d="M6.5 14v6m-3-3h6" />
             </svg>
             <span>我的技能</span>
+          </button>
+
+          <button
+            type="button"
+            className={`sidebar-action-item ${activeMainTab === "archive" ? "!bg-blue-50/80 !text-blue-600 font-bold" : ""}`}
+            onClick={() => setActiveMainTab("archive")}
+            title="查看和恢复已归档对话"
+          >
+            <svg className="w-4.5 h-4.5 text-current shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 4h18v4H3z" />
+              <path d="M5 8v12h14V8" />
+              <path d="M10 12h4m-2-2v4" />
+            </svg>
+            <span>已归档</span>
+            <span className="sidebar-action-count">{state?.archivedThreads?.length ?? 0}</span>
           </button>
         </div>
 
@@ -2005,9 +2918,9 @@ function App() {
                             className="thread-item-slim-delete"
                             onClick={(event) => {
                               event.stopPropagation();
-                              void deleteThread(thread.id, title);
+                              void archiveThreadFromSidebar(thread.id, title);
                             }}
-                            title="删除对话"
+                            title="从侧边栏移除对话"
                           >
                             ×
                           </button>
@@ -2036,6 +2949,21 @@ function App() {
           onUnregisterSkill={(path) => void unregisterSkill(path)}
           onUseSkill={handleSkillPageUse}
         />
+      ) : activeMainTab === "archive" ? (
+        <ArchivedThreadsPage
+          threads={state?.archivedThreads ?? []}
+          isBusy={isThreadLoading}
+          onRestore={(threadId) => {
+            void restoreArchivedThread(threadId)
+              .then(setState)
+              .catch((error) => {
+                const detail = error instanceof Error ? error.message : String(error);
+                window.alert(`恢复对话失败：${detail}`);
+              });
+          }}
+          onDelete={(threadId, title) => void permanentlyDeleteArchivedThread(threadId, title)}
+          onNewChat={handleSafeCreateNewChat}
+        />
       ) : (
         <main className="chat">
           <header className="chat-header">
@@ -2044,54 +2972,6 @@ function App() {
               <h2 title={activeName}>{activeName}</h2>
             </div>
             <div className="header-actions">
-                <div className={`model-header-pill ${quickModelDirty ? "dirty" : ""}`}>
-                  <span className="pill-label" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <svg className="w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="4" y="4" width="16" height="16" rx="2" />
-                      <rect x="9" y="9" width="6" height="6" rx="1" />
-                      <path d="M9 1v3" />
-                      <path d="M15 1v3" />
-                      <path d="M9 20v3" />
-                      <path d="M15 20v3" />
-                      <path d="M20 9h3" />
-                      <path d="M20 15h3" />
-                      <path d="M1 9h3" />
-                      <path d="M1 15h3" />
-                    </svg>
-                    <span>运行模型</span>
-                  </span>
-                  <select
-                    value={headerModelSelection || currentActiveModel}
-                    onChange={(event) => {
-                      headerModelDirtyRef.current = true;
-                      setHeaderModelSelection(event.target.value);
-                    }}
-                    className="header-model-select"
-                    disabled={state.busy}
-                    title={
-                      quickModelDirty
-                        ? `当前：${currentActiveModel}，切换到：${headerModelSelection}。点击“应用切换”后在当前对话内立即生效。`
-                        : "直接在这里选目标模型，然后点击“应用切换”。"
-                    }
-                  >
-                    {!currentActiveModel && <option value="">未设置模型</option>}
-                    {quickModelOptions.map((modelId) => (
-                      <option key={modelId} value={modelId}>
-                        {modelId}
-                      </option>
-                    ))}
-                  </select>
-                  {quickModelDirty && (
-                    <button
-                      className="header-apply-button"
-                      onClick={() => void applyModelChange(headerModelSelection)}
-                      disabled={state.busy}
-                      title={`当前：${currentActiveModel}，切换到：${headerModelSelection}。点击“应用切换”后在当前对话内立即生效。`}
-                    >
-                      应用切换
-                    </button>
-                  )}
-                </div>
               <button
                 className={`header-toggle-sidebar-button ${rightSidebarOpen ? "active" : ""}`}
                 onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
@@ -2172,20 +3052,16 @@ function App() {
               </div>
             ) : (
               <>
-                {isHermesMissing ? (
+                {isDshUnavailable ? (
                   <div className="onboarding-card">
                     <div className="onboarding-title">
-                      <h3>Hermes 运行时未就绪</h3>
+                      <h3>DSH 运行时未就绪</h3>
                     </div>
-                    <p>桌面客户端目前无法启动内置 Hermes 运行时。现在这套集成已经改成“应用私有运行时”，不会再依赖你手工指定外部 `hermes` 可执行文件。</p>
+                    <p>桌面客户端目前无法启动随应用提供的 DeepSeek Harness 运行时。</p>
                     <div className="guide-steps">
                       <div className="step-item">
-                        <strong>第一步：一键修复内置运行时</strong>
-                        <p>点击下方按钮，应用会把 Hermes runtime 安装/恢复到自己的私有目录，再重新尝试启动本地后台。</p>
-                      </div>
-                      <div className="step-item">
-                        <strong>第二步：如果连种子运行时都不存在</strong>
-                        <p>开发环境下如果项目根目录还没有 `.runtime`，先在终端执行 <code>npm run hermes:bootstrap</code>，之后再点修复按钮即可。</p>
+                        <strong>重新启动 DSH 服务</strong>
+                        <p>尝试重新启动本地 DSH 服务；如果仍失败，请将错误详情提供给维护人员。</p>
                       </div>
                     </div>
                     {state.error ? (
@@ -2195,49 +3071,30 @@ function App() {
                       </div>
                     ) : null}
                     <div className="onboarding-footer">
-                      <button className="primary-button" onClick={() => void repairRuntime()}>修复内置运行时</button>
+                      <button className="primary-button" onClick={() => void repairRuntime()}>重新启动 DSH</button>
                     </div>
                   </div>
                 ) : needsProviderSetup ? (
                   <div className="onboarding-card">
                     <div className="onboarding-title">
-                      <h3>{isOfficialMode ? "先连接 Hermes 官方账号" : "先配置你自己的模型 API"}</h3>
+                      <h3>{activeAuthMode === "account" ? "登录 DeepSeek 账号" : "配置模型 API"}</h3>
                     </div>
                     <p>
-                      {isOfficialMode
-                        ? "当前切到了 Hermes 官方模式。这个模式会复用你本机现有的 ~/.hermes 登录态和模型配置。"
-                        : "当前切到了自定义私有模式。先在右上角「设置」里填好 provider、model 和 API key，就可以直接开始对话。"}
+                      {activeAuthMode === "account"
+                        ? "当前选择账号登录方式。登录 DeepSeek 账号后即可开始对话。"
+                        : "当前选择 API 方式。请配置所选 Provider 的 API Key 和模型后开始对话。"}
                     </p>
                     <div className="guide-steps">
-                      {isOfficialMode ? (
-                        <>
-                          <div className="step-item">
-                            <strong>检测结果</strong>
-                            <p>官方配置目录：<code>{state.official.homeDir}</code></p>
-                            <p>登录状态：<b>{state.official.isLoggedIn ? `已登录 (${state.official.subscriptionLabel})` : "未登录"}</b></p>
-                          </div>
-                          <div className="step-item">
-                            <strong>当前官方默认模型</strong>
-                            <p>Provider：<b>{state.official.provider}</b>，默认模型：<b>{state.official.defaultModel}</b></p>
-                          </div>
-                          {!state.official.isLoggedIn && (
-                            <div className="step-item">
-                              <strong>如何进行官方登录</strong>
-                              <p>请在您的系统终端（Terminal）中执行命令：<code>hermes login</code>。登录成功后，打开右上角设置并点击 <b>“刷新状态”</b> 即可同步。</p>
-                            </div>
-                          )}
-                        </>
+                      {activeAuthMode === "account" ? (
+                        <div className="step-item">
+                          <strong>账号登录</strong>
+                          <p>打开设置中的“模型与账号登录”，保持账号模式并完成 DeepSeek 授权。</p>
+                        </div>
                       ) : (
-                        <>
-                          <div className="step-item">
-                            <strong>推荐配置</strong>
-                            <p>如果你在用 DeepSeek，就把 Provider 设成 <b>deepseek</b>，模型填例如 <b>deepseek-v4-flash</b> 或 <b>deepseek-v4-pro</b>，再填入对应 API key。</p>
-                          </div>
-                          <div className="step-item">
-                            <strong>自定义兼容接口</strong>
-                            <p>如果你是代理服务或自建 OpenAI-compatible 接口，把 Provider 设成 <b>custom</b>，同时补上 Base URL 和 API key。</p>
-                          </div>
-                        </>
+                        <div className="step-item">
+                          <strong>API 配置</strong>
+                          <p>在设置中选择 Provider 和模型，填写 API Key；自定义兼容接口还需填写 Base URL。</p>
+                        </div>
                       )}
                     </div>
                     {state.error ? (
@@ -2247,12 +3104,12 @@ function App() {
                       </div>
                     ) : null}
                     <div className="onboarding-footer">
-                      <button className="primary-button" onClick={() => { setSettingsOpen(true); setActiveSettingsTab("runtime"); }}>打开运行设置</button>
+                      <button className="primary-button" onClick={() => { setSettingsOpen(true); setActiveSettingsTab("chat"); }}>打开模型与登录设置</button>
                     </div>
                   </div>
                 ) : null}
 
-                {!isHermesMissing && !needsProviderSetup && activeMessages.length === 0 && !state.activeDraft && (
+                {!isDshUnavailable && !needsProviderSetup && activeMessages.length === 0 && !state.activeDraft && (
                   <div className="trae-hero-container">
                     <div className="trae-hero-badge">
                       <svg className="w-4 h-4 text-blue-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -2323,7 +3180,7 @@ function App() {
                   </div>
                 )}
 
-                {!isHermesMissing && renderTurnGroups.map((group, groupIdx) => {
+                {!isDshUnavailable && renderTurnGroups.map((group, groupIdx) => {
                   const isLastGroup = groupIdx === renderTurnGroups.length - 1;
                   const isThisGroupStreaming = Boolean(state?.activeDraft) && isLastGroup && group.role === "assistant";
 
@@ -2381,7 +3238,7 @@ function App() {
 
                   // Assistant turn group
                   const historyMsgs = group.messages;
-                  // The official UI keeps the process trail above one final
+                  // The DSH UI keeps the process trail above one final
                   // answer. Reasoning is represented by Think activities, not
                   // rendered again as a second block in the answer body.
                   const answerTexts = (isThisGroupStreaming
@@ -2424,12 +3281,7 @@ function App() {
                         </div>
                       ) : null}
 
-                      <CheckableItemSection
-                        items={digestItems}
-                        selectedMap={selectedDigestItems}
-                        onToggleItem={handleToggleDigestItem}
-                        onToggleAll={handleToggleAllDigestItems}
-                      />
+                      <DigestItemSection items={digestItems} />
                       </article>
                       {isInterrupted ? <InterruptedTurnDivider /> : null}
                     </React.Fragment>
@@ -2440,7 +3292,7 @@ function App() {
                   <InterruptedTurnDivider />
                 ) : null}
 
-                {!isHermesMissing && state?.activeDraft && (renderTurnGroups.length === 0 || renderTurnGroups[renderTurnGroups.length - 1].role !== "assistant") ? (
+                {!isDshUnavailable && state?.activeDraft && (renderTurnGroups.length === 0 || renderTurnGroups[renderTurnGroups.length - 1].role !== "assistant") ? (
                   <article className="bubble assistant streaming">
                     <div className="bubble-head">
                       <strong>深小统</strong>
@@ -2460,7 +3312,7 @@ function App() {
                   </article>
                 ) : null}
 
-                {!isHermesMissing && state?.busy && !state?.activeDraft && state?.status?.includes("排队") ? (
+                {!isDshUnavailable && state?.busy && !state?.activeDraft && state?.status?.includes("排队") ? (
                   <article className="bubble assistant queued-bubble">
                     <div className="bubble-head">
                       <strong>深小统</strong>
@@ -2496,46 +3348,6 @@ function App() {
                 </button>
               </div>
             )}
-            {selectedDigestList.length > 0 && (
-              <div className="digest-composer-toolbar">
-                <div className="digest-bar-info">
-                  <span className="digest-bar-badge">已选择 {selectedDigestList.length} 项动态</span>
-                  <button
-                    type="button"
-                    className="digest-bar-clear"
-                    onClick={handleClearSelectedDigestItems}
-                  >
-                    清空
-                  </button>
-                </div>
-                <div className="digest-bar-actions">
-                  <button
-                    type="button"
-                    className="digest-bar-btn"
-                    onClick={handleDigestActionBriefing}
-                  >
-                    ✨ 提炼简报
-                  </button>
-                  <button
-                    type="button"
-                    className={`digest-bar-btn ${selectedDigestList.length < 2 ? "disabled" : ""}`}
-                    disabled={selectedDigestList.length < 2}
-                    title={selectedDigestList.length < 2 ? "至少需勾选 2 条动态才能交叉比对" : "交叉比对分析"}
-                    onClick={handleDigestActionCompare}
-                  >
-                    🔀 比对分析 {selectedDigestList.length < 2 ? "(需≥2条)" : ""}
-                  </button>
-                  <button
-                    type="button"
-                    className="digest-bar-btn primary"
-                    onClick={handleDigestActionGenerateHtml}
-                  >
-                    📰 生成动态信息汇总 HTML 报表
-                  </button>
-                </div>
-              </div>
-            )}
-
             {state?.error ? (
               <div className="composer-error-banner">
                 <span>⚠️ 错误提示: <code>{state.error}</code></span>
@@ -2546,10 +3358,10 @@ function App() {
                     onClick={() => {
                       setSettingsOpen(true);
                       setActiveSettingsTab("chat");
-                      void refreshOfficialConfig();
+                      void window.dshDesktop?.getState().then(setState);
                     }}
                   >
-                    🔑 前往账号设置重新登录 →
+                    🔑 前往 DeepSeek 账号设置 →
                   </button>
                 ) : null}
               </div>
@@ -2575,30 +3387,14 @@ function App() {
                   <button
                     type="button"
                     className="composer-approval-btn approve"
-                    onClick={() => void window.hermesDesktop?.respondApproval?.("once")}
+                    onClick={() => void respondApproval(state.pendingApproval!.requestId, "once")}
                   >
                     ✓ 本次允许
                   </button>
                   <button
                     type="button"
-                    className="composer-approval-btn session"
-                    onClick={() => void window.hermesDesktop?.respondApproval?.("session")}
-                  >
-                    ↻ 本会话允许
-                  </button>
-                  {state.pendingApproval.allowPermanent !== false ? (
-                    <button
-                      type="button"
-                      className="composer-approval-btn always"
-                      onClick={() => void window.hermesDesktop?.respondApproval?.("always")}
-                    >
-                      ✓ 始终允许
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
                     className="composer-approval-btn deny"
-                    onClick={() => void window.hermesDesktop?.respondApproval?.("deny")}
+                    onClick={() => void respondApproval(state.pendingApproval!.requestId, "deny")}
                   >
                     ✕ 拒绝
                   </button>
@@ -2610,55 +3406,89 @@ function App() {
               <div className="composer-clarification-banner">
                 <div className="composer-clarification-title">
                   <span aria-hidden="true">💬</span>
-                  <strong>需要补充信息</strong>
+                  <strong>
+                    {state.pendingClarification.questions.some((question) => question.intent?.kind === "plan-review")
+                      ? "计划待审"
+                      : "需要补充信息"}
+                  </strong>
                   <button
                     type="button"
                     className="composer-clarification-close"
-                    onClick={() => void handleStopMessage()}
-                    title="关闭并终止当前等待"
-                    aria-label="关闭并终止当前等待"
+                    onClick={() => void cancelClarification()}
+                    title="关闭提问并返回对话"
+                    aria-label="关闭提问并返回对话"
                   >
                     ×
                   </button>
                 </div>
-                <div className="composer-clarification-question">
-                  {state.pendingClarification.question}
-                </div>
-                {state.pendingClarification.choices?.length ? (
-                  <div className="composer-clarification-choices">
-                    {state.pendingClarification.choices.map((choice) => (
-                      <button
-                        key={choice}
-                        type="button"
-                        className="composer-clarification-choice"
-                        onClick={() => void respondClarification(choice)}
-                      >
-                        {choice}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-                <div className="composer-clarification-input-row">
-                  <input
-                    value={clarificationDraft}
-                    onChange={(event) => setClarificationDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" && !event.shiftKey) {
-                        event.preventDefault();
-                        void respondClarification(clarificationDraft);
-                      }
-                    }}
-                    placeholder="请补充说明..."
-                    aria-label="补充说明"
-                    autoFocus
-                  />
+                {state.pendingClarification.questions.map((question, index, questions) => {
+                  const answer = clarificationDraft[question.id] || { selected: [], custom: "" };
+                  return (
+                    <section className="composer-clarification-question-card" key={question.id}>
+                      {question.header ? <div className="composer-clarification-header">{question.header}</div> : null}
+                      <div className="composer-clarification-question">
+                        {questions.length > 1 ? `${index + 1}. ` : ""}{question.question}
+                      </div>
+                      {question.detail ? <div className="composer-clarification-detail">{question.detail}</div> : null}
+                      {question.options?.length ? (
+                        <div className="composer-clarification-choices">
+                          {question.options.map((option) => {
+                            const selected = answer.selected.includes(option.label);
+                            return (
+                              <button
+                                key={option.label}
+                                type="button"
+                                aria-pressed={selected}
+                                className={`composer-clarification-choice ${selected ? "selected" : ""}`}
+                                onClick={() => {
+                                  const nextSelected = question.multiSelect
+                                    ? selected
+                                      ? answer.selected.filter((label) => label !== option.label)
+                                      : [...answer.selected, option.label]
+                                    : [option.label];
+                                  updateClarificationDraft(question.id, {
+                                    selected: nextSelected,
+                                    ...(question.multiSelect ? {} : { custom: "" }),
+                                  });
+                                }}
+                              >
+                                <span>{option.label}</span>
+                                {option.description ? <small>{option.description}</small> : null}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                      <div className="composer-clarification-input-row">
+                        <input
+                          value={answer.custom}
+                          onChange={(event) => updateClarificationDraft(question.id, {
+                            custom: event.target.value,
+                            ...(question.multiSelect ? {} : { selected: [] }),
+                          })}
+                          placeholder={question.options?.length ? "其他回答（可选）" : "输入回答"}
+                          aria-label={`${question.header || "问题"}的补充回答`}
+                        />
+                        <button
+                          type="button"
+                          className="composer-clarification-skip"
+                          onClick={() => updateClarificationDraft(question.id, { selected: [], custom: "" })}
+                        >
+                          跳过
+                        </button>
+                      </div>
+                    </section>
+                  );
+                })}
+                <div className="composer-clarification-footer">
+                  <span>所选选项与补充内容会一并提交给 DSH。</span>
                   <button
                     type="button"
                     className="composer-clarification-submit"
-                    disabled={!clarificationDraft.trim()}
-                    onClick={() => void respondClarification(clarificationDraft)}
+                    disabled={isThreadLoading}
+                    onClick={() => void respondClarification()}
                   >
-                    发送
+                    提交回答
                   </button>
                 </div>
               </div>
@@ -2714,11 +3544,37 @@ function App() {
                 </span>
               )}
 
+              {pendingVoiceTranscript && (
+                <div className="trae-voice-pending" role="status">
+                  <div className="trae-voice-pending-heading">
+                    <strong>语音已转写，但当前对话已切换</strong>
+                    <span>结果尚未加入任何对话，可检查后手动插入。</span>
+                  </div>
+                  <p>{pendingVoiceTranscript}</p>
+                  <div className="trae-voice-pending-actions">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => {
+                        setDraft((current) => current.trim() ? `${current.trimEnd()}\n${pendingVoiceTranscript}` : pendingVoiceTranscript);
+                        setPendingVoiceTranscript(null);
+                        focusEditor();
+                      }}
+                    >
+                      插入当前草稿
+                    </button>
+                    <button type="button" className="text-action-button" onClick={() => setPendingVoiceTranscript(null)}>
+                      丢弃
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <textarea
                 ref={textareaRef}
                 className="trae-composer-textarea"
                 value={draft}
-                disabled={isHermesMissing || needsProviderSetup}
+                disabled={isDshUnavailable || needsProviderSetup}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
@@ -2731,12 +3587,10 @@ function App() {
                   }
                 }}
                 placeholder={
-                  isHermesMissing
+                  isDshUnavailable
                     ? "运行时未就绪，消息框已禁用"
                     : needsProviderSetup
-                      ? isOfficialMode
-                        ? "请先让本机 Hermes 官方配置完成登录，消息框暂不可用"
-                        : "请先在设置中填写 API key，消息框暂不可用"
+                      ? "请先在设置中配置 API Key 或 DeepSeek 账号，消息框暂不可用"
                       : "输入任务需求，或先添加文件..."
                 }
               />
@@ -2747,7 +3601,7 @@ function App() {
                     type="button"
                     className="trae-attach-button"
                     onClick={() => void handleSelectAttachments()}
-                    disabled={isHermesMissing || Boolean(state.busy) || isThreadLoading}
+                    disabled={isDshUnavailable || Boolean(state.busy) || isThreadLoading}
                     title="添加要提交给智能体的本地文件"
                   >
                     <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -2756,6 +3610,29 @@ function App() {
                     <span>添加文件</span>
                     {selectedAttachments.length > 0 && <span className="trae-attach-count">{selectedAttachments.length}</span>}
                   </button>
+                  <button
+                    type="button"
+                    className={`trae-voice-button ${voiceStatus === "recording" ? "recording" : ""}`}
+                    onClick={() => void handleVoiceInput()}
+                    disabled={isDshUnavailable || isThreadLoading || (Boolean(state?.busy) && voiceStatus === "idle") || voiceStatus === "transcribing"}
+                    title={voicePreparationText || (voiceStatus === "recording" ? "停止录音并转成草稿" : voiceStatus === "preparing" ? "取消语音模型准备" : "本地语音转写；结果放入草稿，不会自动发送")}
+                    aria-label={voiceStatus === "recording" ? "停止录音" : voiceStatus === "preparing" ? "取消语音模型准备" : "语音输入"}
+                  >
+                    <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      {voiceStatus === "recording" ? (
+                        <rect x="6" y="6" width="12" height="12" rx="2" />
+                      ) : (
+                        <>
+                          <rect x="9" y="2" width="6" height="12" rx="3" />
+                          <path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8" />
+                        </>
+                      )}
+                    </svg>
+                    <span>{voiceStatus === "recording" ? "停止" : voiceStatus === "preparing" ? "取消准备" : voiceStatus === "transcribing" ? "转写中" : "语音输入"}</span>
+                  </button>
+                  {voiceStatus === "preparing" && voicePreparationText && (
+                    <span className="trae-voice-status" role="status">{voicePreparationText}</span>
+                  )}
 
                   {!isWorkspaceLocked() && (
                   <div ref={folderMenuRef} className="relative">
@@ -2844,36 +3721,196 @@ function App() {
                     )}
                   </div>
                   )}
+                  {availablePermissionPresets.length > 0 && (
+                    <div ref={permissionMenuRef} className="trae-permission-selector">
+                      <button
+                        type="button"
+                        className="trae-selector-pill trae-permission-trigger"
+                        aria-haspopup="menu"
+                        aria-expanded={isPermissionMenuOpen}
+                        disabled={isDshUnavailable || permissionBusy || Boolean(state?.busy) || isThreadLoading}
+                        onClick={() => {
+                          setPermissionError(null);
+                          setIsPermissionMenuOpen((open) => !open);
+                        }}
+                        title={state?.activeThreadId ? "当前会话权限" : "新对话默认权限"}
+                      >
+                        <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M12 3 5 6v5c0 4.7 2.9 8.1 7 10 4.1-1.9 7-5.3 7-10V6l-7-3Z" />
+                        </svg>
+                        <span>{permissionPresetLabel(permissionSelection)}</span>
+                        <svg className="w-3 h-3 text-slate-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                      </button>
+                      {isPermissionMenuOpen && (
+                        <div className="trae-permission-menu" role="menu" aria-label="选择 DSH 权限">
+                          <div className="trae-permission-menu-heading">
+                            <strong>{state?.activeThreadId ? "当前会话权限" : "新对话默认权限"}</strong>
+                            <span>{state?.activeThreadId ? "只影响当前对话" : "保存后用于之后新建的对话"}</span>
+                          </div>
+                          {PERMISSION_PRESET_ORDER
+                            .filter((preset) => availablePermissionPresets.some((option) => option.value === preset))
+                            .map((preset) => (
+                              <button
+                                key={preset}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={permissionSelection === preset}
+                                className={`trae-permission-option ${permissionSelection === preset ? "active" : ""} ${preset === "danger-full-access" ? "danger" : ""}`}
+                                disabled={permissionBusy}
+                                onClick={() => choosePermissionPreset(preset as "read-only" | "workspace-write" | "danger-full-access")}
+                              >
+                                <svg className="trae-permission-option-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  {preset === "read-only" ? (
+                                    <>
+                                      <path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z" />
+                                      <circle cx="12" cy="12" r="2.5" />
+                                    </>
+                                  ) : (
+                                    <>
+                                      <path d="M12 3 5 6v5c0 4.7 2.9 8.1 7 10 4.1-1.9 7-5.3 7-10V6l-7-3Z" />
+                                      {preset === "danger-full-access" ? <path d="M12 8v4m0 3h.01" /> : <path d="m9.2 12 1.8 1.8 3.9-4" />}
+                                    </>
+                                  )}
+                                </svg>
+                                <span className="trae-permission-option-copy">
+                                  <strong>{PERMISSION_PRESET_LABELS[preset]}</strong>
+                                  <small>{PERMISSION_PRESET_DESCRIPTIONS[preset]}</small>
+                                </span>
+                                {permissionSelection === preset && <span className="trae-permission-check" aria-hidden="true">✓</span>}
+                              </button>
+                            ))}
+                          {permissionError && <p className="trae-permission-error" role="alert">{permissionError}</p>}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                {/* Right Side: Send or Stop Button */}
-              {isCurrentThreadBusy ? (
-                <button
-                  type="button"
-                  className="trae-stop-icon-btn"
-                  onClick={() => void handleStopMessage()}
-                  title="终止当前智能体处理"
-                  aria-label="终止当前智能体处理"
-                >
-                  <svg className="w-3.5 h-3.5 fill-white" viewBox="0 0 24 24">
-                    <rect x="5" y="5" width="14" height="14" rx="2" />
-                  </svg>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="primary-button-icon"
-                  onClick={() => void sendMessage()}
-                  disabled={(!draft.trim() && !selectedSkillTag && selectedAttachments.length === 0) || !canSend}
-                  title="发送消息 (Enter)"
-                  aria-label="发送消息"
-                >
-                  <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="12" y1="19" x2="12" y2="5" />
-                    <polyline points="5 12 12 5 19 12" />
-                  </svg>
-                </button>
-              )}
+                <div className="trae-composer-actions-right">
+                  {state && composerModelSelection && (
+                    <div ref={modelMenuRef} className="trae-model-selector">
+                      <button
+                        type="button"
+                        className="trae-model-trigger"
+                        aria-haspopup="dialog"
+                        aria-expanded={isModelMenuOpen}
+                        aria-label={`运行模型：${composerModelButtonLabel}`}
+                        disabled={isDshUnavailable || modelSelectionBusy || Boolean(state.busy) || isThreadLoading}
+                        onClick={toggleModelMenu}
+                        title={`${composerModelSelection.provider} · ${composerModelSelection.model}`}
+                      >
+                        <svg className="trae-model-trigger-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <rect x="4" y="5" width="16" height="14" rx="3" />
+                          <path d="M9 9h6v6H9zM8 2v3m8-3v3M8 19v3m8-3v3M2 9h2m-2 6h2m16-6h2m-2 6h2" />
+                        </svg>
+                        <span className="trae-model-trigger-name">{composerModelName}</span>
+                        {currentEffortName && <span className="trae-model-trigger-effort">{currentEffortName}</span>}
+                        <svg className={`trae-model-trigger-chevron ${isModelMenuOpen ? "open" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                      </button>
+
+                      {isModelMenuOpen && (
+                        <div className="trae-model-menu" role="dialog" aria-label="选择运行模型">
+                          <div className="trae-model-menu-status">选择后立即用于当前对话后续消息，无需重启 DSH。</div>
+                          <label className="trae-model-setting-row">
+                            <span>模型</span>
+                            <select
+                              value={composerModelSelection.model}
+                              disabled={modelSelectionBusy || modelCatalogLoading || composerModelOptions.length === 0}
+                              onChange={(event) => {
+                                const selected = composerModelOptions.find((model) => model.id === event.target.value);
+                                if (!selected || !composerModelSelection) return;
+                                const reasoningEffort = selected.reasoning?.defaultEffort;
+                                void selectComposerModel({
+                                  provider: composerModelSelection.provider,
+                                  model: selected.id,
+                                  ...(reasoningEffort ? { reasoningEffort } : {}),
+                                });
+                              }}
+                              aria-label="选择模型"
+                            >
+                              {!composerModelSelection.model && <option value="">选择模型…</option>}
+                              {composerModelOptions.map((model) => (
+                                <option key={model.id} value={model.id}>
+                                  {model.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+
+                          {composerModelEfforts.length > 0 && (
+                            <label className="trae-model-setting-row">
+                              <span>推理等级</span>
+                              <select
+                                value={currentEffortId}
+                                disabled={modelSelectionBusy || modelCatalogLoading || state.busy || isThreadLoading}
+                                onChange={(event) => {
+                                  if (!composerModelSelection) return;
+                                  void selectComposerModel({
+                                    provider: composerModelSelection.provider,
+                                    model: composerModelSelection.model,
+                                    ...(event.target.value ? { reasoningEffort: event.target.value } : {}),
+                                  });
+                                }}
+                                aria-label="选择推理等级"
+                              >
+                                {composerModelEfforts.map((effort) => (
+                                  <option key={effort.id} value={effort.id} title={effort.description}>
+                                    {effort.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          )}
+
+                          {modelCatalogLoading && <div className="trae-model-menu-status" role="status">正在读取 DSH 模型列表…</div>}
+                          {modelSelectionError && <div className="trae-model-menu-error" role="alert">{modelSelectionError}</div>}
+                          {(state.modelCatalog?.failures.length || composerModelOptions.length === 0) ? (
+                            <button
+                              type="button"
+                              className="trae-model-refresh"
+                              onClick={() => void reloadModelCatalog()}
+                              disabled={modelCatalogLoading || modelSelectionBusy}
+                            >
+                              {modelCatalogLoading ? "正在刷新…" : "刷新 DSH 模型列表"}
+                            </button>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {isCurrentThreadBusy ? (
+                    <button
+                      type="button"
+                      className="trae-stop-icon-btn"
+                      onClick={() => void handleStopMessage()}
+                      title="终止当前智能体处理"
+                      aria-label="终止当前智能体处理"
+                    >
+                      <svg className="w-3.5 h-3.5 fill-white" viewBox="0 0 24 24">
+                        <rect x="5" y="5" width="14" height="14" rx="2" />
+                      </svg>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="primary-button-icon"
+                      onClick={() => void sendMessage()}
+                      disabled={(!draft.trim() && !selectedSkillTag && selectedAttachments.length === 0) || !canSend}
+                      title="发送消息 (Enter)"
+                      aria-label="发送消息"
+                    >
+                      <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="12" y1="19" x2="12" y2="5" />
+                        <polyline points="5 12 12 5 19 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
             </div>
           </div>
 
@@ -2934,7 +3971,7 @@ function App() {
                           </span>
                           <button
                             className="right-sidebar-item-name"
-                            onClick={() => void window.hermesDesktop.openExternal(`file://${file}`)}
+                            onClick={() => void window.dshDesktop.openExternal(`file://${file}`)}
                           >
                             {basename}
                           </button>
@@ -2946,7 +3983,7 @@ function App() {
                               const parts = file.split(/[/\\]/);
                               parts.pop();
                               const dirPath = parts.join("/");
-                              void window.hermesDesktop.openExternal(`file://${dirPath}`);
+                              void window.dshDesktop.openExternal(`file://${dirPath}`);
                             }}
                             title="打开文件所在目录"
                           >
@@ -2966,19 +4003,7 @@ function App() {
             <button
               className="right-sidebar-open-dir-button"
               style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}
-              onClick={() => {
-                const targetCwd = state?.activeThread?.cwd || state?.settings?.cwd || "";
-                const defaultOutputDir = state?.settings?.defaultOutputDir || "output";
-                let resolvedPath = defaultOutputDir;
-                if (targetCwd && !defaultOutputDir.startsWith("/") && !defaultOutputDir.includes(":")) {
-                  resolvedPath = `${targetCwd}/${defaultOutputDir}`;
-                } else if (!targetCwd && threadFiles[0]) {
-                  const parts = threadFiles[0].split(/[/\\]/);
-                  parts.pop();
-                  resolvedPath = parts.join("/") || defaultOutputDir;
-                }
-                void window.hermesDesktop.openExternal(`file://${resolvedPath}`);
-              }}
+              onClick={requestOpenOutputDirectory}
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2" />
@@ -3014,7 +4039,7 @@ function App() {
                   <li key={file} title={file}>
                     <button
                       className="text-button file-link"
-                      onClick={() => void window.hermesDesktop.openExternal(`file://${file}`)}
+                      onClick={() => void window.dshDesktop.openExternal(`file://${file}`)}
                     >
                       {basename}
                     </button>
@@ -3026,22 +4051,33 @@ function App() {
           <div className="toast-footer">
             <button
               className="toast-open-dir-button"
-              onClick={() => {
-                const targetCwd = state?.activeThread?.cwd || state?.settings?.cwd || "";
-                const defaultOutputDir = state?.settings?.defaultOutputDir || "output";
-                let resolvedPath = defaultOutputDir;
-                const firstFile = state.lastGeneratedFiles?.[0];
-                if (firstFile) {
-                  const parts = firstFile.split(/[/\\]/);
-                  parts.pop();
-                  resolvedPath = parts.join("/") || defaultOutputDir;
-                } else if (targetCwd && !defaultOutputDir.startsWith("/") && !defaultOutputDir.includes(":")) {
-                  resolvedPath = `${targetCwd}/${defaultOutputDir}`;
-                }
-                void window.hermesDesktop.openExternal(`file://${resolvedPath}`);
-              }}
+              onClick={requestOpenOutputDirectory}
             >
               打开输出目录
+            </button>
+          </div>
+        </div>
+      )}
+
+      {archivedThread && (
+        <div className="file-alert-toast archive-session-toast" role="status" aria-live="polite">
+          <div className="toast-header">
+            <span className="toast-icon" aria-hidden="true">✓</span>
+            <strong>对话已从侧边栏移除</strong>
+            <button
+              className="toast-close"
+              onClick={() => setArchivedThread(null)}
+              aria-label="关闭提示"
+            >
+              ×
+            </button>
+          </div>
+          <div className="toast-body">
+            <p>{archivedThread.title}已归档，历史记录仍保留在本地。</p>
+          </div>
+          <div className="toast-footer">
+            <button className="toast-open-dir-button" onClick={() => void undoArchiveThread()}>
+              撤销归档
             </button>
           </div>
         </div>
@@ -3082,31 +4118,6 @@ function App() {
                   </span>
                   模型与账号登录
                 </button>
-                <button
-                  type="button"
-                  className={`settings-tab-btn ${activeSettingsTab === "vision" ? "active" : ""}`}
-                  onClick={() => setActiveSettingsTab("vision")}
-                >
-                  <span className="tab-icon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  </span>
-                  视觉大模型
-                </button>
-                <button
-                  type="button"
-                  className={`settings-tab-btn ${activeSettingsTab === "tools" ? "active" : ""}`}
-                  onClick={() => setActiveSettingsTab("tools")}
-                >
-                  <span className="tab-icon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M12 22v-5M9 8V2M15 8V2M18 8H6A2 2 0 0 0 4 10v2a4 4 0 0 0 4 4h8a4 4 0 0 0 4-4v-2a2 2 0 0 0-2-2z" />
-                    </svg>
-                  </span>
-                  外部工具 & API
-                </button>
               </nav>
             </div>
 
@@ -3114,9 +4125,7 @@ function App() {
             <div className="settings-content">
               <div className="settings-content-header">
                 {activeSettingsTab === "runtime" && <h3>运行状态与工作区</h3>}
-                {activeSettingsTab === "chat" && <h3>对话模型配置</h3>}
-                {activeSettingsTab === "vision" && <h3>视觉大模型 (Vision Backend)</h3>}
-                {activeSettingsTab === "tools" && <h3>外部工具 & API 配置</h3>}
+                {activeSettingsTab === "chat" && <h3>模型与账号登录</h3>}
               </div>
 
               <div className="settings-content-body">
@@ -3128,7 +4137,7 @@ function App() {
                         value={draftSettings.cwd}
                         disabled={isWorkspaceLocked()}
                         onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
+                          setDraftSettings((current: DshAppState["settings"]) => ({
                             ...current,
                             cwd: event.target.value,
                           }))
@@ -3143,7 +4152,7 @@ function App() {
                       <input
                         value={draftSettings.defaultOutputDir || ""}
                         onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
+                          setDraftSettings((current: DshAppState["settings"]) => ({
                             ...current,
                             defaultOutputDir: event.target.value,
                           }))
@@ -3155,11 +4164,6 @@ function App() {
                       </small>
                     </label>
 
-                    <label>
-                      内置 Runtime Binary
-                      <input value={state?.settings.hermesBin || ""} disabled />
-                    </label>
-
                     <div className="skills-section">
                       <div className="skills-section-header">
                         <h4>DSH 运行时</h4>
@@ -3169,7 +4173,7 @@ function App() {
                         <div className="skill-card">
                           <div className="skill-info">
                             <strong className="skill-card-header">DeepSeek DSH 运行时</strong>
-                            <p className="skill-card-desc">DSH 作为内置轻量运行时直接由应用内置提供，跨平台且无需外部 Python 虚拟环境。</p>
+                            <p className="skill-card-desc">应用启动本地 DSH 服务，并使用随安装包提供的 Node.js 运行时。</p>
                             <span className="skill-card-path">{state?.runtime.installDir}</span>
                             <span className="skill-card-path">{state?.runtime.homeDir}</span>
                           </div>
@@ -3177,14 +4181,7 @@ function App() {
                       </div>
                       <div className="modal-actions-inline">
                         <button className="secondary-button" onClick={() => void repairRuntime()}>
-                          安装 / 修复运行时
-                        </button>
-                        <button
-                          className="secondary-button"
-                          onClick={() => void uninstallRuntime()}
-                          disabled={!runtimeInstalled || (state?.runtime.uninstalling ?? false)}
-                        >
-                          {state?.runtime.uninstalling ? "卸载中..." : "一键卸载运行时"}
+                          重新启动 DSH
                         </button>
                       </div>
                     </div>
@@ -3193,102 +4190,36 @@ function App() {
 
                 {activeSettingsTab === "chat" && (
                   <div className="settings-tab-pane">
-                    <label>
-                      接入模式
-                      <select
-                        value={draftSettings.runtimeMode}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            runtimeMode: event.target.value as HermesAppState["settings"]["runtimeMode"],
-                            model: event.target.value === "official" ? (state?.official.defaultModel || "") : current.model,
-                          }))
-                        }
-                        className="settings-select"
-                      >
-                        <option value="private">自定义私有模式</option>
-                        <option value="official">Hermes 官方模式</option>
-                      </select>
-                    </label>
+                    <p className="field-hint">选择使用 API 密钥，或通过 DeepSeek 账号授权。切换方式不会删除另一种方式已保存的凭据。</p>
 
-                    <div className={`yolo-setting-card ${draftSettings.yoloMode ? "enabled" : "disabled"}`}>
-                      <div className="yolo-setting-copy">
-                        <div className="yolo-setting-title">
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                            <path d="M12 3 5 6v5c0 4.7 2.9 8.1 7 10 4.1-1.9 7-5.3 7-10V6l-7-3Z" />
-                            <path d="m9.2 12 1.8 1.8 3.9-4" />
-                          </svg>
-                          <strong>YOLO / 自动执行</strong>
-                          <span className={`yolo-setting-status ${draftSettings.yoloMode ? "on" : "off"}`}>
-                            {draftSettings.yoloMode ? "已开启" : "已关闭"}
-                          </span>
-                        </div>
-                        <p>
-                          {draftSettings.runtimeMode === "official"
-                            ? "应用到新建或恢复的 DSH 会话。"
-                            : "开启自动执行模式，减少普通命令与操作的逐次确认。"}
-                          <br />
-                          即使开启，硬性安全规则仍可能要求授权，授权面板不会被静默跳过。
-                        </p>
-                      </div>
-                      <label className="yolo-toggle" title="切换 YOLO 自动执行模式">
-                        <input
-                          type="checkbox"
-                          checked={draftSettings.yoloMode}
-                          onChange={(event) =>
-                            setDraftSettings((current: HermesAppState["settings"]) => ({
-                              ...current,
-                              yoloMode: event.target.checked,
-                            }))
-                          }
-                        />
-                        <span className="yolo-toggle-track" aria-hidden="true">
-                          <span className="yolo-toggle-thumb" />
-                        </span>
-                      </label>
+                    <div className="auth-mode-choice-grid" role="group" aria-label="模型连接方式">
+                      <button
+                        type="button"
+                        className={`auth-mode-choice ${draftSettings.authMode === "api" ? "active" : ""}`}
+                        aria-pressed={draftSettings.authMode === "api"}
+                        onClick={() => selectDraftAuthMode("api")}
+                      >
+                        <strong>使用 API</strong>
+                        <span>配置 OpenAI、OpenRouter、DeepSeek 或兼容接口</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`auth-mode-choice ${draftSettings.authMode === "account" ? "active" : ""}`}
+                        aria-pressed={draftSettings.authMode === "account"}
+                        onClick={() => selectDraftAuthMode("account")}
+                      >
+                        <strong>DeepSeek 账号登录</strong>
+                        <span>登录后使用账号授权，无需填写 API Key</span>
+                      </button>
                     </div>
 
+                    {draftSettings.authMode === "api" && (
+                    <>
                     <label>
-                      Model (对话模型)
-                      {draftSettings.runtimeMode === "official" ? (
-                        <div className="settings-model-switch">
-                          <div className="settings-model-row">
-                            <select
-                              value={draftSettings.model}
-                              onChange={(event) =>
-                                setDraftSettings((current: HermesAppState["settings"]) => ({
-                                  ...current,
-                                  model: event.target.value,
-                                }))
-                              }
-                              className="settings-select settings-model-select"
-                            >
-                              {((state?.official.availableModels.length ?? 0) > 0 ? (state?.official.availableModels ?? []) : [state?.official.defaultModel ?? draftSettings.model]).map((modelId) => (
-                                <option key={modelId} value={modelId}>
-                                  {modelId}
-                                </option>
-                              ))}
-                            </select>
-                            <button
-                              className="inline-apply-button"
-                              onClick={() => {
-                                if (!officialModelDirty) return;
-                                void applyModelChange(draftSettings.model);
-                              }}
-                              disabled={!officialModelDirty}
-                            >
-                              应用切换
-                            </button>
-                          </div>
-                          <small className="field-hint">
-                            实际运行：<b>{displayModel}</b>
-                            {officialModelDirty ? ` | 点击应用：${state?.official.defaultModel} → ${draftSettings.model}` : ""}
-                          </small>
-                        </div>
-                      ) : (
-                        <div className="provider-models-manager" style={{ marginTop: "4px" }}>
+                      Provider 模型列表
+                      <div className="provider-models-manager" style={{ marginTop: "4px" }}>
                           <div style={{ fontSize: "12.5px", color: "#64748b", marginBottom: "8px", lineHeight: 1.4 }}>
-                            模型在下拉框选择或手动输入模型 ID 后，点击右侧 [+] 按钮添加到列表。
+                            在对话输入框右侧选择本次对话使用的模型。这里仅维护此 Provider 的可选模型 ID；能否调用仍取决于服务商和当前账号权限。
                           </div>
 
                           <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "14px" }}>
@@ -3325,7 +4256,7 @@ function App() {
                                   <option value="">选择模型以添加...</option>
                                   {(PROVIDER_PRESET_MODELS[draftSettings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((preset) => (
                                     <option key={preset.id} value={preset.id}>
-                                      {preset.id}
+                                      {preset.id} — {preset.desc}
                                     </option>
                                   ))}
                                   <option value="__manual__">✍️ 手动输入模型 ID...</option>
@@ -3392,7 +4323,7 @@ function App() {
                               type="button"
                               onClick={() => handleAddCustomModel()}
                               disabled={isManualInputMode ? !customModelInput.trim() : !selectedModelToAdd}
-                              title="添加到列表并设为当前生效模型"
+                              title="添加到 Provider 模型列表"
                               style={{
                                 width: "36px",
                                 height: "36px",
@@ -3419,8 +4350,14 @@ function App() {
                                 const defaultPresets = (PROVIDER_PRESET_MODELS[draftSettings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
                                 setDraftSettings((current) => ({
                                   ...current,
-                                  customModels: defaultPresets,
                                   model: current.model && defaultPresets.includes(current.model) ? current.model : (defaultPresets[0] || ""),
+                                  apiModel: current.model && defaultPresets.includes(current.model) ? current.model : (defaultPresets[0] || ""),
+                                  apiModelsByProvider: {
+                                    ...current.apiModelsByProvider,
+                                    [current.apiProvider]: current.model && defaultPresets.includes(current.model) ? current.model : (defaultPresets[0] || ""),
+                                  },
+                                  customModels: defaultPresets,
+                                  customModelsByProvider: { ...current.customModelsByProvider, [current.apiProvider]: defaultPresets },
                                 }));
                               }}
                               title="恢复当前 Provider 预设推荐模型列表"
@@ -3451,6 +4388,12 @@ function App() {
                               已加入 Provider 的模型：
                             </div>
 
+                            {draftSettings.apiProvider === "deepseek" && (
+                              <div style={{ fontSize: "12px", color: "#64748b", marginBottom: "8px", lineHeight: 1.4 }}>
+                                DSH 目录将 <b>deepseek-flash</b> 标记为支持图片、将 <b>deepseek-v4-pro</b> 标记为文本模型。自定义 ID 会注册为文本模型；能否调用仍取决于 DeepSeek 是否开放该模型。
+                              </div>
+                            )}
+
                             <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
                               {(() => {
                                 const presets = (PROVIDER_PRESET_MODELS[draftSettings.apiProvider || "deepseek"] || PROVIDER_PRESET_MODELS["deepseek"]).map((m) => m.id);
@@ -3460,16 +4403,10 @@ function App() {
                                 const fullList = Array.from(new Set([draftSettings.model, ...currentList].filter(Boolean) as string[]));
 
                                 return fullList.map((modelId) => {
-                                  const isSelected = (draftSettings.model || presets[0]) === modelId;
+                                  const isDefault = (draftSettings.model || presets[0]) === modelId;
                                   return (
-                                    <div
+                                    <span
                                       key={modelId}
-                                      onClick={() => {
-                                        setDraftSettings((current) => ({
-                                          ...current,
-                                          model: modelId,
-                                        }));
-                                      }}
                                       style={{
                                         display: "inline-flex",
                                         alignItems: "center",
@@ -3478,22 +4415,26 @@ function App() {
                                         borderRadius: "8px",
                                         fontSize: "13px",
                                         fontFamily: "monospace",
-                                        cursor: "pointer",
-                                        border: isSelected ? "1.5px solid #3b82f6" : "1px solid #cbd5e1",
-                                        backgroundColor: isSelected ? "#eff6ff" : "#f8fafc",
-                                        color: isSelected ? "#1d4ed8" : "#334155",
-                                        fontWeight: isSelected ? 600 : 500,
-                                        boxShadow: isSelected ? "0 1px 3px rgba(59, 130, 246, 0.15)" : "none",
-                                        transition: "all 0.15s ease",
+                                        border: isDefault ? "1.5px solid #3b82f6" : "1px solid #cbd5e1",
+                                        backgroundColor: isDefault ? "#eff6ff" : "#f8fafc",
+                                        color: isDefault ? "#1d4ed8" : "#334155",
+                                        fontWeight: isDefault ? 600 : 500,
                                       }}
-                                      title={isSelected ? "当前生效的默认模型" : "点击切换为此模型"}
+                                      title={isDefault ? "新对话默认模型；可在输入框右侧切换当前对话模型" : "已加入此 Provider 的模型列表"}
                                     >
-                                      <span>{modelId}</span>
-                                      <span
+                                      <span>
+                                        {draftSettings.apiProvider === "deepseek" && modelId === "deepseek-flash"
+                                          ? "deepseek-flash · V4.1 Flash"
+                                          : modelId}
+                                      </span>
+                                      {isDefault && <small style={{ fontSize: "10px", fontFamily: "inherit", opacity: 0.8 }}>默认</small>}
+                                      <button
+                                        type="button"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           handleRemoveCustomModel(modelId);
                                         }}
+                                        aria-label={`移除模型 ${modelId}`}
                                         title="移除此模型"
                                         style={{
                                           display: "inline-flex",
@@ -3501,17 +4442,19 @@ function App() {
                                           justifyContent: "center",
                                           width: "16px",
                                           height: "16px",
+                                          padding: 0,
+                                          border: "none",
                                           borderRadius: "50%",
                                           fontSize: "11px",
-                                          color: isSelected ? "#2563eb" : "#94a3b8",
-                                          backgroundColor: isSelected ? "rgba(59, 130, 246, 0.15)" : "rgba(0, 0, 0, 0.06)",
+                                          color: isDefault ? "#2563eb" : "#94a3b8",
+                                          backgroundColor: isDefault ? "rgba(59, 130, 246, 0.15)" : "rgba(0, 0, 0, 0.06)",
                                           cursor: "pointer",
                                           transition: "background-color 0.15s",
                                         }}
                                       >
                                         ✕
-                                      </span>
-                                    </div>
+                                      </button>
+                                    </span>
                                   );
                                 });
                               })()}
@@ -3519,59 +4462,97 @@ function App() {
                           </div>
 
                           <div style={{ fontSize: "12px", color: "#64748b", margin: "6px 0 0 0" }}>
-                            蓝色高亮项为当前生效的默认模型，点击其他模型标签可直接切换。
+                            蓝色标签标记新对话默认模型；切换当前对话的模型和推理等级请使用输入框右侧的选择器。
                           </div>
                         </div>
+                    </label>
+
+                    <label>
+                      API Provider (大模型提供商)
+                      <select
+                        value={draftSettings.apiProvider}
+                        onChange={(event) => {
+                          const newProvider = event.target.value as DshAppState["settings"]["apiProvider"];
+                          setCustomModelInput("");
+                          setSelectedModelToAdd("");
+                          setIsManualInputMode(false);
+                          setDraftSettings((current: DshAppState["settings"]) => {
+                            const oldProvider = current.apiProvider;
+                            const currentModels = getConfiguredProviderModels(current, oldProvider);
+                            const targetModels = current.customModelsByProvider?.[newProvider]?.length
+                              ? current.customModelsByProvider[newProvider]!
+                              : getProviderPresetModels(newProvider);
+                            const apiModelsByProvider = {
+                              ...current.apiModelsByProvider,
+                              [oldProvider]: current.model || current.apiModel,
+                            };
+                            const targetModel = apiModelsByProvider[newProvider] || targetModels[0] || "";
+                            apiModelsByProvider[newProvider] = targetModel;
+                            return {
+                              ...current,
+                              apiProvider: newProvider,
+                              apiBaseUrl: newProvider === "deepseek" && !current.apiBaseUrl ? "https://api.deepseek.com" : current.apiBaseUrl,
+                              model: targetModel,
+                              apiModel: targetModel,
+                              apiModelsByProvider,
+                              customModels: targetModels,
+                              customModelsByProvider: {
+                                ...current.customModelsByProvider,
+                                [oldProvider]: currentModels,
+                                [newProvider]: targetModels,
+                              },
+                            };
+                          });
+                        }}
+                        className="settings-select"
+                      >
+                        <option value="openai">OpenAI</option>
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="custom">自定义 OpenAI 兼容接口</option>
+                      </select>
+                    </label>
+
+                        {draftSettings.apiProvider !== "deepseek" && (
+                          <p className="field-hint" role="status">
+                            当前模型将由 DSH 的 {draftSettings.apiProvider === "custom" ? "自定义" : draftSettings.apiProvider} provider 路由处理。
+                          </p>
+                        )}
+
+                    <label>
+                      API Key (密钥)
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={draftSettings.apiKey}
+                        onChange={(event) =>
+                          setDraftSettings((current: DshAppState["settings"]) => ({
+                            ...current,
+                            apiKey: event.target.value,
+                          }))
+                        }
+                        placeholder={state?.providerCredentialStatus?.[draftSettings.apiProvider]?.configured ? "已由 DSH 保存；输入新密钥可替换" : "sk-..."}
+                      />
+                      <small className="field-hint">
+                        密钥仅写入 DSH 凭据库，不会回显或保存在应用设置文件中。{state?.providerCredentialStatus?.[draftSettings.apiProvider]?.configured ? "留空会保留现有密钥。" : ""}
+                      </small>
+                      {state?.providerCredentialStatus?.[draftSettings.apiProvider]?.configured && state?.providerCredentialStatus?.[draftSettings.apiProvider]?.writable && (
+                        <button type="button" className="text-action-button danger" onClick={() => void clearCurrentProviderApiKey()}>
+                          清除 DSH 中保存的密钥
+                        </button>
+                      )}
+                      {state?.providerCredentialStatus?.[draftSettings.apiProvider]?.configured && !state?.providerCredentialStatus?.[draftSettings.apiProvider]?.writable && (
+                        <small className="field-hint">该密钥由只读环境变量提供，请在启动环境中清除。</small>
                       )}
                     </label>
 
-                    {draftSettings.runtimeMode !== "official" && (
-                      <>
-                        <label>
-                          API Provider (大模型提供商)
-                          <select
-                            value={draftSettings.apiProvider}
-                            onChange={(event) => {
-                              const newProvider = event.target.value as HermesAppState["settings"]["apiProvider"];
-                              setDraftSettings((current: HermesAppState["settings"]) => ({
-                                ...current,
-                                apiProvider: newProvider,
-                                apiBaseUrl: newProvider === "deepseek" && !current.apiBaseUrl ? "https://api.deepseek.com" : current.apiBaseUrl,
-                              }));
-                            }}
-                            className="settings-select"
-                          >
-                            <option value="openai">OpenAI</option>
-                            <option value="openrouter">OpenRouter</option>
-                            <option value="deepseek">DeepSeek</option>
-                            <option value="custom">自定义 OpenAI 兼容接口</option>
-                          </select>
-                        </label>
-
-                        <label>
-                          API Key (密钥)
-                          <input
-                            type="password"
-                            value={draftSettings.apiKey}
-                            onChange={(event) =>
-                              setDraftSettings((current: HermesAppState["settings"]) => ({
-                                ...current,
-                                apiKey: event.target.value,
-                              }))
-                            }
-                            placeholder="sk-..."
-                          />
-                        </label>
-                      </>
-                    )}
-
-                    {draftSettings.runtimeMode !== "official" && draftSettings.apiProvider === "custom" && (
+                    {draftSettings.apiProvider === "custom" && (
                       <label>
                         API Base URL
                         <input
                           value={draftSettings.apiBaseUrl}
                           onChange={(event) =>
-                            setDraftSettings((current: HermesAppState["settings"]) => ({
+                            setDraftSettings((current: DshAppState["settings"]) => ({
                               ...current,
                               apiBaseUrl: event.target.value,
                             }))
@@ -3581,329 +4562,80 @@ function App() {
                       </label>
                     )}
 
-                    {draftSettings.runtimeMode === "official" && state && (
-                      <div className="skills-section">
-                        <div className="skills-section-header">
-                          <h4>Hermes 官方模式</h4>
-                          <div className="official-status-group">
-                            <span className="official-status-tag">
-                              {state.official.isLoggedIn ? `已登录 / ${state.official.subscriptionLabel}` : "未登录"}
-                            </span>
-                            {state.official.isLoggedIn && (
-                              <button 
-                                type="button"
-                                className="text-action-button danger"
-                                onClick={() => void logoutOfficialConfig()}
-                                title="从本机 ~/.hermes 清除官方登录态"
-                              >
-                                退出登录
+                    </>
+                    )}
+
+                    {draftSettings.authMode === "account" && state && (
+                      <>
+                        <div className="provider-models-manager">
+                          <strong>DeepSeek 账号模型</strong>
+                          <p className="field-hint">当前对话的模型和推理等级在输入框右侧选择。账号模式使用 DSH 提供的模型目录；可用模型还取决于账号权限。</p>
+                        </div>
+
+                      <section className="dsh-account-settings-card">
+                        <div className="dsh-account-settings-heading">
+                          <div>
+                            <h4>DeepSeek 账号</h4>
+                            <p>账号授权由 DSH 保存和管理。登录后将使用账号授权发送新对话。</p>
+                          </div>
+                          <span className={`dsh-account-status ${state.account?.status === "credential-stored" ? "connected" : "disconnected"}`}>
+                            {state.account?.status === "credential-stored" ? "已登录" : "未登录"}
+                          </span>
+                        </div>
+
+                        {state.account?.attempt && ["initializing", "waiting-browser", "exchanging", "committing"].includes(state.account.attempt.phase) && (
+                          <p className="dsh-account-progress" role="status">
+                            {state.account.attempt.phase === "waiting-browser" ? "已打开浏览器，请完成 DeepSeek 授权。" : "正在准备账号授权…"}
+                          </p>
+                        )}
+                        {state.account?.attempt && ["failed", "expired"].includes(state.account.attempt.phase) && (
+                          <p className="dsh-account-error" role="alert">
+                            登录{state.account.attempt.phase === "expired" ? "已过期" : "失败"}（{state.account.attempt.errorCode || "未知错误"}），可以重新登录。
+                          </p>
+                        )}
+
+                        <div className="dsh-account-actions">
+                          {state.account?.status === "credential-stored" ? (
+                            <>
+                              <button type="button" className="secondary-button" onClick={() => void window.dshDesktop.openExternal(state.account!.links.usageUrl)}>
+                                账号用量
                               </button>
-                            )}
-                            <button 
-                              type="button"
-                              className="text-action-button"
-                              onClick={() => void refreshOfficialConfig()}
-                              title="从 ~/.hermes 重新读取最新的配置和登录状态"
-                            >
-                              刷新状态
+                              <button type="button" className="secondary-button" onClick={() => void window.dshDesktop.openExternal(state.account!.links.topUpUrl)}>
+                                充值
+                              </button>
+                              <button type="button" className="text-action-button danger" onClick={() => void signOutDshAccount()}>
+                                退出账号
+                              </button>
+                            </>
+                          ) : ["initializing", "waiting-browser", "exchanging", "committing"].includes(state.account?.attempt?.phase || "") ? (
+                            <button type="button" className="secondary-button" onClick={() => void window.dshDesktop.cancelAccountSignIn().then(setState)}>
+                              取消登录
                             </button>
-                          </div>
+                          ) : (
+                            <button type="button" className="primary-button" onClick={() => void startDshAccountSignIn()} disabled={state.busy || isLoggingIn}>
+                              {isLoggingIn ? "正在打开浏览器…" : "登录 DeepSeek 账号"}
+                            </button>
+                          )}
                         </div>
-                        <div className="skills-list-container official-mode-container">
-                          <div className="skill-card">
-                            <div className="skill-info">
-                              <strong className="skill-card-header">复用本机 ~/.hermes</strong>
-                              <p className="skill-card-desc">这个模式会直接复用你正常安装 Hermes 后的官方配置、登录态和默认模型。</p>
-                              
-                              {!state.official.isLoggedIn && (
-                                isLoggingIn ? (
-                                  <div className="official-login-progress">
-                                    <span className="hint-title">正在进行官方账号登录：</span>
-                                    {state.official.userCode ? (
-                                      <div className="user-code-display-box">
-                                        <p className="hint-desc">请在弹出的浏览器页面中核对以下授权码：</p>
-                                        <div className="user-code-value">{state.official.userCode}</div>
-                                        <p className="hint-desc" style={{ fontSize: "11px", opacity: 0.7, marginTop: "6px" }}>
-                                          网页端登录成功后，App 会自动重新读取状态并同步。
-                                        </p>
-                                      </div>
-                                    ) : (
-                                      <p className="hint-desc">正在请求官方授权码并唤起浏览器，请稍候...</p>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <div className="official-login-hint">
-                                    <span className="hint-title">如何登录官方账号：</span>
-                                    <p className="hint-desc">
-                                      点击下方“点击登录官方账号”按钮，即可自动唤起浏览器登录。也可以在终端手动执行以下命令：
-                                    </p>
-                                    <code className="hint-code">hermes auth add nous --type oauth</code>
-                                    <p className="hint-desc" style={{ marginTop: "4px" }}>
-                                      登录成功后，界面会自动刷新呈现已登录态。
-                                    </p>
-                                  </div>
-                                )
-                              )}
-                              
-                              {state.official.isLoggedIn && (
-                                <div className="official-account-info">
-                                  <span className="account-info-title">已同步官方账号：</span>
-                                  <span className="account-info-value" title={`用户 ID: ${state.official.rateLimitSource}`}>
-                                    {state.official.subscriptionLabel === "Paid" ? "★ Paid 会员账号" : "Free 免费账号"}
-                                  </span>
-                                </div>
-                              )}
-
-                              <span className="skill-card-path">{state.official.configPath}</span>
-                              <span className="skill-card-path">{state.official.authPath}</span>
-                              <span className="skill-card-path">当前配置默认模型：{state.official.defaultModel}</span>
-                              {state.official.subscriptionLabel === "Free" && state.official.freeRecommendedModels.length > 0 ? (
-                                <span className="skill-card-path">Free 可选：{state.official.freeRecommendedModels.join(" / ")}</span>
-                              ) : null}
-                              {state.official.subscriptionLabel === "Free" &&
-                              state.official.freeRecommendedModels.length > 0 &&
-                              !state.official.freeRecommendedModels.includes(state.official.defaultModel) ? (
-                                <p className="skill-card-desc">注意：你当前 config 默认模型不在 free 推荐列表里，建议改成上面的 free 模型之一。</p>
-                              ) : null}
-                            </div>
-                          </div>
-                          
-                          <div className="official-actions-row">
-                            {state.official.isLoggedIn ? (
-                              <button
-                                type="button"
-                                className="official-btn"
-                                onClick={() => void window.hermesDesktop.openExternal("https://portal.nousresearch.com/")}
-                                title="打开 Nous Portal 网页进行登录、退出或切换账号"
-                              >
-                                管理官方登录
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                className="official-btn primary-style"
-                                onClick={() => void loginOfficialConfig()}
-                                disabled={state.busy || isLoggingIn}
-                                title="启动本地授权并打开浏览器完成登录"
-                              >
-                                {isLoggingIn ? "正在等待浏览器登录..." : "点击登录官方账号"}
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
+                      </section>
+                      </>
                     )}
                   </div>
                 )}
 
-                {activeSettingsTab === "vision" && (
-                  <div className="settings-tab-pane">
-                    <p className="tab-pane-desc">
-                      配置专门的视觉后端，使纯文本基座模型在执行需要图表分析或自动网页浏览的工具（如 <code>browser_vision</code> / <code>vision_analyze</code>）时能够自动调用该模型。
-                    </p>
-
-                    <label>
-                      Model (视觉大模型)
-                      <input
-                        value={draftSettings.visionModel}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            visionModel: event.target.value,
-                          }))
-                        }
-                        placeholder="openai/gpt-4o-mini 或 ollama:llava"
-                      />
-                      <small className="field-hint">
-                        例如：<code>openai/gpt-4o-mini</code> (云端高性价比) 或 <code>llava</code> / <code>qwen2.5-vl</code> (本地 Ollama 免费)
-                      </small>
-                    </label>
-
-                    <label>
-                      API Provider (大模型提供商)
-                      <select
-                        value={draftSettings.visionProvider}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            visionProvider: event.target.value as HermesAppState["settings"]["visionProvider"],
-                          }))
-                        }
-                        className="settings-select"
-                      >
-                        <option value="openai">OpenAI</option>
-                        <option value="openrouter">OpenRouter</option>
-                        <option value="ollama">Ollama (本地私有)</option>
-                        <option value="custom">自定义 OpenAI 兼容接口</option>
-                      </select>
-                    </label>
-
-                    {draftSettings.visionProvider !== "ollama" && (
-                      <label>
-                        API Key (密钥)
-                        <input
-                          type="password"
-                          value={draftSettings.visionApiKey}
-                          onChange={(event) =>
-                            setDraftSettings((current: HermesAppState["settings"]) => ({
-                              ...current,
-                              visionApiKey: event.target.value,
-                            }))
-                          }
-                          placeholder="sk-..."
-                        />
-                      </label>
-                    )}
-
-                    {(draftSettings.visionProvider === "custom" || draftSettings.visionProvider === "ollama" || draftSettings.visionProvider === "openrouter") && (
-                      <label>
-                        API Base URL
-                        <input
-                          value={draftSettings.visionBaseUrl}
-                          onChange={(event) =>
-                            setDraftSettings((current: HermesAppState["settings"]) => ({
-                              ...current,
-                              visionBaseUrl: event.target.value,
-                            }))
-                          }
-                          placeholder={
-                            draftSettings.visionProvider === "ollama"
-                              ? "http://localhost:11434/v1"
-                              : "https://api.example.com/v1"
-                          }
-                        />
-                      </label>
-                    )}
-                  </div>
-                )}
-
-                {activeSettingsTab === "tools" && (
-                  <div className="settings-tab-pane">
-                    <p className="tab-pane-desc">
-                      配置外部辅助工具的 API Key。这些密钥会被自动传递给底层的 Hermes Agent 服务，用以支持网页深度检索、图像生成和语音转文字等核心增强功能。
-                    </p>
-
-                    <h4 className="settings-section-title">网络检索与抓取 (Web Search & Crawl)</h4>
-                    <label>
-                      Firecrawl API Key
-                      <input
-                        type="password"
-                        value={draftSettings.firecrawlApiKey || ""}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            firecrawlApiKey: event.target.value,
-                          }))
-                        }
-                        placeholder="fc-..."
-                      />
-                      <small className="field-hint">
-                        用于网络深度检索、长网页内容抓取和爬虫。可以在 <a href="https://firecrawl.dev/" target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline">firecrawl.dev</a> 申请。
-                      </small>
-                    </label>
-
-                    <label>
-                      Exa API Key
-                      <input
-                        type="password"
-                        value={draftSettings.exaApiKey || ""}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            exaApiKey: event.target.value,
-                          }))
-                        }
-                        placeholder="exa-..."
-                      />
-                      <small className="field-hint">
-                        AI 原生检索和链接提取 Key。可以在 <a href="https://exa.ai/" target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline">exa.ai</a> 申请。
-                      </small>
-                    </label>
-
-                    <h4 className="settings-section-title" style={{ marginTop: "12px" }}>多媒体与语音 (Multimedia & Voice)</h4>
-                    <label>
-                      FAL.ai API Key
-                      <input
-                        type="password"
-                        value={draftSettings.falApiKey || ""}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            falApiKey: event.target.value,
-                          }))
-                        }
-                        placeholder="fal_key-..."
-                      />
-                      <small className="field-hint">
-                        用于文本生成图像等工具（如 <code>image_generate</code>）。可以在 <a href="https://fal.ai/" target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline">fal.ai</a> 申请。
-                      </small>
-                    </label>
-
-                    <label>
-                      OpenAI Voice API Key
-                      <input
-                        type="password"
-                        value={draftSettings.voiceToolsOpenaiKey || ""}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            voiceToolsOpenaiKey: event.target.value,
-                          }))
-                        }
-                        placeholder="sk-..."
-                      />
-                      <small className="field-hint">
-                        专门用于语音消息识别（Whisper）与文本生成语音（TTS）。不影响主对话模型。
-                      </small>
-                    </label>
-
-                    <h4 className="settings-section-title" style={{ marginTop: "12px" }}>云端自动化浏览器 (Cloud Headless Browser)</h4>
-                    <label>
-                      Browserbase API Key
-                      <input
-                        type="password"
-                        value={draftSettings.browserbaseApiKey || ""}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            browserbaseApiKey: event.target.value,
-                          }))
-                        }
-                        placeholder="bb-..."
-                      />
-                      <small className="field-hint">
-                        云端无头浏览器执行。可以在 <a href="https://browserbase.com/" target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline">browserbase.com</a> 申请。
-                      </small>
-                    </label>
-
-                    <label>
-                      Browserbase Project ID
-                      <input
-                        value={draftSettings.browserbaseProjectId || ""}
-                        onChange={(event) =>
-                          setDraftSettings((current: HermesAppState["settings"]) => ({
-                            ...current,
-                            browserbaseProjectId: event.target.value,
-                          }))
-                        }
-                        placeholder="Project ID"
-                      />
-                    </label>
-                  </div>
-                )}
               </div>
 
               {/* Shared Footer Actions */}
               <div className="settings-content-footer">
                 <p className="modal-copy">
-                  配置完成后将自动重新启动后台 DSH 运行时服务。私有模式使用你自己填写的 provider/API key；官方模式复用本机 `~/.dsh` 的登录态和配置。
+                  图片附件、网页检索和本地语音转写仍由 DSH 提供；模型连接可使用 API 或 DeepSeek 账号登录。
                 </p>
                 <div className="modal-actions">
                   <button className="secondary-button" onClick={() => void closeSettingsModal()}>
                     {isLoggingIn ? "取消登录并关闭" : "取消"}
                   </button>
                   <button className="primary-button" onClick={() => void saveSettings()}>
-                    {officialModelDirty ? "保存并切换模型" : "保存并应用"}
+                    保存并应用
                   </button>
                 </div>
               </div>
@@ -3912,19 +4644,73 @@ function App() {
         </div>
       ) : null}
 
+      {permissionConfirmationOpen && (
+        <div
+          className="modal-backdrop"
+          style={{ zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => {
+            if (permissionBusy) return;
+            setPermissionConfirmationOpen(false);
+            setPermissionError(null);
+          }}
+        >
+          <section
+            className="permission-risk-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="permission-risk-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="permission-risk-heading">
+              <span className="permission-risk-icon" aria-hidden="true">!</span>
+              <div>
+                <h3 id="permission-risk-title">启用完全权限？</h3>
+                <p>{state?.activeThreadId ? "此更改只作用于当前会话。" : "此更改会保存为之后新建对话的默认权限。"}</p>
+              </div>
+            </div>
+            <p className="permission-risk-description">
+              完全权限会绕过 DSH 工作区沙箱与一般操作审批。智能体可在当前操作系统用户有权访问的位置读写文件。请只对可信任务启用。
+            </p>
+            <label className="permission-risk-acknowledgement">
+              <input
+                type="checkbox"
+                checked={permissionConfirmationAcknowledged}
+                disabled={permissionBusy}
+                onChange={(event) => setPermissionConfirmationAcknowledged(event.target.checked)}
+              />
+              <span>我已了解完全权限的影响，仍要继续</span>
+            </label>
+            {permissionError && <p className="trae-permission-error" role="alert">{permissionError}</p>}
+            <div className="permission-risk-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={permissionBusy}
+                onClick={() => {
+                  setPermissionConfirmationOpen(false);
+                  setPermissionError(null);
+                }}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="permission-risk-confirm-button"
+                disabled={!permissionConfirmationAcknowledged || permissionBusy}
+                onClick={() => void confirmFullAccessPermission()}
+              >
+                {permissionBusy ? "正在应用…" : "启用完全权限"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {stylePickerSkillName ? (
         <ReportStylePicker
           skillName={stylePickerSkillName}
           onCancel={() => setStylePickerSkillName(null)}
           onSelect={handleReportStyleSelect}
-        />
-      ) : null}
-
-      {isModelSwitching ? (
-        <BusyOverlay
-          title="正在切换模型"
-          detail="模型切换约需 30-60s，在此期间请勿重复点击或继续发送消息。"
-          elapsedSeconds={busyElapsedSeconds}
         />
       ) : null}
 
@@ -3944,7 +4730,7 @@ function App() {
                 <div className="error-modal-icon">⚠️</div>
                 <div>
                   <h3>登录凭证失效 / Refresh Token Expired</h3>
-                  <p style={{ margin: 0, fontSize: "11.5px", color: "#64748b" }}>Hermes Agent 身份验证未通过</p>
+                  <p style={{ margin: 0, fontSize: "11.5px", color: "#64748b" }}>DSH 身份验证未通过</p>
                 </div>
               </div>
               <button
@@ -3966,22 +4752,18 @@ function App() {
               </div>
 
               <p style={{ margin: 0, color: "#475569" }}>
-                后台 Hermes Agent 在准备发起对话时，检测到存储在 <code>~/.hermes/auth.json</code> 中的 Refresh Token 已失效或过期，导致对话无法正常发起。
+                DSH 认证信息可能已失效。检查当前 provider 的 API Key，或在 DeepSeek 账号卡片中重新授权。
               </p>
 
               <div className="error-step-card">
                 <div className="error-step-card-title">
-                  <span>🔑 方法一：在应用界面重新登录（推荐）</span>
+                  <span>🔑 检查 DSH provider 凭据</span>
                 </div>
                 <ol className="error-step-list">
                   <li>打开应用内的 <b>设置 / 模型与账号登录</b> 界面。</li>
-                  <li>点击 <b>重新登录 (Login)</b> 或 <b>退出登录后重新登录</b>。</li>
-                  <li>按照提示在浏览器中完成账号授权，刷新本地凭证。</li>
+                  <li>核对所选 provider 的 API Key 是否有效。</li>
+                  <li>如果使用 DeepSeek 账号，退出后重新登录并在浏览器中完成授权。</li>
                 </ol>
-              </div>
-
-              <div style={{ fontSize: "11px", color: "#64748b", background: "#f8fafc", padding: "8px 12px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
-                💡 <b>终端备选方案：</b> 也可以在系统 Terminal 执行 <code>hermes login</code> 命令手动完成刷新。
               </div>
             </div>
 
@@ -4000,11 +4782,11 @@ function App() {
                   setDismissedError(state?.error || null);
                   setSettingsOpen(true);
                   setActiveSettingsTab("chat");
-                  void refreshOfficialConfig();
+                  void window.dshDesktop?.getState().then(setState);
                 }}
                 style={{ background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)", borderColor: "#1d4ed8" }}
               >
-                前往重新登录（设置 → 账号管理）
+                前往账号设置（设置 → 模型与账号登录）
               </button>
             </div>
           </div>
@@ -4141,6 +4923,100 @@ function ReportStylePicker({
   );
 }
 
+function ArchivedThreadsPage({
+  threads,
+  isBusy,
+  onRestore,
+  onDelete,
+  onNewChat,
+}: {
+  threads: DshThreadSummary[];
+  isBusy: boolean;
+  onRestore: (threadId: string) => void;
+  onDelete: (threadId: string, title: string) => void;
+  onNewChat: () => void;
+}) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const orderedThreads = useMemo(
+    () => [...threads].sort((a, b) => b.updatedAt - a.updatedAt),
+    [threads]
+  );
+  const filteredThreads = useMemo(() => {
+    const query = searchQuery.trim().toLocaleLowerCase();
+    if (!query) return orderedThreads;
+    return orderedThreads.filter((thread) =>
+      `${thread.name || thread.preview || ""} ${thread.cwd || ""}`.toLocaleLowerCase().includes(query)
+    );
+  }, [orderedThreads, searchQuery]);
+
+  return (
+    <main className="archive-page-view">
+      <header className="archive-page-header">
+        <div>
+          <p className="eyebrow">对话管理</p>
+          <h2>已归档对话</h2>
+          <p className="archive-page-subtitle">归档会把对话从任务列表隐藏；恢复后会重新出现在任务列表中。</p>
+        </div>
+        <button type="button" className="primary-button" onClick={onNewChat}>新建任务</button>
+      </header>
+
+      <label className="archive-search-label">
+        <span className="sr-only">搜索已归档对话</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-4-4" />
+        </svg>
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          placeholder="按对话标题或工作区搜索"
+        />
+      </label>
+
+      <p className="archive-page-note">
+        归档可随时恢复。彻底删除会移除会话日志和工作区关联且无法恢复；DSH 全局附件库中的共享数据或缓存可能仍会保留。
+      </p>
+
+      {filteredThreads.length === 0 ? (
+        <div className="archive-page-empty">
+          <span aria-hidden="true">▱</span>
+          <h3>{threads.length === 0 ? "暂无已归档对话" : "没有匹配的对话"}</h3>
+          <p>{threads.length === 0 ? "从任务列表移除的对话会保留在这里，可随时恢复。" : "试试其他标题或工作区名称。"}</p>
+        </div>
+      ) : (
+        <div className="archive-thread-list">
+          {filteredThreads.map((thread) => {
+            const title = formatCleanTaskTitle(thread.name || thread.preview || "未命名对话");
+            return (
+              <article className="archive-thread-card" key={thread.id}>
+                <div className="archive-thread-copy">
+                  <h3 title={title}>{title}</h3>
+                  <p>{thread.cwd || "默认工作区"}</p>
+                </div>
+                <div className="archive-thread-actions">
+                  <button type="button" className="secondary-button" onClick={() => onRestore(thread.id)} disabled={isBusy}>
+                    恢复到任务列表
+                  </button>
+                  <button
+                    type="button"
+                    className="archive-delete-button"
+                    onClick={() => onDelete(thread.id, title)}
+                    disabled={isBusy}
+                    title="永久删除此对话及本地记录"
+                  >
+                    彻底删除
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </main>
+  );
+}
+
 function SkillsPageView({
   skills,
   searchQuery,
@@ -4149,7 +5025,7 @@ function SkillsPageView({
   onUnregisterSkill,
   onUseSkill,
 }: {
-  skills: HermesAppState["skills"];
+  skills: DshAppState["skills"];
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   onImportSkill: () => void;

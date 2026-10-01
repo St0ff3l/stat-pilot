@@ -8,7 +8,7 @@ on:
         required: false
         type: string
       release_tag:
-        description: Release tag to publish when reusing artifacts
+        description: Release tag to publish for a manual run (required to publish)
         required: false
         type: string
   push:
@@ -74,25 +74,32 @@ jobs:
           test "$(uname -m)" = "aarch64"
           test "$(dpkg --print-architecture)" = "arm64"
 
-      - name: Build renderer and server bundles
+      - name: Build renderer
         run: npm run build
+
+      - name: Stage target-platform Node runtime for DSH
+        run: npm run stage:dsh-node
 
       - name: Verify bundled DSH runtime
         run: npm run verify:runtime
 
       - name: Verify release tag matches package version
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
-          expected="${GITHUB_REF_NAME#v}"
-          actual="$(node -p "require('./package.json').version")"
-          if [ "$expected" != "$actual" ]; then
-            echo "Tag version $expected does not match package version $actual"
+          $expected = "v$((Get-Content package.json -Raw | ConvertFrom-Json).version)"
+          if ($env:RELEASE_TAG -ne $expected) {
+            Write-Error "Release tag $($env:RELEASE_TAG) does not match package version $expected"
             exit 1
-          fi
+          }
 
       - name: Package installer
         run: npx electron-builder ${{ matrix.builder_args }} --publish never
+
+      - name: Verify packaged DSH runtime
+        run: npm run verify:packaged-runtime
 
       - name: Validate Debian package metadata and contents
         if: startsWith(matrix.name, 'Linux')
@@ -112,8 +119,11 @@ jobs:
   release:
     name: Publish GitHub Release
     if: >-
-      ${{ needs.build.result == 'success' && (startsWith(github.ref, 'refs/tags/v') ||
-      (github.event_name == 'workflow_dispatch' && inputs.artifact_run_id != '')) }}
+      ${{ always() &&
+      (needs.build.result == 'success' ||
+      (github.event_name == 'workflow_dispatch' && inputs.artifact_run_id != '' && needs.build.result == 'skipped')) &&
+      (startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) }}
     needs: build
     runs-on: ubuntu-22.04
     permissions:
@@ -129,6 +139,29 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.artifact_run_id || github.run_id }}
+
+      - name: Verify installer versions match release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        working-directory: release-assets
+        run: |
+          version="${RELEASE_TAG#v}"
+          if [[ "$RELEASE_TAG" != "v$version" ]]; then
+            echo "Release tag must use the v<version> format: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          installers=(stat-pilot-*)
+          if [[ ${#installers[@]} -ne 5 ]]; then
+            echo "Expected 5 platform installers, found ${#installers[@]}" >&2
+            exit 1
+          fi
+          for installer in "${installers[@]}"; do
+            if [[ "$installer" != "stat-pilot-$version-"* ]]; then
+              echo "Installer does not match release version $version: $installer" >&2
+              exit 1
+            fi
+          done
 
       - name: Generate checksums
         working-directory: release-assets

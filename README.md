@@ -1,66 +1,46 @@
-# StatPilot（深小统）
+# 深小统（StatPilot）
 
-A desktop Hermes client for Shenzhen government intelligence work, built with Electron and a Hermes runtime bridge.
+面向深圳市统计政务工作的 Electron 桌面工作台。主进程启动本地 DeepSeek Harness（DSH），通过 DSH RPC 和事件流管理对话、模型、技能与授权。
 
-## What it does
+## 功能
 
-- Connects to a local Hermes runtime from the Electron main process
-- Shows conversation history in a left sidebar
-- Shows a chat-style conversation pane on the right
-- Hides model and workspace settings behind a settings dialog
-- Persists settings locally in Electron user data
+- 对话历史、归档列表、恢复与彻底删除
+- DSH 原生图片和文件附件
+- DSH 本地 SenseVoice 语音转写，结果进入草稿后由用户确认发送
+- DSH 会话消息流、工具活动、任务授权和澄清
+- 工作区、技能和模型设置
+- 本地保存应用设置与 DSH 会话数据
 
-## Run locally
+归档页固定在侧边栏中，可搜索、恢复或彻底删除对话。归档和恢复使用 DSH 原生接口；永久删除使用 MIT 插件 [`dsh-archived-chats` 1.4.5](https://github.com/Ultronen/dsh-archived-chats)，需要二次确认，并由插件清理 DSH 会话记录。
 
-```bash
-npm install
-npm run hermes:bootstrap
-npm run dev
-```
+聊天输入框的语音按钮使用 DSH 本地 SenseVoice。首次使用需确认下载并准备模型；录音经本地 DSH 转写为草稿，不会自动发送。麦克风权限仅授予应用主窗口的纯音频请求。
 
-That installs Hermes into `.runtime/` inside this repo, runs the Hermes setup wizard, and then starts Vite and Electron together.
-
-The `.runtime/` directory itself stays gitignored. Any project-specific Hermes customizations should be captured in tracked patch scripts under `scripts/` so they can be re-applied deterministically after bootstrap and before packaging.
-
-When you package the app, include `.runtime/` alongside the Electron resources so the bundled Hermes binary can be found automatically. This project now does that through `electron-builder` `extraResources`.
-
-The installers produced by the release workflow contain a platform-specific Hermes runtime. On first launch, the app copies that bundled runtime into its private application-data directory; it does not depend on a separately installed `hermes` command. The build excludes the local `.runtime/hermes-home` so personal sessions, login state, and API keys are never bundled. A GitHub **Source code** ZIP does not contain `.runtime`, because that directory is generated and gitignored, so it cannot be used as a ready-to-run installer without running the platform bootstrap first.
-
-The release workflow also builds a native Linux ARM64 `.deb` on an ARM64 runner for Debian-based 麒麟桌面系统 (including the ARM edition). This target bundles an ARM64 Electron binary and an ARM64 Hermes/Python runtime; use the `Linux ARM64 deb (Kylin)` asset on a 麒麟 ARM64 machine, not the Linux x64 asset.
-
-On macOS, dragging the `.app` from the `.dmg` into `Applications` does not run installer hooks by itself. Instead, on the first app launch, the Electron main process copies the bundled `.runtime/` from the app's `Resources` directory into the user's private app-data directory and starts Hermes from there automatically.
-
-Release installers are built only by GitHub Actions on the matching target runner. Push a version tag such as `v0.1.0`, or start the `Build and release installers` workflow manually; do not build a Release installer locally. The workflow runs the platform bootstrap, verifies the bundled Hermes runtime, packages the installer, and uploads the artifacts.
-
-For local development only:
+## 本地开发
 
 ```bash
 npm install
-npm run hermes:bootstrap
 npm run dev
 ```
 
-## Desktop settings
+`npm run dev` 同时启动 Vite 和 Electron。应用从 `@deepseek-ai/dsh` 启动 DSH CLI。可以通过 `DSH_HOME` 指定 DSH 数据目录；否则会复用已有的 `~/.dsh`，没有该目录时使用 Electron 私有数据目录中的 `dsh-home`。
 
-Open the settings dialog from the top-right button in the app and set:
+## 运行配置
 
-- `Hermes Binary`
-- `Model`
-- `Workspace CWD`
+在应用设置中配置 provider、API Key、模型和工作区。DeepSeek 默认模型为 `deepseek-flash`（DeepSeek V4.1 Flash）；官方 API 当前也会将 `deepseek-v4-pro` 路由到 V4.1 Flash，因此该 ID 仅作为兼容选项保留。旧 ID `deepseek-v4-flash` 和 `deepseek-v4-flash-vision-exp` 也按 DeepSeek 兼容规则归一到 V4.1 Flash。OpenRouter 和自定义 Provider 的模型 ID 仍按各自服务处理。账号授权、provider 配置和 API 凭据通过 DSH 的 Account、Settings 与 Credentials 接口管理。
 
-The model selector is intentionally hidden from the main screen so the app stays focused on the agent workflow.
+## 发布
 
-If `Hermes Binary` is not available, the app will try `HERMES_BIN`, then `hermes`, then `CODEX_BIN`, then `codex`.
+安装包只通过 GitHub Actions 在目标平台构建，不要在本机运行 `npm run dist:*` 或直接运行 `electron-builder`。工作流会在目标平台准备并验证 DSH，再打包该平台的 Electron、Node.js、DSH 依赖、技能和规则。Linux ARM64 `.deb` 在原生 ARM64 Runner 构建。
 
-If you want a non-interactive bootstrap, use `npm run hermes:bootstrap:quick`.
+发布细节见 [docs/RELEASING.md](docs/RELEASING.md)。
 
-## Project structure
+## 目录
 
 ```text
-electron/            Electron main and preload entrypoints
-src/                 React renderer UI
-server/              Legacy backend helpers and protocol types
-skills/              Local project skills
-data/                Local JSON article store
-docs/                Project context and handoff notes
+electron/            Electron 主进程、preload 和 DSH 客户端
+src/                 React 渲染界面
+scripts/             DSH 运行时准备与 Debian 校验脚本
+skills/              内置技能
+rules/               工作台规则
+docs/                项目上下文和发布说明
 ```

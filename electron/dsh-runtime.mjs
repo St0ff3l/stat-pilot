@@ -2,7 +2,7 @@ import { execSync, spawn } from "node:child_process";
 import readline from "node:readline";
 import path from "node:path";
 import os from "node:os";
-import { existsSync, promises as fs, readdirSync } from "node:fs";
+import { existsSync, lstatSync, promises as fs, readdirSync } from "node:fs";
 import electron from "electron";
 import { fileURLToPath } from "node:url";
 
@@ -10,25 +10,178 @@ const app = typeof electron === "object" && electron?.app ? electron.app : null;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const ARCHIVED_CHATS_BUNDLE = "dsh-archived-chats";
+const VOICE_INPUT_BUNDLE = "@deepseek-ai/dsh-experimental-voice-input-bundle";
+const DEFAULT_WEB_PROFILE_BUNDLES = ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"];
+
+function resolveAppNodeModule(packageName) {
+  const bundledResources = process.env.STAT_PILOT_VERIFY_RESOURCES || (app?.isPackaged ? process.resourcesPath : "");
+  const candidates = bundledResources
+    ? [
+      path.resolve(bundledResources, "app.asar.unpacked/node_modules", packageName),
+      path.resolve(__dirname, "../node_modules", packageName),
+    ]
+    : [path.resolve(__dirname, "../node_modules", packageName)];
+
+  return candidates.find((candidate) => existsSync(path.join(candidate, "package.json"))) || candidates[0];
+}
+
+async function ensureProfileBundleLink(profileDir, packageDir, expectedManifest) {
+  const modulesDir = path.join(profileDir, "node_modules");
+  const packageLink = path.join(modulesDir, ARCHIVED_CHATS_BUNDLE);
+  await fs.mkdir(modulesDir, { recursive: true });
+
+  try {
+    const installedManifest = JSON.parse(await fs.readFile(path.join(packageLink, "package.json"), "utf8"));
+    if (installedManifest.name !== ARCHIVED_CHATS_BUNDLE || installedManifest.version !== expectedManifest.version) {
+      throw new Error(
+        `DSH Web profile 已安装冲突的归档插件 ${installedManifest.name || "未知包"}@${installedManifest.version || "未知版本"}`
+      );
+    }
+    return;
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+
+  const packageRealPath = await fs.realpath(packageDir);
+  try {
+    await fs.symlink(packageRealPath, packageLink, process.platform === "win32" ? "junction" : "dir");
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    const installedManifest = JSON.parse(await fs.readFile(path.join(packageLink, "package.json"), "utf8"));
+    if (installedManifest.name !== ARCHIVED_CHATS_BUNDLE || installedManifest.version !== expectedManifest.version) {
+      throw new Error(
+        `DSH Web profile 已安装冲突的归档插件 ${installedManifest.name || "未知包"}@${installedManifest.version || "未知版本"}`
+      );
+    }
+  }
+}
+
+/** Enable app-owned bundles while preserving other DSH profile choices. */
+async function ensureWebProfileBundles(dshHome) {
+  const pluginDir = resolveAppNodeModule(ARCHIVED_CHATS_BUNDLE);
+  const pluginManifestPath = path.join(pluginDir, "package.json");
+  if (!existsSync(pluginManifestPath)) {
+    throw new Error(`找不到归档管理 DSH 插件: ${pluginManifestPath}`);
+  }
+  const pluginManifest = JSON.parse(await fs.readFile(pluginManifestPath, "utf8"));
+  const voiceBundleManifestPath = path.join(resolveAppNodeModule(VOICE_INPUT_BUNDLE), "package.json");
+  if (!existsSync(voiceBundleManifestPath)) {
+    throw new Error(`找不到 DSH 本地语音 Bundle: ${voiceBundleManifestPath}`);
+  }
+
+  const profileDir = path.join(dshHome, "profiles", "web");
+  const profileManifestPath = path.join(profileDir, "package.json");
+  await fs.mkdir(profileDir, { recursive: true });
+
+  let manifest;
+  try {
+    manifest = JSON.parse(await fs.readFile(profileManifestPath, "utf8"));
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw new Error(`无法读取 DSH Web profile 配置: ${profileManifestPath}`, { cause: error });
+    }
+    manifest = {
+      name: "dsh-profile-web",
+      private: true,
+      dependencies: {},
+      dsh: { profile: { bundles: [...DEFAULT_WEB_PROFILE_BUNDLES] } },
+    };
+
+    const profilePatchPath = path.join(profileDir, "cordis.patch.yml");
+    if (!existsSync(profilePatchPath)) {
+      await fs.writeFile(profilePatchPath, "# DSH Web profile patch layer.\n[]\n", "utf8");
+    }
+    const workspacePath = path.join(profileDir, "pnpm-workspace.yaml");
+    if (!existsSync(workspacePath)) {
+      await fs.writeFile(workspacePath, "packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n", "utf8");
+    }
+  }
+
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    throw new Error(`DSH Web profile 配置格式无效: ${profileManifestPath}`);
+  }
+
+  if (manifest.dsh !== undefined && (!manifest.dsh || typeof manifest.dsh !== "object" || Array.isArray(manifest.dsh))) {
+    throw new Error(`DSH Web profile 的 dsh 配置格式无效: ${profileManifestPath}`);
+  }
+  if (manifest.dependencies !== undefined
+    && (!manifest.dependencies || typeof manifest.dependencies !== "object" || Array.isArray(manifest.dependencies))) {
+    throw new Error(`DSH Web profile 的 dependencies 配置格式无效: ${profileManifestPath}`);
+  }
+  const dependencies = manifest.dependencies && typeof manifest.dependencies === "object" ? manifest.dependencies : {};
+  if (dependencies[ARCHIVED_CHATS_BUNDLE] !== undefined
+    && (typeof dependencies[ARCHIVED_CHATS_BUNDLE] !== "string" || dependencies[ARCHIVED_CHATS_BUNDLE] === "")) {
+    throw new Error(`DSH Web profile 的 ${ARCHIVED_CHATS_BUNDLE} 依赖格式无效: ${profileManifestPath}`);
+  }
+  const dshConfig = manifest.dsh && typeof manifest.dsh === "object" ? manifest.dsh : {};
+  if (dshConfig.profile !== undefined && (!dshConfig.profile || typeof dshConfig.profile !== "object" || Array.isArray(dshConfig.profile))) {
+    throw new Error(`DSH Web profile 的 profile 配置格式无效: ${profileManifestPath}`);
+  }
+  const profileConfig = dshConfig.profile && typeof dshConfig.profile === "object" ? dshConfig.profile : {};
+  if (profileConfig.bundles !== undefined
+    && (!Array.isArray(profileConfig.bundles) || profileConfig.bundles.some((bundle) => typeof bundle !== "string" || bundle === ""))) {
+    throw new Error(`DSH Web profile 的 bundles 配置格式无效: ${profileManifestPath}`);
+  }
+  const bundles = profileConfig.bundles === undefined
+    ? [...DEFAULT_WEB_PROFILE_BUNDLES]
+    : [...profileConfig.bundles];
+  const missingBundles = [ARCHIVED_CHATS_BUNDLE, VOICE_INPUT_BUNDLE].filter((bundle) => !bundles.includes(bundle));
+  await ensureProfileBundleLink(profileDir, pluginDir, pluginManifest);
+
+  const hasArchiveDependency = dependencies[ARCHIVED_CHATS_BUNDLE] !== undefined;
+  const nextDependencies = hasArchiveDependency
+    ? dependencies
+    : { ...dependencies, [ARCHIVED_CHATS_BUNDLE]: pluginManifest.version };
+  if (missingBundles.length > 0 || !hasArchiveDependency || manifest.dependencies === undefined) {
+    bundles.push(...missingBundles);
+    const nextManifest = {
+      ...manifest,
+      dependencies: nextDependencies,
+      dsh: {
+        ...dshConfig,
+        profile: { ...profileConfig, bundles },
+      },
+    };
+    const temporaryPath = `${profileManifestPath}.tmp-${process.pid}`;
+    try {
+      await fs.writeFile(temporaryPath, `${JSON.stringify(nextManifest, null, 2)}\n`, "utf8");
+      await fs.rename(temporaryPath, profileManifestPath);
+    } catch (error) {
+      await fs.rm(temporaryPath, { force: true }).catch(() => {});
+      throw error;
+    }
+  }
+}
+
 /**
  * Resolves a standalone Node.js binary path.
  * Note: DSH (via node-addon-require-builtin) cannot run under Electron runtime
  * because Electron modifies V8 internal isolate/context layout.
  */
 export function resolveNodeBinaryPath() {
+  const resPath = process.resourcesPath || "";
+  if (resPath) {
+    const packagedNode = path.join(resPath, "dsh-node.exe");
+    if (app?.isPackaged && existsSync(packagedNode)) {
+      return packagedNode;
+    }
+  }
+
   if (process.env.DSH_NODE_BIN && existsSync(process.env.DSH_NODE_BIN)) {
     return process.env.DSH_NODE_BIN;
   }
 
-  // 1. Packaged resource candidate
-  const resPath = process.resourcesPath || "";
+  // 1. Packaged resource candidate (also useful to inspect a package from Node).
   if (resPath) {
-    const packagedNode = process.platform === "win32"
-      ? path.join(resPath, "node.exe")
-      : path.join(resPath, "node");
-    if (existsSync(packagedNode)) {
-      return packagedNode;
-    }
+    const packagedNode = path.join(resPath, "dsh-node.exe");
+    if (existsSync(packagedNode)) return packagedNode;
+  }
+
+  // Release CI stages a standalone Node binary here before packaging.
+  const stagedNode = path.resolve(__dirname, "../.runtime/dsh-node.exe");
+  if (existsSync(stagedNode)) {
+    return stagedNode;
   }
 
   // 2. Try which/where
@@ -105,20 +258,30 @@ export function resolveDshBinaryPath(customPath) {
 
   const appPath = typeof app?.getAppPath === "function" ? app.getAppPath() : "";
   const resPath = process.resourcesPath || "";
+  const unpackedDsh = resPath
+    ? path.join(resPath, "app.asar.unpacked", "node_modules/@deepseek-ai/dsh/lib/bin.js")
+    : "";
+  const unpackedAppDsh = appPath
+    ? path.resolve(appPath, "../app.asar.unpacked/node_modules/@deepseek-ai/dsh/lib/bin.js")
+    : "";
+  const localDsh = path.resolve(__dirname, "../node_modules/@deepseek-ai/dsh/lib/bin.js");
 
-  const candidates = [
-    // Development or local node_modules
-    path.resolve(__dirname, "../node_modules/@deepseek-ai/dsh/lib/bin.js"),
-    // Electron packaged extraResources / unpacked
-    path.resolve(resPath, "app.asar.unpacked/node_modules/@deepseek-ai/dsh/lib/bin.js"),
-    path.resolve(resPath, "node_modules/@deepseek-ai/dsh/lib/bin.js"),
-    ...(appPath ? [
-      path.resolve(appPath, "../app.asar.unpacked/node_modules/@deepseek-ai/dsh/lib/bin.js"),
-      path.resolve(appPath, "node_modules/@deepseek-ai/dsh/lib/bin.js"),
-    ] : []),
-    // macOS DSH Desktop fallback if available
-    "/Applications/DSH Desktop.app/Contents/Resources/app.asar.unpacked/node_modules/@deepseek-ai/dsh/lib/bin.js",
-  ];
+  // DSH runs in a standalone Node process, which cannot read Electron's
+  // virtual app.asar filesystem. Prefer the physical unpacked tree whenever
+  // this is a packaged Electron app.
+  const candidates = app?.isPackaged
+    ? [
+      unpackedDsh,
+      path.resolve(resPath, "node_modules/@deepseek-ai/dsh/lib/bin.js"),
+      unpackedAppDsh,
+      localDsh,
+    ]
+    : [
+      localDsh,
+      unpackedDsh,
+      path.resolve(resPath, "node_modules/@deepseek-ai/dsh/lib/bin.js"),
+      unpackedAppDsh,
+    ];
 
   for (const candidate of candidates) {
     if (candidate && existsSync(candidate)) {
@@ -133,21 +296,44 @@ export function resolveDshBinaryPath(customPath) {
  * Resolves the DSH Home directory.
  */
 export function getDshHomeDir() {
-  if (process.env.DSH_HOME && existsSync(process.env.DSH_HOME)) {
-    return process.env.DSH_HOME;
-  }
-
-  const home = typeof app?.getPath === "function" ? app.getPath("home") : os.homedir();
-  const userHomeDsh = path.join(home, ".dsh");
-  if (existsSync(userHomeDsh)) {
-    return userHomeDsh;
+  // DSH_HOME may point at DSH Desktop's data. Only honor this app-specific
+  // override; otherwise keep StatPilot's sessions, credentials, and profiles
+  // under its own Electron userData directory.
+  const override = process.env.STAT_PILOT_DSH_HOME?.trim();
+  if (override) {
+    return path.resolve(override);
   }
 
   if (typeof app?.getPath === "function") {
     return path.join(app.getPath("userData"), "dsh-home");
   }
 
-  return path.join(home, ".stat-pilot", "dsh-home");
+  return path.join(os.homedir(), ".stat-pilot", "dsh-home");
+}
+
+/** Prefer PowerShell 7 for DSH's Windows terminal, then Windows PowerShell 5.1. */
+export function resolveWindowsDshTerminalShell(env = process.env) {
+  const programFiles = env.ProgramFiles || "C:\\Program Files";
+  const systemRoot = env.SystemRoot || "C:\\Windows";
+  const pathEntries = (env.PATH || "")
+    .split(path.delimiter)
+    .map((entry) => entry.trim().replace(/^"|"$/g, ""))
+    .filter(Boolean);
+  const candidates = [
+    path.join(programFiles, "PowerShell", "7", "pwsh.exe"),
+    ...pathEntries.map((entry) => path.join(entry, "pwsh.exe")),
+    path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    ...pathEntries.map((entry) => path.join(entry, "powershell.exe")),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const stat = lstatSync(candidate);
+      if (stat.isFile() || stat.isSymbolicLink()) return path.resolve(candidate);
+    } catch {}
+  }
+
+  return null;
 }
 
 const SHENXIAOTONG_PERSONA_PREFIX = `你是“深小统”，深圳市统计局智能工作台。
@@ -175,7 +361,7 @@ const SHENXIAOTONG_INSTRUCTIONS = `# 深小统（深圳市统计局智能工作�
 
 ## 四、文件输出规范
 - 未明确指定输出路径时，所有抓取结果、周报、公文草案、HTML 报表及导出数据统一保存至当前工作区下的 \`output/\` 目录（单数），不得直接写入工作区根目录。
-- 生成文件后，在回复末尾提供可点击的文件链接或输出目录链接：\`[打开输出目录](file:///.../output/)\`。
+- 生成文件后，必须检查实际目标文件存在且非空，再在回复末尾写明文件名和工作区相对路径。若没有写入或检查失败，明确说明未生成，不要声称成功。不要自行构造 file://、localhost 或 127.0.0.1 形式的输出目录链接；用户可通过工作台的原生“打开输出目录”按钮打开。
 
 ## 五、公文与统计风格规范
 - **文风**：克制、严谨、平实，符合政务公文规范；先事实依据，后分析建议。
@@ -185,39 +371,66 @@ const SHENXIAOTONG_INSTRUCTIONS = `# 深小统（深圳市统计局智能工作�
 /**
  * Ensures Shen Xiao Tong's private persona and workspace instructions are active in DSH.
  */
-export async function ensureShenXiaoTongInstructions(dshHome) {
-  await fs.mkdir(dshHome, { recursive: true });
+export async function ensureShenXiaoTongInstructions(appRuntimeDir) {
+  await fs.mkdir(appRuntimeDir, { recursive: true });
 
-  // 1. Write user-global AGENTS.md for dsh-agent-instructions baseline
-  const agentsPath = path.join(dshHome, "AGENTS.md");
-  await fs.writeFile(agentsPath, SHENXIAOTONG_INSTRUCTIONS, "utf8");
-
-  // 2. Write patch.yml to override system-prompt personaPrefix and disable harness:identity
-  const patchPath = path.join(dshHome, "patch.yml");
+  // Keep the product prompt in app-owned storage; DSH_HOME may belong to the user.
+  const patchPath = path.join(appRuntimeDir, "shenxiaotong.patch.yml");
+  const appPersona = `${SHENXIAOTONG_PERSONA_PREFIX}\n\n${SHENXIAOTONG_INSTRUCTIONS}`;
   const patchContent = [
     "- id: system-prompt",
     "  config:",
     "    includeHarnessIdentity: false",
-    `    personaPrefix: ${JSON.stringify(SHENXIAOTONG_PERSONA_PREFIX)}`,
+    `    personaPrefix: ${JSON.stringify(appPersona)}`,
     "    personaSuffix: Your working directory is {{cwd}}.",
     "",
   ].join("\n");
   await fs.writeFile(patchPath, patchContent, "utf8");
 
-  console.log("[dsh-runtime] Configured 深小统 persona & instructions at:", dshHome);
+  console.log("[dsh-runtime] Configured app-owned 深小统 persona overlay at:", patchPath);
   return patchPath;
 }
 
 /**
  * Synchronizes built-in stat-pilot skills into $DSH_HOME/skills.
  */
+async function removePlatformMetadata(directory) {
+  let entries;
+  try {
+    entries = await fs.readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+
+  for (const entry of entries) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.name.startsWith("._") || entry.name === ".DS_Store") {
+      await fs.rm(entryPath, { recursive: true, force: true });
+    } else if (entry.isDirectory()) {
+      await removePlatformMetadata(entryPath);
+    }
+  }
+}
+
+export async function copySkillDirectoryWithoutPlatformMetadata(sourcePath, destinationPath) {
+  await fs.cp(sourcePath, destinationPath, {
+    recursive: true,
+    force: true,
+    filter: (entryPath) => {
+      const name = path.basename(entryPath);
+      return !name.startsWith("._") && name !== ".DS_Store";
+    },
+  });
+}
+
 export async function syncBuiltinSkills(dshHome) {
   const dshSkillsDir = path.join(dshHome, "skills");
   await fs.mkdir(dshSkillsDir, { recursive: true });
+  await removePlatformMetadata(dshSkillsDir);
 
-  const appRoot = app?.isPackaged
-    ? process.resourcesPath
-    : path.resolve(__dirname, "..");
+  const appRoot = process.env.STAT_PILOT_VERIFY_RESOURCES
+    || (app?.isPackaged ? process.resourcesPath : path.resolve(__dirname, ".."));
   const srcSkillsDir = path.join(appRoot, "skills");
 
   if (!existsSync(srcSkillsDir)) {
@@ -225,30 +438,8 @@ export async function syncBuiltinSkills(dshHome) {
   }
 
   try {
-    // 1. Clean up legacy underscore directories from dshHome/skills so DSH won't reject them
-    const legacyUnderscoreDirs = [
-      "gov_official_document_drafting",
-      "info_digest_html",
-      "price_index_gdp_impact",
-      "source_verification",
-      "weekly_report",
-    ];
-    for (const legacyDir of legacyUnderscoreDirs) {
-      const p = path.join(dshSkillsDir, legacyDir);
-      if (existsSync(p)) {
-        await fs.rm(p, { recursive: true, force: true }).catch(() => {});
-      }
-    }
-
-    // 2. Clean macOS AppleDouble and metadata files
-    const cleanEntries = await fs.readdir(dshSkillsDir, { withFileTypes: true }).catch(() => []);
-    for (const entry of cleanEntries) {
-      if (entry.name.startsWith("._") || entry.name === ".DS_Store") {
-        await fs.rm(path.join(dshSkillsDir, entry.name), { recursive: true, force: true }).catch(() => {});
-      }
-    }
-
-    // 3. Copy built-in skills
+    // Copy app skills only when the DSH home does not already own that name.
+    // Filter recursively so DSH never indexes AppleDouble or Finder metadata.
     const entries = await fs.readdir(srcSkillsDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name.startsWith("._")) {
@@ -258,7 +449,8 @@ export async function syncBuiltinSkills(dshHome) {
       const srcDir = path.join(srcSkillsDir, entry.name);
       const destDir = path.join(dshSkillsDir, entry.name);
 
-      await fs.cp(srcDir, destDir, { recursive: true, force: true });
+      if (existsSync(destDir)) continue;
+      await copySkillDirectoryWithoutPlatformMetadata(srcDir, destDir);
     }
   } catch (error) {
     console.warn("[dsh-runtime] Failed to sync skills:", error);
@@ -270,7 +462,8 @@ export async function syncBuiltinSkills(dshHome) {
  */
 export async function scanLocalSkills(dshHome) {
   const dshSkillsDir = path.join(dshHome, "skills");
-  const appRoot = app?.isPackaged ? process.resourcesPath : path.resolve(__dirname, "..");
+  const appRoot = process.env.STAT_PILOT_VERIFY_RESOURCES
+    || (app?.isPackaged ? process.resourcesPath : path.resolve(__dirname, ".."));
   const searchDirs = [dshSkillsDir, path.join(appRoot, "skills")];
 
   const seen = new Set();
@@ -329,7 +522,7 @@ export async function scanLocalSkills(dshHome) {
  * Manages the DSH subprocess lifecycle.
  */
 export class DshRuntimeManager {
-  constructor() {
+  constructor({ appRuntimeDir = null } = {}) {
     this.process = null;
     this.port = null;
     this.host = null;
@@ -338,6 +531,7 @@ export class DshRuntimeManager {
     this.tokenUrl = null;
     this.isRunning = false;
     this.dshHome = null;
+    this.appRuntimeDir = appRuntimeDir;
   }
 
   async start(settings = {}) {
@@ -350,7 +544,7 @@ export class DshRuntimeManager {
       };
     }
 
-    const dshBin = resolveDshBinaryPath(settings.dshBin || settings.hermesBin);
+    const dshBin = resolveDshBinaryPath(settings.dshBin);
     if (!existsSync(dshBin)) {
       throw new Error(`找不到 DSH 运行时入口: ${dshBin}`);
     }
@@ -358,10 +552,24 @@ export class DshRuntimeManager {
     const nodeBin = resolveNodeBinaryPath();
     console.log("[dsh-runtime] Using Node binary:", nodeBin);
 
+    const windowsTerminalShell = process.platform === "win32"
+      ? resolveWindowsDshTerminalShell()
+      : null;
+    if (process.platform === "win32" && !windowsTerminalShell) {
+      throw new Error("Windows DSH 终端需要 pwsh.exe 或 powershell.exe，但两者都未找到");
+    }
+    if (windowsTerminalShell) {
+      console.log("[dsh-runtime] Using PowerShell as the Windows DSH terminal default:", windowsTerminalShell);
+    }
+
     this.dshHome = getDshHomeDir();
     await fs.mkdir(this.dshHome, { recursive: true });
+    await ensureWebProfileBundles(this.dshHome);
     await syncBuiltinSkills(this.dshHome);
-    const patchPath = await ensureShenXiaoTongInstructions(this.dshHome);
+    const appRuntimeDir = this.appRuntimeDir || (app
+      ? path.join(app.getPath("userData"), "dsh-runtime")
+      : path.join(os.homedir(), ".stat-pilot", "dsh-runtime"));
+    const patchPath = await ensureShenXiaoTongInstructions(appRuntimeDir);
 
     const nodeDir = path.dirname(nodeBin);
     const extraPaths = process.platform === "win32"
@@ -370,17 +578,22 @@ export class DshRuntimeManager {
     const currentPath = process.env.PATH || "";
     const mergedPath = Array.from(new Set([...extraPaths, ...currentPath.split(path.delimiter)])).filter(Boolean).join(path.delimiter);
 
-    const env = {
-      ...process.env,
-      PATH: mergedPath,
-      DSH_HOME: this.dshHome,
-    };
-    delete env.ELECTRON_RUN_AS_NODE;
-
-    const apiKey = (settings.apiKey || process.env.DEEPSEEK_API_KEY || "").trim();
-    if (apiKey) {
-      env.DEEPSEEK_API_KEY = apiKey;
+    const env = { ...process.env };
+    if (process.platform === "win32") {
+      const setWindowsEnvironmentVariable = (name, value) => {
+        for (const key of Object.keys(env)) {
+          if (key.toLowerCase() === name.toLowerCase()) delete env[key];
+        }
+        env[name] = value;
+      };
+      setWindowsEnvironmentVariable("PATH", mergedPath);
+      setWindowsEnvironmentVariable("DSH_HOME", this.dshHome);
+      setWindowsEnvironmentVariable("ComSpec", windowsTerminalShell);
+    } else {
+      env.PATH = mergedPath;
+      env.DSH_HOME = this.dshHome;
     }
+    delete env.ELECTRON_RUN_AS_NODE;
 
     const spawnArgs = [
       dshBin,
@@ -444,7 +657,8 @@ export class DshRuntimeManager {
 
       const rl = readline.createInterface({ input: this.process.stdout });
       rl.on("line", async (line) => {
-        console.log("[dsh stdout]", line);
+        const safeLine = line.replace(/([?&]token=)[^&#\s]+/gi, "$1[redacted]");
+        console.log("[dsh stdout]", safeLine);
 
         const match = line.match(/dsh web: (http:\/\/127\.0\.0\.1:\d+(?:\/\?token=[^\s]+)?)/);
         if (match && !settled) {
@@ -460,11 +674,14 @@ export class DshRuntimeManager {
 
           // If there is an auth token in the URL, exchange it for a session cookie
           if (parsed.searchParams.has("token")) {
+            const controller = new AbortController();
+            const authTimeout = setTimeout(() => controller.abort(), 5000);
             try {
               const res = await fetch(fullUrl, {
                 method: "GET",
                 redirect: "manual",
                 headers: { Host: this.host },
+                signal: controller.signal,
               });
               const rawCookie = res.headers.get("set-cookie");
               if (rawCookie) {
@@ -473,6 +690,8 @@ export class DshRuntimeManager {
               }
             } catch (err) {
               console.warn("[dsh-runtime] Failed to exchange token for cookie:", err);
+            } finally {
+              clearTimeout(authTimeout);
             }
           }
 
