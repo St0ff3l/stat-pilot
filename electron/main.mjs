@@ -1497,6 +1497,14 @@ ipcMain.handle("dsh:transcribeSpeech", async (_event, request) => {
 ipcMain.handle("dsh:newThread", async () => {
   // Use lazy creation — just reset to blank state.
   // The actual DSH session is created on the first sendMessage call.
+  // DSH starts a new session in the currently open session's workspace. Keep
+  // that workspace as the pending default instead of reusing a different cwd
+  // that may have been selected in another conversation earlier.
+  const activeWorkspace = state.activeThread?.cwd?.trim();
+  if (activeWorkspace && activeWorkspace !== state.settings.cwd) {
+    state.settings = { ...state.settings, cwd: activeWorkspace };
+    await saveSettings(state.settings);
+  }
   enterBlankNewThread();
   broadcastState();
   return state;
