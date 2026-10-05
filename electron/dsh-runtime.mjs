@@ -543,10 +543,14 @@ export class DshRuntimeManager {
       };
     }
 
-    const dshBin = resolveDshBinaryPath(settings.dshBin);
-    if (!existsSync(dshBin)) {
-      throw new Error(`找不到 DSH 运行时入口: ${dshBin}`);
+    const resolvedDshBin = resolveDshBinaryPath(settings.dshBin);
+    if (!existsSync(resolvedDshBin)) {
+      throw new Error(`找不到 DSH 运行时入口: ${resolvedDshBin}`);
     }
+    // Windows TEMP can use an 8.3 alias (RUNNER~1). DSH's profile loader uses
+    // real paths; starting via the alias loads app-boot twice with separate
+    // module state, breaking profile reloads when settings are changed.
+    const dshBin = await fs.realpath(resolvedDshBin);
 
     const nodeBin = resolveNodeBinaryPath();
     console.log("[dsh-runtime] Using Node binary:", nodeBin);
