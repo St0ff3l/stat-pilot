@@ -19,7 +19,6 @@ function resolveAppNodeModule(packageName) {
   const candidates = bundledResources
     ? [
       path.resolve(bundledResources, "app.asar.unpacked/node_modules", packageName),
-      path.resolve(__dirname, "../node_modules", packageName),
     ]
     : [path.resolve(__dirname, "../node_modules", packageName)];
 
