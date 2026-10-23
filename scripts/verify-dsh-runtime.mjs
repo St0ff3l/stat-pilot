@@ -417,6 +417,8 @@ try {
   await client.unsetCredential(modelCatalogCredentialRef);
 
   const smokeProviderId = "stat-pilot-smoke";
+  const smokeApiKey = "stat-pilot-verification-api-key";
+  const smokeApiKeyRef = "STAT_PILOT_SMOKE_API_KEY";
   await client.mutateSettings({
     namespace: "llm-pi-ai",
     operations: [
@@ -427,6 +429,7 @@ try {
       { op: "set", path: ["providers", smokeProviderId, "apiKeyEnv"], value: "STAT_PILOT_SMOKE_API_KEY" },
     ],
   });
+  await client.setCredential(smokeApiKeyRef, smokeApiKey);
   await client.selectModel({
     sessionId: session.sessionId,
     provider: smokeProviderId,
@@ -434,9 +437,6 @@ try {
   });
   console.log("[verify-dsh] DSH 自定义 OpenAI 兼容 Provider 验证通过");
 
-  const smokeApiKey = "stat-pilot-verification-api-key";
-  const smokeApiKeyRef = "STAT_PILOT_SMOKE_API_KEY";
-  await client.setCredential(smokeApiKeyRef, smokeApiKey);
   mockProviderServer = await startOpenAiSmokeServer(smokeApiKey);
   await client.mutateSettings({
     namespace: "llm-pi-ai",
