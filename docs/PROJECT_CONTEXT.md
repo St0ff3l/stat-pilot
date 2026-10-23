@@ -1,6 +1,6 @@
 # Project Context
 
-Last updated: 2026-09-29
+Last updated: 2026-10-23
 
 ## Project
 
@@ -16,7 +16,7 @@ Last updated: 2026-09-29
 - Image prompts use DSH's native image content blocks; other files use its streamed upload route and per-session upload receipts.
 - Voice dictation uses DSH's experimental local SenseVoice bundle and authenticated speech RPC. The renderer converts recordings to bounded 16 kHz mono PCM WAV; transcripts are inserted into the draft and are never auto-submitted.
 - Sessions removed from the sidebar are archived through `workspace/archiveSession`; a persistent sidebar view lists archived sessions and restores them through `workspace/unarchiveSession`.
-- The app enables the pinned `dsh-archived-chats` 1.4.5 DSH bundle in the Web profile. Its host routes power the archive view and permanent deletion; deletion requires a renderer confirmation and uses the plugin's DSH lifecycle/persistence cleanup, including deferred cleanup when the host cannot safely remove a live session immediately.
+- The app enables the pinned `dsh-archived-chats` 1.6.0 DSH bundle in the Web profile. Its host routes power the archive view and permanent deletion; deletion requires a renderer confirmation and uses the plugin's DSH lifecycle/persistence cleanup, including deferred cleanup when the host cannot safely remove a live session immediately.
 - DeepSeek browser sign-in uses DSH's `account/startSignIn`, `account/getState`, `account/cancelSignIn`, and `account/signOut` operations. Account credentials remain inside DSH.
 - Provider API keys use DSH's credential reference store and are not retained in the app settings file. OpenAI and OpenRouter map to DSH `llm-pi-ai` catalog routes, while custom OpenAI-compatible endpoints are written to a dedicated DSH provider profile.
 - The app's permission toggle maps to DSH's `permission.defaultPreset` for new sessions: `danger-full-access` when enabled and `workspace-write` when disabled. Existing sessions keep their recorded permission preset.

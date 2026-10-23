@@ -11,7 +11,7 @@
 - 工作区、技能和模型设置
 - 本地保存应用设置与 DSH 会话数据
 
-归档页固定在侧边栏中，可搜索、恢复或彻底删除对话。归档和恢复使用 DSH 原生接口；永久删除使用 MIT 插件 [`dsh-archived-chats` 1.4.5](https://github.com/Ultronen/dsh-archived-chats)，需要二次确认，并由插件清理 DSH 会话记录。
+归档页固定在侧边栏中，可搜索、恢复或彻底删除对话。归档和恢复使用 DSH 原生接口；永久删除使用 MIT 插件 [`dsh-archived-chats` 1.6.0](https://github.com/Ultronen/dsh-archived-chats)，需要二次确认，并由插件清理 DSH 会话记录。
 
 聊天输入框的语音按钮使用 DSH 本地 SenseVoice。首次使用需确认下载并准备模型；录音经本地 DSH 转写为草稿，不会自动发送。麦克风权限仅授予应用主窗口的纯音频请求。
 

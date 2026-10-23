@@ -1985,6 +1985,7 @@ function App() {
 
   function handleSafeSelectThread(threadId: string) {
     if (threadId === state?.activeThreadId) {
+      setActiveMainTab("chat");
       return;
     }
     if (state?.busy) {
@@ -2505,27 +2506,43 @@ function App() {
   const activeThread = state?.activeThread ?? null;
   const activeMessages = state?.messages ?? EMPTY_MESSAGES;
   const activeThreadTitle = activeMessages.find((message) => message.role === "user")?.text?.trim() || "";
+  const hasActiveUserMessage = activeMessages.some((message) => message.role === "user");
   const orderedThreads = useMemo(() => {
     const threads = [...(state?.threads ?? [])];
     const activeId = state?.activeThreadId;
-    if (activeId && activeThread && activeThreadTitle) {
+    if (activeId && hasActiveUserMessage) {
+      const title = activeThreadTitle || "附件任务";
       const activeIndex = threads.findIndex((thread) => thread.id === activeId);
       if (activeIndex === -1) {
+        const activeTaskStatus = state?.pendingApproval
+          ? "approving"
+          : state?.pendingClarification
+            ? "clarifying"
+            : state?.busy
+              ? "running"
+              : "idle";
+        const timestamp = Date.now();
         threads.push({
-          ...activeThread,
-          name: activeThread.name || activeThreadTitle,
-          preview: activeThread.preview || activeThreadTitle,
+          id: activeId,
+          name: activeThread?.name || title,
+          preview: activeThread?.preview || title,
+          modelProvider: activeThread?.modelProvider || "deepseek",
+          status: state?.busy ? "running" : "idle",
+          updatedAt: activeThread?.updatedAt || timestamp,
+          createdAt: activeThread?.createdAt || timestamp,
+          cwd: activeThread?.cwd || currentCwd,
+          taskStatus: activeTaskStatus,
         });
       } else if (!threads[activeIndex].name && !threads[activeIndex].preview) {
         threads[activeIndex] = {
           ...threads[activeIndex],
-          name: activeThreadTitle,
-          preview: activeThreadTitle,
+          name: title,
+          preview: title,
         };
       }
     }
     return threads.sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [activeThread, activeThreadTitle, state?.activeThreadId, state?.threads]);
+  }, [activeThread, activeThreadTitle, currentCwd, hasActiveUserMessage, state?.activeThreadId, state?.busy, state?.pendingApproval, state?.pendingClarification, state?.threads]);
 
   const runningTaskCount = (state?.threads || []).filter((t) => t.taskStatus === "running").length;
   const queuedTaskCount = (state?.threads || []).filter((t) => t.taskStatus === "queued").length;
