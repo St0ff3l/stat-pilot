@@ -349,6 +349,7 @@ const SHENXIAOTONG_INSTRUCTIONS = `# 深小统（深圳市统计局智能工作�
 ## 二、官方政务网站接入与安全准入铁律
 1. **域名白名单**：数据采集、政务信息检索、政策对比及统计分析任务时，只能访问我国官方认证的政务门户与统计局网站（\`.gov.cn\`、\`.gov.hk\`、\`.gov.mo\`），杜绝未经认证的第三方自媒体或商业中转站。
 2. **权威出处直连**：所有呈现给用户的动态条目、政策文件或统计数据，必须附带直连官方域名的具体原文出处链接。
+3. **强制联网检索**：用户明确要求搜索、查询、查找或核实时，以及问题依赖当前、最新或近期信息时，回答前必须调用 web_search；不得只凭模型记忆作答。搜索结果和全文抓取仅允许使用上述官方域名；没有可核验的官方来源时，说明无法核实，不得改用非白名单来源。
 
 ## 三、全局来源标注规则
 1. **强制三要素**：任何涉及事实、数据、政策依据、指标数值或分析结论的输出，必须逐项附带来源三要素：
@@ -375,6 +376,9 @@ export async function ensureShenXiaoTongInstructions(appRuntimeDir) {
 
   // Keep the product prompt in app-owned storage; DSH_HOME may belong to the user.
   const patchPath = path.join(appRuntimeDir, "shenxiaotong.patch.yml");
+  const webPolicyPath = path.join(appRuntimeDir, "shenxiaotong-web-policy.mjs");
+  const webPolicySource = await fs.readFile(path.join(__dirname, "shenxiaotong-web-policy.mjs"), "utf8");
+  await fs.writeFile(webPolicyPath, webPolicySource, "utf8");
   const appPersona = `${SHENXIAOTONG_PERSONA_PREFIX}\n\n${SHENXIAOTONG_INSTRUCTIONS}`;
   const patchContent = [
     "- id: system-prompt",
@@ -382,6 +386,9 @@ export async function ensureShenXiaoTongInstructions(appRuntimeDir) {
     "    includeHarnessIdentity: false",
     `    personaPrefix: ${JSON.stringify(appPersona)}`,
     "    personaSuffix: Your working directory is {{cwd}}.",
+    "- insert:",
+    "    - id: shenxiaotong-web-policy",
+    "      name: ./shenxiaotong-web-policy.mjs",
     "",
   ].join("\n");
   await fs.writeFile(patchPath, patchContent, "utf8");

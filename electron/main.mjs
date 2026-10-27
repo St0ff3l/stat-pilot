@@ -269,9 +269,8 @@ function normalizeSettings(settings) {
   return {
     ...defaultSettings,
     ...input,
-    // Runtime paths are owned by the current app install. Older releases saved
-    // an absolute Hermes/DSH path here, which may point at a removed or stale
-    // checkout after upgrade.
+    // Runtime paths are owned by the current app install. Ignore persisted
+    // paths from older releases that may point at a removed or stale checkout.
     dshBin: defaultSettings.dshBin,
     model: authMode === "account" ? accountModel : normalizeModel(input.model ?? apiModel ?? defaultSettings.model),
     apiModel,

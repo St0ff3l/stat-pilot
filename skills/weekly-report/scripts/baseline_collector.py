@@ -213,8 +213,6 @@ class SiteConfig:
     domain_whitelist: Tuple[str, ...] = ()
     # 额外请求头
     extra_headers: Dict[str, str] = field(default_factory=dict)
-    # 是否需要 SSL 降级（http 替代 https）
-    ssl_downgrade: bool = False
     # 编码覆盖（None = 自动探测）
     encoding_override: Optional[str] = None
     # 列表页响应是否为 JSON（仅 json_api 策略使用）
@@ -294,18 +292,17 @@ def _build_default_sites() -> List[SiteConfig]:
 
     # ==================== 国家级 ====================
     # 证据：list 来自 Java StatsGovListSpider 实现；详情页选择器来自 Java
-    # StatsGovDetailSpider；SSL 降级对齐 Java 端 trustAllHttpsCertificates。
+    # StatsGovDetailSpider；普通网页统一直连 HTTP。
     sites.append(SiteConfig(
         site_id="stats_national",
         organization="国家统计局",
-        list_url="https://www.stats.gov.cn/xw/tjxw/tjdt/",
+        list_url="http://www.stats.gov.cn/xw/tjxw/tjdt/",
         category="统计动态",
         pagination="index_n",
         list_item_selectors=(".list-content ul li",),
         list_link_selector="a.fl",
         list_date_selector="span",
         domain_whitelist=("stats.gov.cn",),
-        ssl_downgrade=True,
         detail_title_selectors=(".article_title", ".title", "h1"),
         detail_date_selectors=(".center_xilan_info", ".article_info", ".info"),
         detail_content_selectors=(
@@ -315,7 +312,7 @@ def _build_default_sites() -> List[SiteConfig]:
         extra_categories=[
             # 通知公告 - SKILL.md 铁律 1 允许的"政务公开-工作动态"类栏目
             # 证据：国家统计局首页导航 [ 通知公告 ](https://www.stats.gov.cn/xw/tjxw/tzgg/)
-            ("https://www.stats.gov.cn/xw/tjxw/tzgg/", "通知公告"),
+            ("http://www.stats.gov.cn/xw/tjxw/tzgg/", "通知公告"),
         ],
         evidence="list: Java StatsGovListSpider | detail: Java StatsGovDetailSpider | extra_categories: 首页导航验证 | 2026-07-17",
     ))
@@ -422,7 +419,7 @@ def _build_default_sites() -> List[SiteConfig]:
     sites.append(SiteConfig(
         site_id="stats_js",
         organization="江苏省统计局",
-        list_url="https://tj.jiangsu.gov.cn/col/col87243/index.html",
+        list_url="http://tj.jiangsu.gov.cn/col/col87243/index.html",
         category="统计要闻",
         pagination="index_n",
         list_item_selectors=(
@@ -537,14 +534,13 @@ def _build_default_sites() -> List[SiteConfig]:
     sites.append(SiteConfig(
         site_id="stats_bj",
         organization="北京市统计局",
-        list_url="https://tjj.beijing.gov.cn/zwgkai/gzdt/",
+        list_url="http://tjj.beijing.gov.cn/zwgkai/gzdt/",
         category="工作动态",
         pagination="index_n",
         list_item_selectors=("ul[class*=list] li",),
         list_link_selector="a",
         list_date_selector="span.date",
         domain_whitelist=("tjj.beijing.gov.cn",),
-        ssl_downgrade=False,
         detail_title_selectors=(".article_title", ".title", "h1"),
         detail_date_selectors=(".article_info", ".info", ".pubtime"),
         detail_content_selectors=(
@@ -554,10 +550,10 @@ def _build_default_sites() -> List[SiteConfig]:
         extra_categories=[
             # 通知公告 - 政务公开类，常含统计信息化项目采购、系统建设通知
             # 证据：北京首页 [通知公告](https://tjj.beijing.gov.cn/zwgkai/tzgg/)
-            ("https://tjj.beijing.gov.cn/zwgkai/tzgg/", "通知公告"),
+            ("http://tjj.beijing.gov.cn/zwgkai/tzgg/", "通知公告"),
             # 要闻动态 - 新闻中心类
             # 证据：北京首页 [要闻动态](https://tjj.beijing.gov.cn/zwgkai/ywdt/)
-            ("https://tjj.beijing.gov.cn/zwgkai/ywdt/", "要闻动态"),
+            ("http://tjj.beijing.gov.cn/zwgkai/ywdt/", "要闻动态"),
         ],
         evidence="list: Java BjStatisticsListSpider | detail: 北京政务统一 CMS | extra_categories: 首页导航验证 | 2026-07-17",
     ))
@@ -567,7 +563,7 @@ def _build_default_sites() -> List[SiteConfig]:
     sites.append(SiteConfig(
         site_id="stats_sh",
         organization="上海市统计局",
-        list_url="https://tjj.sh.gov.cn/tjxw/",
+        list_url="http://tjj.sh.gov.cn/tjxw/",
         category="统计要闻",
         list_strategy="regex",
         pagination="index_n2",
@@ -589,7 +585,7 @@ def _build_default_sites() -> List[SiteConfig]:
             # 与主栏目 regex（要求 <span class="time">）不兼容，故用 3 元组切到 static 策略，
             # 日期走 parse_static_items 的 regex 兜底（re.search \d{4}-\d{2}-\d{2}）。
             # 详情样本: /tzgs/20260518/7632f9b6cb774e9bb3ea1810ef216d3d.html
-            ("https://tjj.sh.gov.cn/tzgs/", "通知告示", {
+            ("http://tjj.sh.gov.cn/tzgs/", "通知告示", {
                 "list_strategy": "static",
                 "pagination": "index_n2",
                 "list_item_selectors": (
@@ -609,7 +605,7 @@ def _build_default_sites() -> List[SiteConfig]:
     sites.append(SiteConfig(
         site_id="stats_tj",
         organization="天津市统计局",
-        list_url="https://stats.tj.gov.cn/sy_51953/tjgzdt/",
+        list_url="http://stats.tj.gov.cn/sy_51953/tjgzdt/",
         category="统计工作动态",
         pagination="index_n",
         list_item_selectors=(
@@ -619,7 +615,6 @@ def _build_default_sites() -> List[SiteConfig]:
         list_link_selector="a",
         list_date_selector="span",
         domain_whitelist=("stats.tj.gov.cn",),
-        ssl_downgrade=True,
         detail_title_selectors=("h1", ".article-title", ".title"),
         detail_date_selectors=(".info", ".pubtime", ".article-info"),
         detail_content_selectors=(
@@ -630,7 +625,7 @@ def _build_default_sites() -> List[SiteConfig]:
             # 通知公告 - 政务公开类
             # 证据：天津首页 [通知公告](https://stats.tj.gov.cn/sy_51953/tzgg/)
             # 详情样本: /sy_51953/tzgg/202604/t20260407_7277095.html
-            ("https://stats.tj.gov.cn/sy_51953/tzgg/", "通知公告"),
+            ("http://stats.tj.gov.cn/sy_51953/tzgg/", "通知公告"),
         ],
         evidence="list: WebSearch /sy_51953/tjgzdt/ | detail: /sy_51953/tjgzdt/202602/t20260227_7251964.html | extra_categories: 首页导航验证 | 2026-07-17",
     ))
@@ -732,10 +727,10 @@ def _build_default_sites() -> List[SiteConfig]:
         extra_categories=[
             # 区县动态 - 各区县统计局动态（动态要闻类）
             # 证据：杭州首页 [区县动态[更多>>]](https://tjj.hangzhou.gov.cn/col/col1652150/index.html)
-            ("https://tjj.hangzhou.gov.cn/col/col1652150/index.html", "区县动态"),
+            ("http://tjj.hangzhou.gov.cn/col/col1652150/index.html", "区县动态"),
             # 通知公告 - 政务公开类
             # 证据：杭州首页 [通知公告[更多>>]](https://tjj.hangzhou.gov.cn/col/col1651600/index.html)
-            ("https://tjj.hangzhou.gov.cn/col/col1651600/index.html", "通知公告"),
+            ("http://tjj.hangzhou.gov.cn/col/col1651600/index.html", "通知公告"),
         ],
         evidence="list: WebSearch col1651400 | detail: /col/col1651400/art/2026/art_a92f0548905f429f9ed110de09dd7d24.html | extra_categories: 首页导航验证 | 2026-07-17",
     ))
@@ -747,7 +742,7 @@ def _build_default_sites() -> List[SiteConfig]:
     sites.append(SiteConfig(
         site_id="stats_nj",
         organization="南京市统计局",
-        list_url="https://tjj.nanjing.gov.cn/gzdt/",
+        list_url="http://tjj.nanjing.gov.cn/gzdt/",
         category="工作动态",
         pagination="index_n",
         list_item_selectors=(
@@ -779,7 +774,7 @@ def _build_default_sites() -> List[SiteConfig]:
     sites.append(SiteConfig(
         site_id="stats_cd",
         organization="成都市统计局",
-        list_url="https://cdstats.chengdu.gov.cn/cdstjj/c154737/list.shtml",
+        list_url="http://cdstats.chengdu.gov.cn/cdstjj/c154737/list.shtml",
         category="工作动态",
         # 成都分页：与四川同 CMS，按 list.shtml / list_2.shtml 规律用 index_n2
         # 证据：四川 list_2.shtml 验证为 200，成都同 CMS 推断同模式（成都 412 反爬无法直验）
@@ -800,7 +795,7 @@ def _build_default_sites() -> List[SiteConfig]:
         extra_categories=[
             # 通知公告 - 政务公开类
             # 证据：成都首页 [通知公告[更多>>]](https://cdstats.chengdu.gov.cn/cdstjj/c154738/list.shtml)
-            ("https://cdstats.chengdu.gov.cn/cdstjj/c154738/list.shtml", "通知公告"),
+            ("http://cdstats.chengdu.gov.cn/cdstjj/c154738/list.shtml", "通知公告"),
         ],
         evidence="list: WebFetch 首页 c154737/list.shtml | detail: /cdstjj/c154737/2026-07/02/content_93fa3b2578df480b936526b678fd4fe6.shtml | extra_categories: 首页导航验证 | 2026-07-17",
     ))
@@ -812,7 +807,7 @@ def _build_default_sites() -> List[SiteConfig]:
     sites.append(SiteConfig(
         site_id="stats_wh",
         organization="武汉市统计局",
-        list_url="https://tjj.wuhan.gov.cn/xwzx/sjyw/",
+        list_url="http://tjj.wuhan.gov.cn/xwzx/sjyw/",
         category="统计要闻",
         pagination="index_n",
         # 武汉用 .shtml 而非 .html：index.shtml / index_1.shtml / index_2.shtml
@@ -839,13 +834,13 @@ def _build_default_sites() -> List[SiteConfig]:
         extra_categories=[
             # 区级动态 - 各区统计局动态（动态要闻类）
             # 证据：武汉首页 [区级动态](https://tjj.wuhan.gov.cn/xwzx/qjdt/) tab
-            ("https://tjj.wuhan.gov.cn/xwzx/qjdt/", "区级动态"),
+            ("http://tjj.wuhan.gov.cn/xwzx/qjdt/", "区级动态"),
             # 通知公告 - 政务公开类
             # 证据：武汉首页 [通知公告](https://tjj.wuhan.gov.cn/xwzx/tzgg/) tab
-            ("https://tjj.wuhan.gov.cn/xwzx/tzgg/", "通知公告"),
+            ("http://tjj.wuhan.gov.cn/xwzx/tzgg/", "通知公告"),
             # 图片新闻 - 新闻中心类
             # 证据：武汉首页 [图片新闻](https://tjj.wuhan.gov.cn/xwzx/tpxw/) tab
-            ("https://tjj.wuhan.gov.cn/xwzx/tpxw/", "图片新闻"),
+            ("http://tjj.wuhan.gov.cn/xwzx/tpxw/", "图片新闻"),
         ],
         evidence="list: WebSearch /xwzx/sjyw/ | detail: /xwzx/sjyw/202509/t20250925_2652497.shtml | extra_categories: 首页导航验证 | 2026-07-17",
     ))
@@ -893,7 +888,7 @@ def _build_default_sites() -> List[SiteConfig]:
     sites.append(SiteConfig(
         site_id="stats_xm",
         organization="厦门市统计局",
-        list_url="https://tjj.xm.gov.cn/zwgk/gzdt/",
+        list_url="http://tjj.xm.gov.cn/zwgk/gzdt/",
         category="统计工作",
         pagination="index_n",
         index_file="index.htm",
@@ -1049,7 +1044,7 @@ def _build_default_sites() -> List[SiteConfig]:
             # 样本: /xwdt/sxdt/202606/t20260604_7156740.htm（2026-06-03 鲤城区统计局推进统计改革）
             # 列表结构: - [标题](url)  日期（与浙江/宁波静态列表一致，用 ul li 通用选择器）
             # 分页: index.htm / index_1.htm（福建用 .htm 后缀）
-            ("https://tjj.fujian.gov.cn/xwdt/sxdt/", "市县动态", {
+            ("http://tjj.fujian.gov.cn/xwdt/sxdt/", "市县动态", {
                 "list_strategy": "static",
                 "pagination": "index_n",
                 "index_file": "index.htm",
@@ -1065,15 +1060,15 @@ def _build_default_sites() -> List[SiteConfig]:
     ))
 
     # 2) 河南省统计局 - 静态 HTML（对应 HenanStatisticsListSpider）
-    #    list_url: https://tjj.henan.gov.cn/zwxx/sjdt/
+    #    list_url: http://tjj.henan.gov.cn/zwxx/sjdt/
     #    选择器: div.newsList.fr ul li / .newsList ul li
     #    日期: span.date, 格式 yyyy-MM-dd
     #    分页: index.html / index_1.html（index_n 模式，pageNo-1）
-    #    HTTPS→HTTP 降级容错
+    #    普通网页入口和详情页均直接使用 HTTP
     sites.append(SiteConfig(
         site_id="stats_henan",
         organization="河南省统计局",
-        list_url="https://tjj.henan.gov.cn/zwxx/sjdt/",
+        list_url="http://tjj.henan.gov.cn/zwxx/sjdt/",
         category="统计动态",
         pagination="index_n",
         list_item_selectors=(
@@ -1085,11 +1080,10 @@ def _build_default_sites() -> List[SiteConfig]:
         list_link_selector="a",
         list_date_selector="span.date, span",
         domain_whitelist=("tjj.henan.gov.cn", "henan.gov.cn"),
-        ssl_downgrade=True,
         extra_categories=[
             # 通知公告 - 政务公开类
             # 证据：河南首页 [新闻[更多>]](https://tjj.henan.gov.cn/zwxx/) 下有 [通知公告](https://tjj.henan.gov.cn/zwxx/tzgg/)
-            ("https://tjj.henan.gov.cn/zwxx/tzgg/", "通知公告"),
+            ("http://tjj.henan.gov.cn/zwxx/tzgg/", "通知公告"),
         ],
         evidence="list+detail: Java HenanStatisticsListSpider | extra_categories: 首页导航验证 | 2026-07-17",
     ))
@@ -1098,7 +1092,7 @@ def _build_default_sites() -> List[SiteConfig]:
     #    list_url: http://tjj.sz.gov.cn/zwgk/zfxxgkml/qt/gzdt/
     #    选择器: ul.column-article li > p.article-title / a / p.article-time
     #    分页: index.html / index_2.html（index_n2 模式，i+1）
-    #    详情页 https → http 降级
+    #    详情页直接使用 HTTP
     sites.append(SiteConfig(
         site_id="stats_sz_statistics",
         organization="深圳市统计局",
@@ -1114,7 +1108,6 @@ def _build_default_sites() -> List[SiteConfig]:
         list_title_attr="title",
         list_date_selector="p.article-time, span",
         domain_whitelist=("tjj.sz.gov.cn",),
-        ssl_downgrade=True,
         extra_headers={"Referer": "http://tjj.sz.gov.cn/"},
         detail_title_selectors=(".article-title", "p.article-title", "h1", "h2"),
         detail_date_selectors=("p.article-time", ".info", ".pubtime"),
@@ -1147,7 +1140,6 @@ def _build_default_sites() -> List[SiteConfig]:
         list_link_selector="a",
         list_date_selector="p.article-time, span",
         domain_whitelist=("fgw.sz.gov.cn",),
-        ssl_downgrade=True,
         extra_headers={"Referer": "http://fgw.sz.gov.cn/"},
         detail_title_selectors=(".article-title", "p.article-title", "h1", "h2"),
         detail_date_selectors=("p.article-time", ".info", ".pubtime"),
@@ -1180,7 +1172,6 @@ def _build_default_sites() -> List[SiteConfig]:
         list_link_selector="a",
         list_date_selector="p.article-time, span",
         domain_whitelist=("gxj.sz.gov.cn",),
-        ssl_downgrade=True,
         extra_headers={"Referer": "http://gxj.sz.gov.cn/"},
         detail_title_selectors=(".article-title", "p.article-title", "h1", "h2"),
         detail_date_selectors=("p.article-time", ".info", ".pubtime"),
@@ -1424,6 +1415,11 @@ def absolute_url(base: str, href: str) -> str:
     return urllib.parse.urljoin(base, href)
 
 
+def http_url(url: str) -> str:
+    """官网 HTML 请求直连 HTTP；JSON API 调用方不使用此函数。"""
+    return "http://" + url[8:] if url.startswith("https://") else url
+
+
 def _timestamp_to_datetime(ts: float) -> Optional[datetime]:
     """Unix 时间戳转 datetime，自动识别秒级（10 位）与毫秒级（13 位）。
 
@@ -1596,22 +1592,23 @@ class ListFetcherFactory:
     # ---- 分页 URL 构造 ----
     def build_page_urls(self, cfg: SiteConfig) -> Iterable[str]:
         """生成各分页 URL（惰性）。"""
+        list_url = cfg.list_url if cfg.list_strategy == "json_api" else http_url(cfg.list_url)
         if cfg.pagination == "none":
-            yield cfg.list_url
+            yield list_url
             return
 
         if cfg.pagination == "page_param":
             for page in range(1, cfg.max_pages + 1):
                 params = dict(cfg.extra_query or {})
                 params[cfg.page_param_name] = page
-                yield cfg.list_url + "?" + urllib.parse.urlencode(params)
+                yield list_url + "?" + urllib.parse.urlencode(params)
             return
 
         # index_n / index_n2
         # base 提取：list_url 可能是目录（以 / 结尾）或具体文件名（如 list.shtml / index.html）
         # 如果是文件名结尾，需把文件名作为 index_file，base 取所在目录
         # 否则 list.shtml 会被当成目录，拼出 list.shtml/index.html（404）
-        parsed = urllib.parse.urlparse(cfg.list_url)
+        parsed = urllib.parse.urlparse(list_url)
         path = parsed.path
         if path.endswith("/"):
             base_dir = path
@@ -1650,10 +1647,11 @@ class ListFetcherFactory:
         self, cfg: SiteConfig, page_url: str,
     ) -> Tuple[Optional[BeautifulSoup], str]:
         """抓静态 HTML 列表，返回 (soup, base_url)。"""
+        page_url = http_url(page_url)
         html = self.http.get_text(
             page_url,
             headers=cfg.extra_headers or None,
-            referer=cfg.list_url,
+            referer=http_url(cfg.list_url),
             encoding_override=cfg.encoding_override,
         )
         if not html:
@@ -1909,10 +1907,11 @@ class ListFetcherFactory:
     def fetch_regex(
         self, cfg: SiteConfig, page_url: str,
     ) -> List[ArticleListItem]:
+        page_url = http_url(page_url)
         html = self.http.get_text(
             page_url,
             headers=cfg.extra_headers or None,
-            referer=cfg.list_url,
+            referer=http_url(cfg.list_url),
             encoding_override=cfg.encoding_override,
         )
         if not html:
@@ -2013,7 +2012,7 @@ class ListFetcherFactory:
                 # 域名白名单
                 if cfg.domain_whitelist:
                     host = urllib.parse.urlparse(it.source_url).hostname or ""
-                    if not any(d in host for d in cfg.domain_whitelist):
+                    if not any(host == d or host.endswith("." + d) for d in cfg.domain_whitelist):
                         continue
                 # page_total 在域名白名单通过后计数，确保 page_out_of_range == page_total
                 # 能准确判断「本页所有合规条目都早于 cutoff → 后续页更老 → 停止翻页」
@@ -2071,13 +2070,11 @@ class DetailExtractorBase:
         url = item.source_url
         if not url:
             return "", "", None, None
-        # SSL 降级（如国家统计局）
-        if cfg.ssl_downgrade and url.startswith("https://"):
-            url = url.replace("https://", "http://", 1)
+        url = http_url(url)
         html = self.http.get_text(
             url,
             headers=cfg.extra_headers or None,
-            referer=cfg.list_url,
+            referer=http_url(cfg.list_url),
             encoding_override=cfg.encoding_override,
         )
         if not html:
@@ -2518,7 +2515,7 @@ class CollectorOrchestrator:
         # 域名白名单二次校验（纵深防御：防止列表阶段漏过的跨站链接）
         if cfg.domain_whitelist:
             host = urllib.parse.urlparse(item.source_url).hostname or ""
-            if not any(d in host for d in cfg.domain_whitelist):
+            if not any(host == d or host.endswith("." + d) for d in cfg.domain_whitelist):
                 logging.debug("[skip domain not in whitelist] %s", item.source_url)
                 return None
         # 去重
@@ -2599,7 +2596,7 @@ class CollectorOrchestrator:
         )
 
         # 列表项与栏目级 cfg 绑定（详情处理需用栏目级 cat_cfg，否则栏目级覆盖的
-        # detail_*_selectors / ssl_downgrade / extra_headers / list_url(referer) 不生效）
+        # detail_*_selectors / extra_headers / list_url(referer) 不生效）
         work_items: List[Tuple[ArticleListItem, SiteConfig]] = []
         for cat_idx, cat_entry in enumerate(categories, start=1):
             cat_url = cat_entry[0]

@@ -202,6 +202,7 @@ declare global {
       stopMessage: () => Promise<DshAppState>;
       selectWorkspaceFolder: () => Promise<{ cwd: string; folderName: string; branch: string | null } | null>;
       selectFiles: () => Promise<DshSelectedFile[]>;
+      getPathForFile: (file: File) => string;
       selectSessionModel: (selection: { provider: string; model: string; reasoningEffort?: string }) => Promise<DshAppState>;
       refreshModelCatalog: () => Promise<DshAppState>;
       setPermissionPreset: (preset: "read-only" | "workspace-write" | "danger-full-access") => Promise<DshAppState>;

@@ -385,11 +385,13 @@ const BUILTIN_SKILL_DISPLAY_NAMES: Record<string, string> = {
   "info-digest-html": "动态信息汇总 HTML 报表",
   "weekly-report": "统计信息化动态采集与周报",
   "price-index-gdp-impact": "价格指数对 GDP 各项影响分析",
+  "shenzhen-yearbook-analysis": "深圳统计年鉴分析",
   "source-verification": "官方来源与转载核验",
   "gov-official-document-drafting": "政务公文起草",
   info_digest_html: "动态信息汇总 HTML 报表",
   weekly_report: "统计信息化动态采集与周报",
   price_index_gdp_impact: "价格指数对 GDP 各项影响分析",
+  shenzhen_yearbook_analysis: "深圳统计年鉴分析",
   source_verification: "官方来源与转载核验",
   gov_official_document_drafting: "政务公文起草",
 };
@@ -398,11 +400,13 @@ const BUILTIN_SKILL_ICONS: Record<string, string> = {
   "info-digest-html": "📰",
   "weekly-report": "📊",
   "price-index-gdp-impact": "📈",
+  "shenzhen-yearbook-analysis": "📚",
   "source-verification": "🔎",
   "gov-official-document-drafting": "📝",
   info_digest_html: "📰",
   weekly_report: "📊",
   price_index_gdp_impact: "📈",
+  shenzhen_yearbook_analysis: "📚",
   source_verification: "🔎",
   gov_official_document_drafting: "📝",
 };
@@ -466,6 +470,8 @@ const REPORT_SKILL_NAMES = new Set([
 ]);
 
 const BUILTIN_SKILL_START_PROMPTS: Record<string, string> = {
+  "shenzhen-yearbook-analysis":
+    "请按我选择的来源方式使用“深圳统计年鉴分析”技能查找、读取或分析年鉴；结论中的数字都要标明年鉴版本、表名和页码。",
   "weekly-report":
     "请采集最近 7 天国家统计局、广东省统计局、深圳市统计局等官方来源的统计信息化动态，筛选信息化、数字化、人工智能、大数据等主题，生成周报；每条内容都必须标明发布单位或网站全称、完整标题、发布日期和具体原文链接。",
   "price-index-gdp-impact":
@@ -482,6 +488,8 @@ const BUILTIN_SKILL_START_PROMPTS: Record<string, string> = {
     "请核验我接下来提交的文件或链接：确认是否为官方来源、发布日期、发布机构、具体原文链接是否有效，并识别重复、转载和二次改写关系；输出逐项证据和发布单位或网站全称、完整标题、具体原文链接。",
   gov_official_document_drafting:
     "请按深圳市统计局官方网站公开页面的政务文风起草公文：先根据我的任务判断合适的文种，保留文号、落款、联系人等待补字段，不虚构正式发布信息，并为事实、政策依据和数据附发布单位或网站全称、完整标题和具体原文链接。",
+  shenzhen_yearbook_analysis:
+    "请按我选择的来源方式使用“深圳统计年鉴分析”技能查找、读取或分析年鉴；结论中的数字都要标明年鉴版本、表名和页码。",
 };
 
 function extractDigestItems(text: string): DigestItem[] {
@@ -1181,6 +1189,7 @@ function App() {
   const [skillsSearchQuery, setSkillsSearchQuery] = useState("");
   const [selectedSkillTag, setSelectedSkillTag] = useState<string | null>(null);
   const [stylePickerSkillName, setStylePickerSkillName] = useState<string | null>(null);
+  const [yearbookSourcePickerOpen, setYearbookSourcePickerOpen] = useState(false);
 
   function isWorkspaceLocked() {
     // 只有在当前会话已经产生真实交互消息或正在生成中时，才锁定工作区选择
@@ -1434,6 +1443,11 @@ function App() {
   }
 
   function handleSkillPageUse(skillName: string) {
+    if (skillName.replace(/_/g, "-") === "shenzhen-yearbook-analysis") {
+      setYearbookSourcePickerOpen(true);
+      return;
+    }
+
     if (REPORT_SKILL_NAMES.has(skillName)) {
       setStylePickerSkillName(skillName);
       return;
@@ -1443,6 +1457,18 @@ function App() {
       skillName,
       BUILTIN_SKILL_START_PROMPTS[skillName] ||
         "请使用当前技能完成我的任务，并为所有事实性内容附发布单位或网站全称、文章来源/页面完整标题和具体原文链接。",
+    );
+  }
+
+  function handleYearbookSourceSelect(source: "official" | "provided") {
+    const sourcePrompt = source === "official"
+      ? "【来源方式：官网检索】请从深圳市统计局官方统计年鉴目录开始，按我指定的年份查找；未指定年份时使用最新版本。进入对应详情页后下载其中嵌套的 PDF 附件，再按技能说明分析。"
+      : "【来源方式：上传文件 / 粘贴链接】请直接处理我已附加的文件或粘贴的链接；若尚未提供，请提示我用输入框的附件按钮、拖拽文件或粘贴链接后继续，不要再次询问来源。";
+
+    setYearbookSourcePickerOpen(false);
+    startSkillTask(
+      "shenzhen-yearbook-analysis",
+      `${BUILTIN_SKILL_START_PROMPTS["shenzhen-yearbook-analysis"]}\n\n${sourcePrompt}`,
     );
   }
 
@@ -1476,14 +1502,35 @@ function App() {
     try {
       const files = await window.dshDesktop.selectFiles();
       if (files.length === 0) return;
-      setSelectedAttachments((previous) => {
-        const existingPaths = new Set(previous.map((file) => file.path));
-        return [...previous, ...files.filter((file) => !existingPaths.has(file.path))];
-      });
-      focusEditor();
+      addAttachments(files);
     } catch (error) {
       console.error("Failed to select attachments:", error);
     }
+  }
+
+  function addAttachments(files: DshSelectedFile[]) {
+    if (files.length === 0) return;
+    setSelectedAttachments((previous) => {
+      const existingPaths = new Set(previous.map((file) => file.path));
+      return [...previous, ...files.filter((file) => file.path && !existingPaths.has(file.path))];
+    });
+    focusEditor();
+  }
+
+  function handleComposerDrop(event: React.DragEvent<HTMLDivElement>) {
+    const droppedFiles = Array.from(event.dataTransfer.files);
+    if (droppedFiles.length === 0) return;
+    event.preventDefault();
+    if (isDshUnavailable || needsProviderSetup || state?.busy || isThreadLoading) return;
+    addAttachments(droppedFiles.flatMap((file) => {
+      try {
+        const filePath = window.dshDesktop.getPathForFile(file);
+        return filePath ? [{ path: filePath, name: file.name, size: file.size }] : [];
+      } catch (error) {
+        console.error("Failed to read dropped file path:", error);
+        return [];
+      }
+    }));
   }
 
   function removeAttachment(filePath: string) {
@@ -3173,24 +3220,24 @@ function App() {
                       <button
                         type="button"
                         className="trae-suggestion-card"
-                        onClick={() => handleQuickSuggestionUse("source-verification")}
+                        onClick={() => handleSkillPageUse("shenzhen-yearbook-analysis")}
                       >
-                        <span className="icon">🔎</span>
+                        <span className="icon">📚</span>
                         <div className="text-content">
-                          <strong>官方来源与转载核验</strong>
-                          <p>核验来源、发布日期、机构、链接及重复转载关系</p>
+                          <strong>深圳统计年鉴分析</strong>
+                          <p>官网检索并下载年鉴 PDF，或上传文件、粘贴链接后分析</p>
                         </div>
                       </button>
 
                       <button
                         type="button"
                         className="trae-suggestion-card"
-                        onClick={() => handleQuickSuggestionUse("gov-official-document-drafting")}
+                        onClick={() => handleQuickSuggestionUse("source-verification")}
                       >
-                        <span className="icon">📝</span>
+                        <span className="icon">🔎</span>
                         <div className="text-content">
-                          <strong>起草政务公文</strong>
-                          <p>按深圳统计官网公开风格起草通知、报告与工作方案</p>
+                          <strong>官方来源与转载核验</strong>
+                          <p>核验来源、发布日期、机构、链接及重复转载关系</p>
                         </div>
                       </button>
                     </div>
@@ -3511,7 +3558,13 @@ function App() {
               </div>
             ) : null}
 
-            <div className="trae-composer-card">
+            <div
+              className="trae-composer-card"
+              onDragOver={(event) => {
+                if (Array.from(event.dataTransfer.types).includes("Files")) event.preventDefault();
+              }}
+              onDrop={handleComposerDrop}
+            >
               {selectedAttachments.length > 0 && (
                 <div className="trae-selected-files" aria-label="待提交文件">
                   <div className="trae-selected-files-header">
@@ -3608,7 +3661,7 @@ function App() {
                     ? "运行时未就绪，消息框已禁用"
                     : needsProviderSetup
                       ? "请先在设置中配置 API Key 或 DeepSeek 账号，消息框暂不可用"
-                      : "输入任务需求，或先添加文件..."
+                      : "输入任务需求，或先添加文件；也可将文件拖到此处..."
                 }
               />
 
@@ -4731,6 +4784,13 @@ function App() {
         />
       ) : null}
 
+      {yearbookSourcePickerOpen ? (
+        <YearbookSourcePicker
+          onCancel={() => setYearbookSourcePickerOpen(false)}
+          onSelect={handleYearbookSourceSelect}
+        />
+      ) : null}
+
       {settingsBusyText ? (
         <BusyOverlay
           title={settingsBusyText}
@@ -4940,6 +5000,61 @@ function ReportStylePicker({
   );
 }
 
+function YearbookSourcePicker({
+  onCancel,
+  onSelect,
+}: {
+  onCancel: () => void;
+  onSelect: (source: "official" | "provided") => void;
+}) {
+  return (
+    <div className="modal-backdrop report-style-picker-backdrop" onClick={onCancel}>
+      <div
+        className="report-style-picker"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="yearbook-source-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="report-style-picker-header">
+          <div>
+            <p className="eyebrow">选择年鉴来源</p>
+            <h3 id="yearbook-source-title">深圳统计年鉴分析</h3>
+            <p>选择后会自动进入对话输入框；你可以继续补充年份、指标和分析问题。</p>
+          </div>
+          <button type="button" className="report-style-picker-close" onClick={onCancel} aria-label="关闭来源选择">
+            ×
+          </button>
+        </div>
+
+        <div className="report-style-picker-grid">
+          <button type="button" className="report-style-option tone-blue" onClick={() => onSelect("official")}>
+            <span className="report-style-option-index">01</span>
+            <span className="report-style-option-copy">
+              <strong>官网检索</strong>
+              <small>从深圳市统计局年鉴目录进入详情页，下载并分析官方附件 PDF。</small>
+            </span>
+            <span className="report-style-option-arrow" aria-hidden="true">↗</span>
+          </button>
+          <button type="button" className="report-style-option tone-slate" onClick={() => onSelect("provided")}>
+            <span className="report-style-option-index">02</span>
+            <span className="report-style-option-copy">
+              <strong>上传文件 / 粘贴链接</strong>
+              <small>拖入或选择 PDF、Excel、CSV，也可以粘贴年鉴详情页或文件链接。</small>
+            </span>
+            <span className="report-style-option-arrow" aria-hidden="true">↗</span>
+          </button>
+        </div>
+
+        <div className="report-style-picker-footer">
+          <span>选择来源后进入输入框；也可以在发送前附加文件或粘贴链接。</span>
+          <button type="button" className="secondary-button" onClick={onCancel}>取消</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ArchivedThreadsPage({
   threads,
   isBusy,
@@ -5117,9 +5232,11 @@ function SkillsPageView({
                 "price-index-gdp-impact",
                 "source-verification",
                 "gov-official-document-drafting",
+                "shenzhen-yearbook-analysis",
                 "info_digest_html",
                 "weekly_report",
                 "price_index_gdp_impact",
+                "shenzhen_yearbook_analysis",
                 "source_verification",
                 "gov_official_document_drafting",
               ].includes(skill.name);
