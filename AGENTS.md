@@ -29,7 +29,7 @@
 
 - 产品身份通过应用私有 DSH patch 注入；由 `electron/dsh-runtime.mjs` 生成 `shenxiaotong.patch.yml` 并以 DSH `--patch` 参数加载，不要在前端写死“你是谁”的回复。
 - patch 只能写入应用私有运行目录，不能覆盖用户的 `DSH_HOME/AGENTS.md`、用户 patch 或已有同名技能。
-- 权限默认值通过 DSH `permission.defaultPreset` 设置；启用高权限时使用 `danger-full-access`，关闭时使用 `workspace-write`。不要使用 Hermes 环境变量或未经 DSH 支持的 `session.create` 参数替代。
+- 权限默认值通过 DSH `permission.defaultPreset` 设置；启用高权限时使用 `danger-full-access`，关闭时使用 `workspace-write`。运行时配置和会话创建参数只使用 DSH 明确支持的方式，不依赖未文档化的环境变量或未经支持的参数。
 - 审批事件不得在主进程静默自动批准；若 DSH 仍触发审批，必须保留 `pendingApproval` 并由前端展示授权操作。
 
 ## Git 合并策略

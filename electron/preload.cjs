@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 const api = {
   getState: () => ipcRenderer.invoke("dsh:getState"),
@@ -8,6 +8,7 @@ const api = {
   stopMessage: () => ipcRenderer.invoke("dsh:stopMessage"),
   selectWorkspaceFolder: () => ipcRenderer.invoke("dsh:selectWorkspaceFolder"),
   selectFiles: () => ipcRenderer.invoke("dsh:selectFiles"),
+  getPathForFile: (file) => webUtils.getPathForFile(file),
   selectSessionModel: (selection) => ipcRenderer.invoke("dsh:selectSessionModel", selection),
   refreshModelCatalog: () => ipcRenderer.invoke("dsh:refreshModelCatalog"),
   setPermissionPreset: (preset) => ipcRenderer.invoke("dsh:setPermissionPreset", preset),

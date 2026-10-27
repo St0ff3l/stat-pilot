@@ -47,11 +47,13 @@ inputs:
 
 > 以下配置参照 `baseline_collector.py` 的 `_build_default_sites()` 函数。每个栏目标注了列表页 URL、分页模式、详情页选择器提示。AI 抓取时应参照这些信息定位列表项与详情正文。
 
+**HTTP 直连**：官网普通 HTML 列表页和详情页直接使用 HTTP URL，不要先请求 HTTPS 再降级；从页面提取到 HTTPS 文章链接时也先将协议改为 HTTP。仅浙江省和福建省的 JSON API 保持 HTTPS。若 HTTP 请求失败，不额外试探 HTTPS；服务器主动重定向时按工具返回结果处理。
+
 ### 国家级
 
 #### 国家统计局（stats_national）
-- 栏目1：统计动态 https://www.stats.gov.cn/xw/tjxw/tjdt/ （分页 index_n：index.html / index_1.html，SSL 降级 http）
-- 栏目2：通知公告 https://www.stats.gov.cn/xw/tjxw/tzgg/
+- 栏目1：统计动态 http://www.stats.gov.cn/xw/tjxw/tjdt/ （分页 index_n：index.html / index_1.html，HTTP 直连）
+- 栏目2：通知公告 http://www.stats.gov.cn/xw/tjxw/tzgg/
 - 列表选择器：`.list-content ul li`，链接 `a.fl`，日期 `span`
 - 详情选择器：标题 `.article_title` · 日期 `.center_xilan_info` · 正文 `.center_xilan_con`
 - 域名白名单：stats.gov.cn
@@ -78,7 +80,7 @@ inputs:
 - 域名白名单：tjj.zj.gov.cn
 
 #### 江苏省统计局（stats_js）
-- 栏目1：统计要闻 https://tj.jiangsu.gov.cn/col/col87243/index.html （index_n）
+- 栏目1：统计要闻 http://tj.jiangsu.gov.cn/col/col87243/index.html （index_n）
 - 栏目2：统计要闻 http://tj.jiangsu.gov.cn/col/col85270/index.html
 - 栏目3：通知公告 http://tj.jiangsu.gov.cn/col/col85271/index.html
 - 列表选择器：`.news_list li`，链接 `a`，日期 `span`
@@ -102,24 +104,24 @@ inputs:
 - 域名白名单：tjj.sc.gov.cn
 
 #### 北京市统计局（stats_bj）
-- 栏目1：工作动态 https://tjj.beijing.gov.cn/zwgkai/gzdt/ （index_n）
-- 栏目2：通知公告 https://tjj.beijing.gov.cn/zwgkai/tzgg/
-- 栏目3：要闻动态 https://tjj.beijing.gov.cn/zwgkai/ywdt/
+- 栏目1：工作动态 http://tjj.beijing.gov.cn/zwgkai/gzdt/ （index_n）
+- 栏目2：通知公告 http://tjj.beijing.gov.cn/zwgkai/tzgg/
+- 栏目3：要闻动态 http://tjj.beijing.gov.cn/zwgkai/ywdt/
 - 列表选择器：`ul[class*=list] li`，链接 `a`，日期 `span.date`
 - 详情选择器：标题 `.article_title` · 日期 `.article_info` · 正文 `.TRS_Editor`
 - 域名白名单：tjj.beijing.gov.cn
 
 #### 上海市统计局（stats_sh）【正则策略】
-- 栏目1：统计要闻 https://tjj.sh.gov.cn/tjxw/ （index_n2：index.html / index_2.html）
-- 栏目2：通知告示 https://tjj.sh.gov.cn/tzgs/ （index_n2，静态策略）
+- 栏目1：统计要闻 http://tjj.sh.gov.cn/tjxw/ （index_n2：index.html / index_2.html）
+- 栏目2：通知告示 http://tjj.sh.gov.cn/tzgs/ （index_n2，静态策略）
 - 主栏目列表结构：`<li><a href="...">标题</a><span class="time">日期</span></li>`
 - 通知告示栏目列表结构：`<li><a>标题</a>日期</li>`（日期无 span 包裹）
 - 详情选择器：标题 `.article-title` · 日期 `.article-info` · 正文 `.TRS_Editor`
 - 域名白名单：tjj.sh.gov.cn
 
 #### 天津市统计局（stats_tj）
-- 栏目1：统计工作动态 https://stats.tj.gov.cn/sy_51953/tjgzdt/ （index_n，SSL 降级）
-- 栏目2：通知公告 https://stats.tj.gov.cn/sy_51953/tzgg/
+- 栏目1：统计工作动态 http://stats.tj.gov.cn/sy_51953/tjgzdt/ （index_n，HTTP 直连）
+- 栏目2：通知公告 http://stats.tj.gov.cn/sy_51953/tzgg/
 - 列表选择器：`.news_list li`，链接 `a`，日期 `span`
 - 详情选择器：标题 `h1` · 日期 `.info` · 正文 `.TRS_Editor`
 - 域名白名单：stats.tj.gov.cn
@@ -143,25 +145,25 @@ inputs:
 
 #### 杭州市统计局（stats_hz）
 - 栏目1：工作动态 http://tjj.hangzhou.gov.cn/col/col1651400/index.html （index_n）
-- 栏目2：区县动态 https://tjj.hangzhou.gov.cn/col/col1652150/index.html
-- 栏目3：通知公告 https://tjj.hangzhou.gov.cn/col/col1651600/index.html
+- 栏目2：区县动态 http://tjj.hangzhou.gov.cn/col/col1652150/index.html
+- 栏目3：通知公告 http://tjj.hangzhou.gov.cn/col/col1651600/index.html
 - 列表选择器：`.news_list li`，链接 `a`，日期 `span`
 - 详情选择器：标题 `h2` · 日期 `.info` · 正文 `.TRS_Editor`
 - 域名白名单：tjj.hangzhou.gov.cn
 
 #### 南京市统计局（stats_nj）
-- 栏目1：工作动态 https://tjj.nanjing.gov.cn/gzdt/ （index_n）
-- 栏目2：统计信息（CPI / 经济运行 / 公报解读） https://tjj.nanjing.gov.cn/tjxx/ （index_n，共 34 页）
+- 栏目1：工作动态 http://tjj.nanjing.gov.cn/gzdt/ （index_n）
+- 栏目2：统计信息（CPI / 经济运行 / 公报解读） http://tjj.nanjing.gov.cn/tjxx/ （index_n，共 34 页）
 - 栏目3：通知公告 http://tjj.nanjing.gov.cn/njstjj/?id=xxgk_228 （单页式入口，分页待勘探）
 - 列表选择器：`.news_list li`，链接 `a`，日期 `span`
 - 详情选择器：标题 `h1` · 日期 `.info` · 正文 `.TRS_Editor`
 - 域名白名单：tjj.nanjing.gov.cn
 
 #### 武汉市统计局（stats_wh）
-- 栏目1：统计要闻 https://tjj.wuhan.gov.cn/xwzx/sjyw/ （index_n，index_file=index.shtml）
-- 栏目2：区级动态 https://tjj.wuhan.gov.cn/xwzx/qjdt/
-- 栏目3：通知公告 https://tjj.wuhan.gov.cn/xwzx/tzgg/
-- 栏目4：图片新闻 https://tjj.wuhan.gov.cn/xwzx/tpxw/
+- 栏目1：统计要闻 http://tjj.wuhan.gov.cn/xwzx/sjyw/ （index_n，index_file=index.shtml）
+- 栏目2：区级动态 http://tjj.wuhan.gov.cn/xwzx/qjdt/
+- 栏目3：通知公告 http://tjj.wuhan.gov.cn/xwzx/tzgg/
+- 栏目4：图片新闻 http://tjj.wuhan.gov.cn/xwzx/tpxw/
 - 列表选择器：`.news_list li`，链接 `a`，日期 `span`
 - 详情选择器：标题 `h2` · 日期 `.info` · 正文 `#content`
 - 域名白名单：tjj.wuhan.gov.cn
@@ -174,7 +176,7 @@ inputs:
 - 域名白名单：qdtj.qingdao.gov.cn, qingdao.gov.cn
 
 #### 厦门市统计局（stats_xm）
-- 栏目1：统计工作 https://tjj.xm.gov.cn/zwgk/gzdt/ （index_n，index_file=index.htm）
+- 栏目1：统计工作 http://tjj.xm.gov.cn/zwgk/gzdt/ （index_n，index_file=index.htm）
 - 栏目2：图片新闻 http://tjj.xm.gov.cn/zwgk/tpxw/
 - 栏目3：业务通知 http://tjj.xm.gov.cn/zwgk/ywtz/
 - 列表选择器：`.news_list li`，链接 `a`，日期 `span`
@@ -202,33 +204,33 @@ inputs:
   - POST body：channelid=229105, classsql=chnlid=3504, page=N, prepage=15, sortfield=-docorderpri,-docreltime
   - 响应 JSON：`data` 数组，每项含 `doctitle`（标题）、`docpuburl`（URL）、`docreltime`（日期，可能是时间戳）
   - 分页参数名：page
-- 栏目2：市县动态 https://tjj.fujian.gov.cn/xwdt/sxdt/ （静态 HTML，index_n，index_file=index.htm）
+- 栏目2：市县动态 http://tjj.fujian.gov.cn/xwdt/sxdt/ （静态 HTML，index_n，index_file=index.htm）
 - 详情选择器：标题 `h1` · 日期 `.info` · 正文 `.TRS_Editor`
 - 域名白名单：fujian.gov.cn, tjj.fujian.gov.cn
 
 #### 河南省统计局（stats_henan）
-- 栏目1：统计动态 https://tjj.henan.gov.cn/zwxx/sjdt/ （index_n，SSL 降级）
-- 栏目2：通知公告 https://tjj.henan.gov.cn/zwxx/tzgg/
+- 栏目1：统计动态 http://tjj.henan.gov.cn/zwxx/sjdt/ （index_n，HTTP 直连）
+- 栏目2：通知公告 http://tjj.henan.gov.cn/zwxx/tzgg/
 - 列表选择器：`.news_list li`，链接 `a`，日期 `span`
 - 详情选择器：依赖全局默认（`.TRS_Editor` / `.content` 等）
 - 域名白名单：tjj.henan.gov.cn, henan.gov.cn
 
 #### 深圳市统计局（stats_sz_statistics）
-- 栏目1：工作动态 http://tjj.sz.gov.cn/zwgk/zfxxgkml/qt/gzdt/ （index_n2，SSL 降级）
+- 栏目1：工作动态 http://tjj.sz.gov.cn/zwgk/zfxxgkml/qt/gzdt/ （index_n2，HTTP 直连）
 - 栏目2：通知公告 http://tjj.sz.gov.cn/zwgk/zfxxgkml/qt/tzgg/
 - 列表选择器：`.news_list li`，链接 `a`（title 属性优先），日期 `span`
 - 详情选择器：标题 `.article-title` · 日期 `p.article-time` · 正文 `.TRS_Editor`
 - 域名白名单：tjj.sz.gov.cn
 
 #### 深圳市发展和改革委员会（sz_fgw）
-- 栏目1：工作动态 http://fgw.sz.gov.cn/zwgk/qt/gzdt/ （index_n2，SSL 降级）
+- 栏目1：工作动态 http://fgw.sz.gov.cn/zwgk/qt/gzdt/ （index_n2，HTTP 直连）
 - 栏目2：通知公告 http://fgw.sz.gov.cn/zwgk/qt/tzgg/
 - 列表选择器：`.news_list li`，链接 `a`，日期 `span`
 - 详情选择器：标题 `.article-title` · 日期 `p.article-time` · 正文 `.TRS_Editor`
 - 域名白名单：fgw.sz.gov.cn
 
 #### 深圳市工业和信息化局（sz_gxj）
-- 栏目1：工作动态 http://gxj.sz.gov.cn/xxgk/xxgkml/qt/gzdt/ （index_n2，SSL 降级）
+- 栏目1：工作动态 http://gxj.sz.gov.cn/xxgk/xxgkml/qt/gzdt/ （index_n2，HTTP 直连）
 - 栏目2：通知公告 http://gxj.sz.gov.cn/xxgk/xxgkml/qt/tzgg/
 - 列表选择器：`.news_list li`，链接 `a`，日期 `span`
 - 详情选择器：标题 `.article-title` · 日期 `p.article-time` · 正文 `.TRS_Editor`

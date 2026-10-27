@@ -19,7 +19,6 @@ coverage/
 .tsbuildinfo
 *.tsbuildinfo
 .runtime/
-.hermes/
 .playwright/
 .venv/
 

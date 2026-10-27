@@ -1,6 +1,6 @@
 # Project Context
 
-Last updated: 2026-10-23
+Last updated: 2026-10-26
 
 ## Project
 
@@ -24,14 +24,14 @@ Last updated: 2026-10-23
 - The product persona is supplied by an app-owned DSH patch under Electron user data; startup does not overwrite the user's DSH `AGENTS.md`, home patch, or existing same-name skills.
 - Release CI stages the target runner's Node.js binary, packages only that executable alongside the DSH dependencies, then starts DSH from the packaged app's unpacked dependency tree. The DSH home, conversations, credentials, and other local runtime data are not release assets.
 - The default DeepSeek model is `deepseek-flash` (DeepSeek V4.1 Flash). Retired V4 Flash/Vision Exp IDs and legacy chat/reasoner IDs normalize to it. The official API currently routes `deepseek-v4-pro` to V4.1 Flash, so the app retains it only as a compatibility option; OpenRouter and custom Provider model IDs remain provider-specific.
-- The old Express article-crawler/analyzer had no renderer or Electron caller and was not launched by the desktop app. Its sidecar and unreferenced Hermes App Server generated bindings have been removed; desktop collection and analysis use DSH skills. Any future API endpoint must use the DSH runtime rather than call a model provider directly.
+- The old Express article-crawler/analyzer had no renderer or Electron caller and was not launched by the desktop app. Its sidecar and unused generated bindings have been removed; desktop collection and analysis use DSH skills. Any future API endpoint must use the DSH runtime rather than call a model provider directly.
 
 ## DSH adaptation notes
 
 - Image attachments and DeepSeek's native `web_search` use DSH capabilities and the DSH-managed DeepSeek credential. DeepSeek V4.1 Flash handles images directly; the old independent vision-provider inputs had no backend calls and are removed.
 - Local voice dictation now uses DSH's experimental SenseVoice bundle; its model is downloaded only after the user confirms first-time preparation. Firecrawl/Exa search, FAL image generation, Browserbase automation, OpenAI Voice, and independent vision keys had settings fields but no backend calls. Their UI, types, defaults, and persisted values are removed during settings normalization.
-- Renderer types and IPC channels now use DSH names. Legacy `hermes_*` local-storage values migrate once to `statpilot_*` keys so existing workspace preferences and file indexes survive without retaining Hermes names.
-- The former Hermes executable and `runtimeMode` settings are discarded during settings normalization. Account UI and handlers use DSH's account operations.
+- Renderer types and IPC channels use DSH names. Renderer preferences use the `statpilot_*` local-storage namespace; earlier values migrate once so workspace preferences and file indexes survive, then the old keys are removed.
+- Legacy runtime executable-path and `runtimeMode` settings are discarded during settings normalization. Account UI and handlers use DSH's account operations.
 
 ## Release constraints
 
