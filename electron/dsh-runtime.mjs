@@ -186,7 +186,7 @@ export function resolveNodeBinaryPath() {
   // 2. Try which/where
   try {
     const cmd = process.platform === "win32" ? "where node" : "which node";
-    const out = execSync(cmd, { encoding: "utf8", timeout: 2000 }).trim().split(/\r?\n/)[0].trim();
+    const out = execSync(cmd, { encoding: "utf8", timeout: 2000, windowsHide: true }).trim().split(/\r?\n/)[0].trim();
     if (out && existsSync(out)) {
       return out;
     }
@@ -614,7 +614,8 @@ export class DshRuntimeManager {
       "--host", "127.0.0.1",
     ];
 
-    console.log("[dsh-runtime] Spawning DSH with:", nodeBin, spawnArgs.join(" "));
+    const workspaceDir = settings.cwd || process.cwd();
+    console.log("[dsh-runtime] Spawning DSH with:", nodeBin, spawnArgs.join(" "), "cwd:", workspaceDir);
 
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -629,8 +630,9 @@ export class DshRuntimeManager {
       try {
         this.process = spawn(nodeBin, spawnArgs, {
           env,
-          cwd: settings.cwd || process.cwd(),
+          cwd: workspaceDir,
           stdio: ["pipe", "pipe", "pipe"],
+          windowsHide: true,
         });
       } catch (err) {
         clearTimeout(timeout);

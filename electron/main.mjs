@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, promises as fs } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, promises as fs, renameSync, statSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,99 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 const SETTINGS_FILE = "settings.json";
+
+// Windows 管理员身份启动时窗口会在就绪前消失，且从资源管理器启动看不到
+// stdout/stderr；把启动过程与崩溃原因落到 userData 下的日志文件里，便于排查。
+const STARTUP_LOG_MAX_BYTES = 2 * 1024 * 1024;
+let startupLogFile = null;
+
+function getStartupLogFile() {
+  if (startupLogFile !== null) return startupLogFile;
+
+  try {
+    const logDir = path.join(app.getPath("userData"), "logs");
+    mkdirSync(logDir, { recursive: true });
+    const logFile = path.join(logDir, "main.log");
+    try {
+      if (statSync(logFile).size > STARTUP_LOG_MAX_BYTES) {
+        renameSync(logFile, path.join(logDir, "main.previous.log"));
+      }
+    } catch {}
+    startupLogFile = logFile;
+  } catch {
+    startupLogFile = "";
+  }
+
+  return startupLogFile;
+}
+
+function describeForLog(detail) {
+  if (detail === undefined) return "";
+  if (detail instanceof Error) return ` ${detail.stack || detail.message}`;
+  if (typeof detail === "string") return ` ${detail}`;
+  try {
+    return ` ${JSON.stringify(detail)}`;
+  } catch {
+    return "";
+  }
+}
+
+function logMain(message, detail) {
+  const text = `[main] ${message}${describeForLog(detail)}`;
+  console.log(text);
+
+  const logFile = getStartupLogFile();
+  if (!logFile) return;
+  try {
+    appendFileSync(logFile, `${new Date().toISOString()} ${text}\n`);
+  } catch {}
+}
+
+function reportFatalStartupError(title, error) {
+  logMain(`${title}:`, error);
+  try {
+    dialog.showErrorBox(title, `${error instanceof Error ? error.message : String(error)}\n\n日志：${getStartupLogFile() || "无法写入日志目录"}`);
+  } catch {}
+}
+
+// 资源管理器里“以管理员身份运行”会把工作目录设成 C:\Windows\System32；
+// 会话/输出目录若跟着这个目录走，DSH 会以系统目录为工作区，必须纠正。
+function normalizeStartupWorkingDirectory() {
+  if (process.platform !== "win32") return;
+
+  const current = path.resolve(process.cwd());
+  const systemRoot = path.resolve(process.env.SystemRoot || "C:\\Windows");
+  const normalizedCurrent = current.toLowerCase();
+  const normalizedRoot = systemRoot.toLowerCase();
+  const insideSystemDir = normalizedCurrent === normalizedRoot || normalizedCurrent.startsWith(`${normalizedRoot}${path.sep}`);
+
+  if (!insideSystemDir) return;
+
+  const homeDir = os.homedir();
+  try {
+    process.chdir(homeDir);
+    logMain("检测到提权启动（工作目录位于系统目录），已切换到用户目录:", process.cwd());
+  } catch (error) {
+    logMain("提权启动时无法切换到用户目录:", error);
+  }
+}
+
+process.on("uncaughtException", (error) => {
+  reportFatalStartupError("深小统主进程异常退出", error);
+  app.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  logMain("unhandledRejection:", reason);
+});
+
+app.on("child-process-gone", (_event, details) => {
+  logMain("child-process-gone:", details);
+});
+
+app.on("render-process-gone", (_event, _contents, details) => {
+  logMain("render-process-gone:", details);
+});
 
 function getBundledAppAssetRoot() {
   if (app.isPackaged) {
@@ -1291,7 +1385,7 @@ async function initializeBridge() {
     // the chat surface is usable so a slow skills RPC cannot look like a hang.
     void refreshSkills();
   } catch (error) {
-    console.error("[main] Failed to initialize DSH runtime:", error);
+    logMain("DSH 运行时初始化失败:", error);
     state.status = "Runtime Error";
     state.error = error.message;
     state.runtime.installed = false;
@@ -1463,6 +1557,16 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.resolve(__dirname, "../dist/index.html"));
   }
+
+  mainWindow.webContents.on("did-finish-load", () => {
+    logMain("主窗口页面加载完成:", mainWindow?.webContents.getURL() || "");
+  });
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+    logMain("主窗口页面加载失败:", { errorCode, errorDescription, validatedURL });
+  });
+  mainWindow.webContents.on("preload-error", (_event, preloadPath, error) => {
+    logMain("preload 脚本执行失败:", { preloadPath, message: error?.message, stack: error?.stack });
+  });
 
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -2061,6 +2165,16 @@ ipcMain.handle("dsh:repairRuntime", async () => {
 
 app.whenReady().then(async () => {
   app.setName("深小统");
+  normalizeStartupWorkingDirectory();
+  logMain("应用启动", {
+    isPackaged: app.isPackaged,
+    execPath: process.execPath,
+    cwd: process.cwd(),
+    userData: app.getPath("userData"),
+    resourcesPath: process.resourcesPath,
+    argv: process.argv.slice(1),
+    devServerUrl: process.env.VITE_DEV_SERVER_URL || "",
+  });
   applyPlatformIcon();
   createWindow();
   await initializeBridge();
@@ -2070,6 +2184,8 @@ app.whenReady().then(async () => {
       createWindow();
     }
   });
+}).catch((error) => {
+  reportFatalStartupError("深小统启动失败", error);
 });
 
 app.on("window-all-closed", () => {
